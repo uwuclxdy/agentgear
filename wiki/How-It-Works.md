@@ -45,6 +45,12 @@ Two invariants sit on top:
 - **Never re-enable.** A disabled plugin is a deliberate choice; self-heal repairs structure, not enable state. An explicit `install`/`update` does re-enable, because that is a direct user request.
 - **Monotonic.** When the installed version is at or above the embedded version, self-heal does nothing, so two coexisting binaries of the same tool (a system package and a `cargo install` build) do not fight over the version each session.
 
+## Restart-pending flag
+
+An out-of-band `setup update` re-materializes the plugin into Claude Code's cache and bumps the version, but the running session loaded the old plugin at session start. Claude Code does not hot-reload plugin hooks, so the session stays stale until the user runs `/reload-plugins` or restarts. A presence-only flag at `<data_root>/restart-pending` bridges that gap so the model can relay it.
+
+`update()` and `self_heal()`'s repair branch set the flag when the reconcile actually changed something (a same-version re-run sets nothing); `install()` never sets it. A healthy `self_heal` clears it, because a fresh session loaded the new plugin. The flag is advisory: a write or clear failure is swallowed, so it can never fail a lifecycle op that otherwise succeeded. A host `UserPromptSubmit` hook reads it through `PluginHost::restart_pending()` (the notice, or `None`) and prints the notice as plain stdout; the `SessionStart → self_heal` hook clears it. Ship the `UserPromptSubmit` hook from your first release, since it fires from whatever version the running session has loaded.
+
 ## Concurrency
 
 Every consumer of this crate shares one `flock` at a well-known path, held around each mutating sequence. Two different tools both self-healing at session start serialize instead of racing the registry.

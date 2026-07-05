@@ -69,10 +69,18 @@ It fails the build when `plugin.json` and `CARGO_PKG_VERSION` disagree, tracks t
 ```rust
 fn main() -> anyhow::Result<()> {
     match std::env::args().nth(1).as_deref() {
-        Some("setup")     => { MyHost::install(Scope::User, Source::Embedded)?; }
-        Some("update")    => { MyHost::update(Scope::User)?; }
-        Some("uninstall") => { MyHost::uninstall(Scope::User)?; }
-        Some("doctor")    => { print!("{}", MyHost::doctor()?); }
+        Some("setup")         => { MyHost::install(Scope::User, Source::Embedded)?; }
+        Some("update")        => { MyHost::update(Scope::User)?; }
+        Some("uninstall")     => { MyHost::uninstall(Scope::User)?; }
+        Some("self-heal")     => { MyHost::self_heal()?; }
+        Some("check-restart") => {
+            // UserPromptSubmit hook entry: print the reload notice if an update
+            // landed that this session has not loaded yet.
+            if let Some(notice) = MyHost::restart_pending() {
+                println!("{notice}");
+            }
+        }
+        Some("doctor")        => { print!("{}", MyHost::doctor()?); }
         _ => {}
     }
     Ok(())
@@ -81,7 +89,16 @@ fn main() -> anyhow::Result<()> {
 
 `install` takes any `Source`: `Source::Embedded` decompresses the baked blob, `Source::Path(dir)` materializes an on-disk tree, `Source::GitHub { repo, ref_ }` tracks a GitHub ref. The recurring `self_heal`/`update`/`doctor` resolve against the `default_source` attr (which is `embedded` or `github`, never a runtime path), so `Source::Path` is a one-off install source rather than a host's steady state.
 
-Point the plugin's SessionStart hook at a subcommand that calls `MyHost::self_heal()`. It is a no-op on a healthy install and repairs a broken one. It never resurrects a plugin the user uninstalled.
+Point the plugin's hooks at subcommands. The `SessionStart` hook calls `MyHost::self_heal()`, a no-op on a healthy install that repairs a broken one without resurrecting an uninstall. The `UserPromptSubmit` hook calls a `check-restart` subcommand wrapping `MyHost::restart_pending()`: after an out-of-band `setup update`, it prints a notice that the running session still has the old plugin loaded and needs a `/reload-plugins`. Claude Code does not hot-reload plugin hooks, so ship the `UserPromptSubmit` hook from your first release — it fires from whatever version the running session already has. Both hooks live in `hooks/hooks.json` at the plugin root:
+
+```json
+{
+  "hooks": {
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "mytool self-heal" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "mytool check-restart" }] }]
+  }
+}
+```
 
 ## 6. First run
 
