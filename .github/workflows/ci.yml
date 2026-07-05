@@ -41,3 +41,19 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code
       - name: validate test plugin tree
         run: claude plugin validate crates/ez-agent-plugin/tests/fixtures/plugin --strict
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: install claude code
+        run: npm install -g @anthropic-ai/claude-code
+      # The ignored suite drives the real `claude plugin` CLI in an isolated
+      # CLAUDE_CONFIG_DIR; it is the golden drift gate (design §11).
+      - name: end-to-end lifecycle
+        run: cargo test --all-features -- --ignored
