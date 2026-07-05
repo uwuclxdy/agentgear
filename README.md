@@ -31,7 +31,7 @@ $ mytool doctor
 - **One dependency, one derive.** Add the crate, write a `#[derive(PluginHost)]` struct and a one-line `build.rs`. The binary then gets `install` / `update` / `uninstall` / `self_heal` / `doctor`.
 - **The CLI is the source of truth.** Every mutation goes through `claude plugin …`, so a Claude Code registry schema bump never breaks the crate. It reads state back through `list --json` for drift checks.
 - **Self-heal that respects the user.** A SessionStart hook repairs a broken install without overriding a deliberate choice: it never resurrects an uninstall, re-enables a disable, or downgrades a newer install.
-- **Atomic materialize.** The embedded plugin tree lands in a content-keyed versioned directory with an atomic pointer flip, so a crash mid-install leaves the previous state intact.
+- **Atomic materialize.** The plugin tree ships as a compressed blob (a pure-Rust brotli archive, roughly a quarter of the raw text size). It decompresses into a content-keyed versioned directory with an atomic pointer flip, so a crash mid-install leaves the previous state intact.
 - **Compile-time version guard.** A `build.rs` helper fails the build when `plugin.json` and `CARGO_PKG_VERSION` disagree, because Claude Code caches on the plugin version and a no-bump change is a silent no-op.
 
 ## How it works
@@ -104,6 +104,7 @@ The plugin tree lives at `<crate>/plugin/.claude-plugin/plugin.json` by default,
 |---|---|---|
 | `derive` | on | re-exports `#[derive(PluginHost)]` |
 | `claude` | on | the Claude Code backend |
+| `embed` | on | bakes the plugin tree into the binary as a compressed blob; turn off (with `embed = false` on the derive) for a `default_source = "github"` host that tracks a remote ref and ships no baked tree |
 | `codex`, `opencode` | off | reserved backend seams, unimplemented in v1 |
 
 ## Status
@@ -141,7 +142,7 @@ Yes. The SessionStart hook calls `self_heal`, which re-registers a plugin whose 
 Not yet. The `AgentBackend` trait is the seam for other agents such as codex or opencode. Only the Claude Code backend ships in v1; the trait stays sealed until a second backend lands from real use.
 
 **Do I need to publish the plugin to a marketplace?**
-No. In embedded mode the plugin tree is baked into the binary with `include_dir!` and served from a locally generated marketplace. A GitHub source mode is available when you want `claude plugin update` to pull plugin changes without a binary release.
+No. In embedded mode the plugin tree is baked into the binary as a compressed blob and served from a locally generated marketplace. A GitHub source mode is available when you want `claude plugin update` to pull plugin changes without a binary release. A `Source::Path` mode installs from an on-disk tree at runtime; the recurring `self_heal`/`update`/`doctor` still resolve against the derive's `default_source`, so a self-healing host keeps an `embedded` or `github` default.
 
 ## Documentation
 

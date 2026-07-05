@@ -6,12 +6,12 @@ The [README](https://github.com/uwuclxdy/ez-agent-plugin#readme) is the overview
 
 ## Mental model
 
-The crate lives in your **binary**, not in the plugin tree. The binary embeds the plugin at compile time with `include_dir!` and hands it to one or more agent backends at runtime. Today the only backend is Claude Code.
+The crate lives in your **binary**, not in the plugin tree. The binary embeds the plugin at compile time as a compressed blob and hands it to one or more agent backends at runtime. Today the only backend is Claude Code.
 
 ```text
 your binary  ──derive──▶  PluginHost   ──reconcile──▶  AgentBackend (claude)  ──▶  claude plugin CLI
    │                                                                                      │
-   └── embeds plugin/ (include_dir!) ── materialize ──▶ ~/.local/share/<name>/current ────┘
+   └── embeds plugin/ (.tar.br blob) ── materialize ──▶ ~/.local/share/<name>/current ────┘
 ```
 
 ## Pages

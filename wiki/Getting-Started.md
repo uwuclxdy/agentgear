@@ -51,6 +51,7 @@ Attributes:
 | `default_source` | `"embedded"` | `"embedded"` or `"github"` |
 | `github_repo` | required for github | `"owner/repo"` |
 | `agents` | `["claude"]` | which backends `setup` wires |
+| `embed` | `true` | bake the compressed tree in via `include_bytes!`; set `false` (with `default-features = false` on the crate) for a `default_source = "github"` host that ships no baked tree |
 
 ## 4. Add the build guard
 
@@ -77,6 +78,8 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 ```
+
+`install` takes any `Source`: `Source::Embedded` decompresses the baked blob, `Source::Path(dir)` materializes an on-disk tree, `Source::GitHub { repo, ref_ }` tracks a GitHub ref. The recurring `self_heal`/`update`/`doctor` resolve against the `default_source` attr (which is `embedded` or `github`, never a runtime path), so `Source::Path` is a one-off install source rather than a host's steady state.
 
 Point the plugin's SessionStart hook at a subcommand that calls `MyHost::self_heal()`. It is a no-op on a healthy install and repairs a broken one. It never resurrects a plugin the user uninstalled.
 

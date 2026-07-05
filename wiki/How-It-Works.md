@@ -14,9 +14,9 @@ The crate orchestrates the supported `claude plugin` CLI. The CLI is the transac
 
 Every call runs through one wrapper that locates `claude`, scrubs the session env a hook would leak (`CLAUDECODE` and every `CLAUDE_CODE_*`, preserving `CLAUDE_CONFIG_DIR`), forces non-interactive stdio, and parses `--json` tolerantly.
 
-## Materialize (embedded mode)
+## Materialize (embedded and path sources)
 
-The embedded tree becomes a content-keyed versioned directory with an atomic pointer flip:
+The plugin tree ships as a compressed `.tar.br` blob baked into the binary (a pure-Rust brotli archive, roughly a quarter of the raw text size). Materialize decompresses it (`Source::Embedded`) or copies an on-disk tree (`Source::Path`) into a content-keyed versioned directory with an atomic pointer flip:
 
 ```text
 ~/.local/share/<name>/
@@ -25,7 +25,7 @@ The embedded tree becomes a content-keyed versioned directory with an atomic poi
   markers/<hash>                    per-(plugin, scope, project) stamp
 ```
 
-The tree is written to a temp sibling and fsynced, then renamed onto the versioned target, which is created once so a rename never lands on a non-empty directory. `current` is flipped by renaming a fresh pointer over it. A crash mid-materialize leaves the previous `current` intact. `marketplace add` points at `current`, which Claude Code copies into its own cache keyed by version.
+The tree is written to a temp sibling and fsynced, then renamed onto the versioned target, which is created once so a rename never lands on a non-empty directory. `current` is flipped by renaming a fresh pointer over it. A crash mid-materialize leaves the previous `current` intact. An existing version dir is reused without re-decompressing. `marketplace add` points at `current`, which Claude Code copies into its own cache keyed by version.
 
 ## Self-heal state table
 
