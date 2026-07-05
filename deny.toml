@@ -27,9 +27,10 @@ allow = [
 ]
 
 [bans]
-multiple-versions = "warn"
-wildcards         = "deny"
-deny              = []
+multiple-versions   = "warn"
+wildcards           = "deny"
+allow-wildcard-paths = true  # internal path deps (host-fixture) are inherently version-less
+deny                = []
 
 [sources]
 unknown-registry = "deny"
