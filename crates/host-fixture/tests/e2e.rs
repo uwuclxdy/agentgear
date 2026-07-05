@@ -1,0 +1,203 @@
+//! End-to-end lifecycle against a real `claude` in a fully isolated environment
+//! (temp `CLAUDE_CONFIG_DIR` + `XDG_DATA_HOME` + `XDG_RUNTIME_DIR`, never the real
+//! `~/.claude`). Ignored by default — spawns the real CLI. Run with:
+//!
+//! ```sh
+//! cargo test -p host-fixture -- --ignored
+//! ```
+
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+const PLUGIN_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const BIN: &str = env!("CARGO_BIN_EXE_host_fixture");
+
+struct Env {
+    root: PathBuf,
+    cfg: PathBuf,
+    data: PathBuf,
+    run: PathBuf,
+}
+
+impl Env {
+    // `name` keeps each test's isolated root (and thus its CLAUDE_CONFIG_DIR +
+    // XDG_RUNTIME_DIR lock) distinct, so the ignored tests are safe in parallel.
+    fn new(name: &str) -> Self {
+        let root = std::env::temp_dir().join(format!("ez-e2e-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let env = Env { cfg: root.join("cfg"), data: root.join("data"), run: root.join("run"), root };
+        for dir in [&env.cfg, &env.data, &env.run] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        env
+    }
+
+    fn apply(&self, cmd: &mut Command) {
+        cmd.env("CLAUDE_CONFIG_DIR", &self.cfg).env("XDG_DATA_HOME", &self.data).env("XDG_RUNTIME_DIR", &self.run);
+    }
+
+    /// Run a fixture subcommand, returning (exit_ok, stdout-trimmed).
+    fn fixture(&self, sub: &str) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.arg(sub);
+        self.apply(&mut cmd);
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// Run `doctor` with the fixture binary's dir on PATH so the host-binary
+    /// check resolves.
+    fn doctor(&self) -> (bool, String) {
+        let bindir = Path::new(BIN).parent().unwrap();
+        let path = format!("{}:{}", bindir.display(), std::env::var("PATH").unwrap_or_default());
+        let mut cmd = Command::new(BIN);
+        cmd.arg("doctor").env("PATH", path);
+        self.apply(&mut cmd);
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).to_string())
+    }
+
+    fn plugin_list(&self) -> String {
+        let mut cmd = Command::new("claude");
+        cmd.args(["plugin", "list", "--json"]);
+        self.apply(&mut cmd);
+        String::from_utf8_lossy(&cmd.output().unwrap().stdout).trim().to_string()
+    }
+
+    fn marketplace_list(&self) -> String {
+        let mut cmd = Command::new("claude");
+        cmd.args(["plugin", "marketplace", "list", "--json"]);
+        self.apply(&mut cmd);
+        String::from_utf8_lossy(&cmd.output().unwrap().stdout).trim().to_string()
+    }
+
+    fn manual_uninstall(&self) {
+        let mut cmd = Command::new("claude");
+        cmd.args(["plugin", "uninstall", PLUGIN_ID, "-y"]);
+        self.apply(&mut cmd);
+        let _ = cmd.output();
+    }
+
+    /// Delete the copied cache tree, leaving the plugin registered but its files
+    /// gone — a structurally-broken install.
+    fn break_cache(&self) {
+        let cache = self.cfg.join("plugins/cache/ez-fixture-plugin");
+        std::fs::remove_dir_all(&cache).unwrap();
+    }
+
+    fn manual_disable(&self) {
+        let mut cmd = Command::new("claude");
+        cmd.args(["plugin", "disable", PLUGIN_ID]);
+        self.apply(&mut cmd);
+        let _ = cmd.output();
+    }
+}
+
+impl Drop for Env {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn claude_available() -> bool {
+    Command::new("claude").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+#[test]
+#[ignore = "spawns the real `claude` CLI; run with --ignored"]
+fn full_lifecycle() {
+    if !claude_available() {
+        eprintln!("skipping: `claude` not on PATH");
+        return;
+    }
+    let env = Env::new("lifecycle");
+
+    // install: idempotent, reaches a real registered state.
+    let (ok, out) = env.fixture("setup");
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed");
+    assert!(env.plugin_list().contains(PLUGIN_ID), "plugin not registered after setup");
+
+    // second install is a no-op (already converged).
+    let (ok, out) = env.fixture("setup");
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+
+    // self_heal on a healthy install: zero mutation.
+    let (ok, out) = env.fixture("self-heal");
+    assert!(ok && out == "NoOp", "self-heal on healthy should no-op, got {out}");
+
+    // never-resurrect: a deliberate manual uninstall must NOT be reinstalled;
+    // self_heal clears the stale marker and stays out.
+    env.manual_uninstall();
+    assert_eq!(env.plugin_list(), "[]", "manual uninstall did not empty the list");
+    let (ok, out) = env.fixture("self-heal");
+    assert!(ok && out == "Cleared", "self-heal after manual uninstall should clear, got {out}");
+    assert_eq!(env.plugin_list(), "[]", "self-heal resurrected a deliberate uninstall");
+
+    // doctor is healthy once the binary is reachable on PATH.
+    env.fixture("setup");
+    let (ok, report) = env.doctor();
+    assert!(ok, "doctor reported unhealthy:\n{report}");
+    assert!(report.contains("hashes match"), "doctor missing the tree-hash check:\n{report}");
+
+    // uninstall: plugin gone + refcount-gated marketplace removed.
+    let (ok, out) = env.fixture("uninstall");
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+    assert_eq!(env.plugin_list(), "[]", "plugin still present after uninstall");
+    assert_eq!(env.marketplace_list(), "[]", "marketplace not refcount-removed after uninstall");
+}
+
+#[test]
+#[ignore = "spawns the real `claude` CLI; run with --ignored"]
+fn self_heal_repairs_a_broken_install() {
+    if !claude_available() {
+        eprintln!("skipping: `claude` not on PATH");
+        return;
+    }
+    let env = Env::new("repair");
+
+    let (ok, _) = env.fixture("setup");
+    assert!(ok);
+    assert!(env.plugin_list().contains(PLUGIN_ID));
+
+    // Registered, but the cache files are gone: self_heal must repair (not clear,
+    // since the marker is present and the entry still exists).
+    env.break_cache();
+    let (ok, out) = env.fixture("self-heal");
+    assert!(ok, "self-heal errored on a broken install: {out}");
+    assert_eq!(out, "Repaired", "expected repair of a files-missing install, got {out}");
+
+    // A healthy install again + a healthy doctor.
+    let (ok, out) = env.fixture("self-heal");
+    assert!(ok && out == "NoOp", "post-repair self-heal should no-op, got {out}");
+
+    env.fixture("uninstall");
+}
+
+#[test]
+#[ignore = "spawns the real `claude` CLI; run with --ignored"]
+fn self_heal_respects_disable_but_explicit_install_reenables() {
+    if !claude_available() {
+        eprintln!("skipping: `claude` not on PATH");
+        return;
+    }
+    let env = Env::new("disable");
+
+    env.fixture("setup");
+    env.manual_disable();
+    assert!(env.plugin_list().contains("\"enabled\": false"), "manual disable did not take");
+
+    // self_heal must NOT re-enable a deliberate disable.
+    let (ok, out) = env.fixture("self-heal");
+    assert!(ok && out == "NoOp", "self-heal should leave a disabled plugin alone, got {out}");
+    assert!(env.plugin_list().contains("\"enabled\": false"), "self-heal re-enabled a deliberate disable");
+
+    // An explicit setup DOES re-enable (install flips enable state).
+    let (ok, out) = env.fixture("setup");
+    assert!(ok && out == "Repaired", "explicit setup should re-enable, got {out}");
+    assert!(env.plugin_list().contains("\"enabled\": true"), "explicit setup did not re-enable");
+
+    env.fixture("uninstall");
+}

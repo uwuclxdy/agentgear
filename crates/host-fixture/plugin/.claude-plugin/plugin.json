@@ -1,0 +1,6 @@
+{
+  "name": "ez-fixture-plugin",
+  "version": "0.1.0",
+  "description": "fixture plugin used by ez-agent-plugin end-to-end tests",
+  "author": { "name": "uwuclxdy" }
+}

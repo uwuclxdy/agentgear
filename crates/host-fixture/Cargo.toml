@@ -1,0 +1,20 @@
+[package]
+name = "host-fixture"
+description = "internal fixture host exercising #[derive(PluginHost)] + the build guard + the full lifecycle"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "host_fixture"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+ez-agent-plugin = { path = "../ez-agent-plugin" }
+
+[build-dependencies]
+ez-agent-plugin = { path = "../ez-agent-plugin" }
