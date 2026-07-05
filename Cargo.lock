@@ -109,6 +109,12 @@ dependencies = [
 [[package]]
 name = "ez-agent-plugin-derive"
 version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn",
+]
 
 [[package]]
 name = "fastrand"
