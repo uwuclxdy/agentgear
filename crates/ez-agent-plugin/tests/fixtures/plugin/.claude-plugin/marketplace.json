@@ -1,0 +1,8 @@
+{
+  "name": "ez-agent-plugin-test",
+  "description": "test fixture marketplace for ez-agent-plugin CI + integration tests",
+  "owner": { "name": "uwuclxdy" },
+  "plugins": [
+    { "name": "ez-test-plugin", "source": "./", "description": "test fixture plugin" }
+  ]
+}
