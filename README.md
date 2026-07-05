@@ -2,9 +2,9 @@
 
 # ez-agent-plugin
 
-**Ship a Claude Code plugin straight from your Rust binary.** One `setup` command replaces `/plugin marketplace add` + `/plugin install`; a SessionStart hook keeps the install healthy across upgrades.
+**Ship a Claude Code plugin straight from your Rust binary.** One `setup` command replaces `/plugin marketplace add` + `/plugin install`; a SessionStart hook self-heals the install across upgrades.
 
-Rust library and derive macro. It orchestrates the supported `claude plugin` CLI as its transaction boundary and never forges Claude Code's on-disk registry state.
+Rust library and derive macro for shipping a coding-agent plugin from a binary. It orchestrates the supported `claude plugin` CLI as its transaction boundary and never forges Claude Code's on-disk registry state.
 
 [![ci](https://shields.uwuclxdy.dev/github/actions/workflow/status/uwuclxdy/ez-agent-plugin/ci.yml?label=ci)](https://github.com/uwuclxdy/ez-agent-plugin/actions/workflows/ci.yml)
 [![license](https://shields.uwuclxdy.dev/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
@@ -109,6 +109,39 @@ The plugin tree lives at `<crate>/plugin/.claude-plugin/plugin.json` by default,
 ## Status
 
 v1 targets Claude Code. The `AgentBackend` trait is a sealed seam for other coding agents; only the Claude Code backend is implemented. The trait stays sealed until a second backend lands from real use. Linux and macOS are the tested platforms; Windows support is designed in (directory junctions) but not gated in CI.
+
+## Alternatives
+
+Nothing else installs and repairs a Claude Code plugin from a host binary today. Here is how the crate compares to the manual routes.
+
+| approach | the gap it leaves |
+|---|---|
+| Manual `/plugin marketplace add` + `/plugin install` | every user runs it by hand on every machine; nothing repairs a broken install after an upgrade |
+| Shell install script wrapping the `claude plugin` CLI | re-runs blind with no version-keyed cache or atomic on-disk state; nothing repairs a later upgrade that breaks the install |
+| Hand-rolled Rust in each repo (the status quo this replaces) | layout, version stamping, register, uninstall, self-heal all duplicated per repo; atomic state and partial-failure recovery solved nowhere |
+| Anthropic team auto-install (`.claude/settings.json` `extraKnownMarketplaces` + `enabledPlugins`) | project-scoped and gated on a trust prompt; no host-binary control and no self-repair when an install breaks |
+
+This crate collapses all four into one derive and a one-line `build.rs`.
+
+## FAQ
+
+**How do I install a Claude Code plugin from my own binary?**
+Add the crate, derive `PluginHost`, wire a `setup` subcommand to `install()`. Running `mytool setup` performs `claude plugin marketplace add` and `install` for the user.
+
+**How do I ship a Claude Code plugin without users running `/plugin marketplace add`?**
+The embedded plugin tree materializes locally and registers itself through the `claude plugin` CLI during `setup`. Users never type the marketplace or install commands.
+
+**Why does my Claude Code plugin keep reinstalling every session?**
+A SessionStart hook that reinstalls unconditionally will resurrect a plugin the user disabled or removed. `self_heal` reads install state first. It repairs a broken install and leaves a deliberate uninstall or disable untouched.
+
+**Will the plugin stay installed after I ship a new binary version?**
+Yes. The SessionStart hook calls `self_heal`, which re-registers a plugin whose files went missing or stale after an upgrade. It never downgrades an install that is already newer.
+
+**Does it work with coding agents other than Claude Code?**
+Not yet. The `AgentBackend` trait is the seam for other agents such as codex or opencode. Only the Claude Code backend ships in v1; the trait stays sealed until a second backend lands from real use.
+
+**Do I need to publish the plugin to a marketplace?**
+No. In embedded mode the plugin tree is baked into the binary with `include_dir!` and served from a locally generated marketplace. A GitHub source mode is available when you want `claude plugin update` to pull plugin changes without a binary release.
 
 ## Documentation
 
