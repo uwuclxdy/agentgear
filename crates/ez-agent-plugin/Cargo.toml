@@ -1,0 +1,21 @@
+[package]
+name = "ez-agent-plugin"
+description = "Canonical install/uninstall/self-heal lifecycle for the Claude Code plugin a binary ships."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["derive", "claude"]
+derive = ["dep:ez-agent-plugin-derive"]
+claude = []
+codex = []
+opencode = []
+
+[dependencies]
+ez-agent-plugin-derive = { workspace = true, optional = true }
