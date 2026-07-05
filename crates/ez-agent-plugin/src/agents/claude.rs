@@ -10,7 +10,7 @@ use crate::doctor::DoctorReport;
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 use crate::manifest::{MarketplaceEntry, PluginEntry};
-use crate::materialize::materialize;
+use crate::materialize::{TreeSource, materialize};
 
 pub(crate) struct ClaudeBackend;
 
@@ -37,7 +37,7 @@ impl AgentBackend for ClaudeBackend {
         remove(plugin, scope)
     }
 
-    fn report(&self, plugin: &Plugin, source: Source) -> DoctorReport {
+    fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {
         crate::doctor::doctor(plugin, source).unwrap_or_else(DoctorReport::from_error)
     }
 }
@@ -108,7 +108,7 @@ pub(crate) fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Re
     let Some(entry) = entry else {
         // Absent: full install.
         cli.ensure_min_version()?;
-        ensure_marketplace(&cli, plugin, desired.source, scope, marketplace.is_some())?;
+        ensure_marketplace(&cli, plugin, &desired.source, scope, marketplace.is_some())?;
         plugin_install(&cli, &id, scope)?;
         verify_present(&cli, scope, plugin)?;
         return Ok(Outcome::Installed);
@@ -128,7 +128,7 @@ pub(crate) fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Re
     let installed = entry.version.clone();
     let stale = version_lt(installed.as_deref(), plugin.version);
     let newer = installed.as_deref().is_some_and(|v| version_lt(Some(plugin.version), v));
-    let structural_ok = structural_ok(&entry, marketplace.as_ref(), desired.source);
+    let structural_ok = structural_ok(&entry, marketplace.as_ref(), &desired.source);
 
     // Monotonic: a strictly-newer install belongs to a newer binary. Never touch
     // it — not even to repair a broken one — or two coexisting binaries downgrade
@@ -142,7 +142,7 @@ pub(crate) fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Re
     }
 
     cli.ensure_min_version()?;
-    ensure_marketplace(&cli, plugin, desired.source, scope, marketplace.is_some())?;
+    ensure_marketplace(&cli, plugin, &desired.source, scope, marketplace.is_some())?;
 
     if stale && structural_ok {
         plugin_update(&cli, &id, scope)?;
@@ -159,9 +159,11 @@ pub(crate) fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Re
 
 /// For embedded, (re)materialize so `current` is fresh, then add-if-absent or
 /// update-if-present. For github, add-or-update the `owner/repo` marketplace.
-fn ensure_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: Source, scope: &Scope, present: bool) -> Result<()> {
+fn ensure_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: &Source, scope: &Scope, present: bool) -> Result<()> {
     let source_str = match source {
-        Source::Embedded => materialize(plugin)?.display().to_string(),
+        Source::Embedded => materialize(plugin, TreeSource::Blob(plugin.blob()))?.display().to_string(),
+        // A path source materializes its on-disk tree the same way embedded does.
+        Source::Path(p) => materialize(plugin, TreeSource::Dir(p))?.display().to_string(),
         // v1 limitation: `ref_` is not yet pinned at the CLI (the ref syntax for
         // `marketplace add` is unverified); a github marketplace tracks its default
         // branch and its plugin version is whatever the repo's plugin.json carries.
@@ -176,11 +178,11 @@ fn ensure_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: Source, scope: &
     Ok(())
 }
 
-fn structural_ok(entry: &PluginEntry, marketplace: Option<&MarketplaceEntry>, source: Source) -> bool {
+fn structural_ok(entry: &PluginEntry, marketplace: Option<&MarketplaceEntry>, source: &Source) -> bool {
     let files_ok = entry.install_path.as_ref().is_none_or(|p| Path::new(p).exists());
     let marketplace_ok = match source {
-        // Embedded: the local marketplace path must still resolve (not moved/deleted).
-        Source::Embedded => marketplace.is_some_and(|m| m.path.as_ref().is_none_or(|p| Path::new(p).exists())),
+        // Embedded/path: the local marketplace path must still resolve (not moved/deleted).
+        Source::Embedded | Source::Path(_) => marketplace.is_some_and(|m| m.path.as_ref().is_none_or(|p| Path::new(p).exists())),
         Source::GitHub { .. } => marketplace.is_some(),
     };
     files_ok && marketplace_ok

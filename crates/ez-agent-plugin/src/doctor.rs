@@ -68,7 +68,7 @@ impl fmt::Display for DoctorReport {
     }
 }
 
-pub(crate) fn doctor(plugin: &Plugin, source: Source) -> Result<DoctorReport> {
+pub(crate) fn doctor(plugin: &Plugin, source: &Source) -> Result<DoctorReport> {
     let mut checks = Vec::new();
 
     checks.push(check_host_binary());
@@ -172,7 +172,7 @@ fn check_registered(cli: &ClaudeCli, plugin: &Plugin, checks: &mut Vec<DoctorChe
     }
 }
 
-fn check_validate(plugin: &Plugin, source: Source) -> DoctorCheck {
+fn check_validate(plugin: &Plugin, source: &Source) -> DoctorCheck {
     let name = "manifest validates";
     let target = validate_target(plugin, source);
     let Some(target) = target else {
@@ -198,9 +198,10 @@ fn check_validate(plugin: &Plugin, source: Source) -> DoctorCheck {
     }
 }
 
-fn validate_target(plugin: &Plugin, source: Source) -> Option<PathBuf> {
+fn validate_target(plugin: &Plugin, source: &Source) -> Option<PathBuf> {
     match source {
-        Source::Embedded => {
+        // Both materialize `current`; the on-disk `current` is the validate target.
+        Source::Embedded | Source::Path(_) => {
             let current = data_root(plugin).ok()?.join("current");
             current.exists().then_some(current)
         }
@@ -208,29 +209,35 @@ fn validate_target(plugin: &Plugin, source: Source) -> Option<PathBuf> {
     }
 }
 
-fn check_tree_hash(plugin: &Plugin, source: Source) -> DoctorCheck {
+fn check_tree_hash(plugin: &Plugin, source: &Source) -> DoctorCheck {
     let name = "current tree matches embedded";
-    match source {
-        Source::GitHub { .. } => DoctorCheck { name, status: CheckStatus::Ok("github source; not applicable".into()) },
-        Source::Embedded => {
-            let current = match data_root(plugin) {
-                Ok(root) => root.join("current"),
-                Err(e) => return DoctorCheck { name, status: CheckStatus::Warn(format!("no data root: {e}")) },
-            };
-            if !current.exists() {
-                return DoctorCheck { name, status: CheckStatus::Warn("nothing materialized yet".into()) };
-            }
-            match dir_hash(&current) {
-                Ok(on_disk) if on_disk == tree_hash(plugin.tree()) => DoctorCheck { name, status: CheckStatus::Ok("hashes match".into()) },
-                Ok(_) => DoctorCheck {
-                    name,
-                    status: CheckStatus::Fail {
-                        problem: "the `current` tree does not match the embedded tree (stale or corrupt pointer)".into(),
-                        fix: "re-run the host's `update` to re-materialize".into(),
-                    },
-                },
-                Err(e) => DoctorCheck { name, status: CheckStatus::Warn(format!("could not hash current tree: {e}")) },
-            }
+    if let Source::GitHub { .. } = source {
+        return DoctorCheck { name, status: CheckStatus::Ok("github source; not applicable".into()) };
+    }
+    let current = match data_root(plugin) {
+        Ok(root) => root.join("current"),
+        Err(e) => return DoctorCheck { name, status: CheckStatus::Warn(format!("no data root: {e}")) },
+    };
+    if !current.exists() {
+        return DoctorCheck { name, status: CheckStatus::Warn("nothing materialized yet".into()) };
+    }
+    // Embedded hashes the decompressed blob; Path hashes its on-disk tree.
+    let expected = match source {
+        Source::Path(p) => dir_hash(p),
+        _ => tree_hash(plugin.blob()),
+    };
+    match (dir_hash(&current), expected) {
+        (Ok(on_disk), Ok(exp)) if on_disk == exp => DoctorCheck { name, status: CheckStatus::Ok("hashes match".into()) },
+        (Ok(_), Ok(_)) => DoctorCheck {
+            name,
+            status: CheckStatus::Fail {
+                problem: "the `current` tree does not match its source tree (stale or corrupt pointer)".into(),
+                fix: "re-run the host's `update` to re-materialize".into(),
+            },
+        },
+        (a, b) => {
+            let err = a.err().or(b.err()).map(|e| e.to_string()).unwrap_or_default();
+            DoctorCheck { name, status: CheckStatus::Warn(format!("could not hash current tree: {err}")) }
         }
     }
 }
@@ -242,7 +249,9 @@ fn check_tree_hash(plugin: &Plugin, source: Source) -> DoctorCheck {
 fn check_hook_commands(plugin: &Plugin) -> DoctorCheck {
     let name = "hook commands on PATH";
     let mut commands = Vec::new();
-    collect_hook_commands(plugin, &mut commands);
+    if let Err(e) = collect_hook_commands(plugin, &mut commands) {
+        return DoctorCheck { name, status: CheckStatus::Warn(format!("could not read the embedded tree: {e}")) };
+    }
     commands.sort();
     commands.dedup();
 
@@ -260,33 +269,23 @@ fn check_hook_commands(plugin: &Plugin) -> DoctorCheck {
     }
 }
 
-fn collect_hook_commands(plugin: &Plugin, out: &mut Vec<String>) {
-    for file in json_files(plugin.tree()) {
-        if let Ok(value) = serde_json::from_slice::<Value>(file) {
+fn collect_hook_commands(plugin: &Plugin, out: &mut Vec<String>) -> Result<()> {
+    for (rel, bytes) in crate::materialize::blob_entries(plugin.blob())? {
+        if is_hook_json(&rel)
+            && let Ok(value) = serde_json::from_slice::<Value>(&bytes)
+        {
             walk_commands(&value, out);
         }
     }
+    Ok(())
 }
 
-fn json_files<'a>(tree: &'a include_dir::Dir<'a>) -> Vec<&'a [u8]> {
-    fn walk<'a>(entries: &'a [include_dir::DirEntry<'a>], out: &mut Vec<&'a [u8]>) {
-        for entry in entries {
-            match entry {
-                include_dir::DirEntry::Dir(d) => walk(d.entries(), out),
-                include_dir::DirEntry::File(f) => {
-                    let path = f.path();
-                    let is_hook_json = path.extension().is_some_and(|e| e == "json")
-                        && (path.file_name().is_some_and(|n| n == "plugin.json") || path.components().any(|c| c.as_os_str() == "hooks"));
-                    if is_hook_json {
-                        out.push(f.contents());
-                    }
-                }
-            }
-        }
+fn is_hook_json(rel: &str) -> bool {
+    let rel = rel.replace('\\', "/");
+    if !rel.ends_with(".json") {
+        return false;
     }
-    let mut out = Vec::new();
-    walk(tree.entries(), &mut out);
-    out
+    rel.rsplit('/').next() == Some("plugin.json") || rel.split('/').any(|c| c == "hooks")
 }
 
 fn walk_commands(value: &Value, out: &mut Vec<String>) {

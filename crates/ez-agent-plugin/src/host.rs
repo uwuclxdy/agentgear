@@ -47,11 +47,22 @@ impl Scope {
 /// overridable per call. One binary can ship an embedded tree yet still let users
 /// track a GitHub ref so `claude plugin update` pulls new plugin versions without
 /// waiting on a binary release.
+///
+/// Not `Copy`: [`Source::Path`] carries a `PathBuf`.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
+    /// The compile-time blob baked into the binary (needs the `embed` feature +
+    /// derive attr). Decompressed and materialized locally.
     Embedded,
-    GitHub { repo: &'static str, ref_: &'static str },
+    GitHub {
+        repo: &'static str,
+        ref_: &'static str,
+    },
+    /// An on-disk plugin tree (a dir holding `.claude-plugin/plugin.json`),
+    /// materialized like [`Source::Embedded`] but read from `path` at runtime. Lets
+    /// a `default-features = false` host with no baked blob still install.
+    Path(PathBuf),
 }
 
 /// What a reconcile should converge to. Held separately from [`Scope`] because a
@@ -103,7 +114,9 @@ pub struct Plugin {
     pub marketplace: &'static str,
     pub version: &'static str,
     pub agents: &'static [&'static str],
-    pub(crate) tree: &'static include_dir::Dir<'static>,
+    /// The plugin tree baked in as a compressed `.tar.br` (empty when the derive's
+    /// `embed` attr is off). Decompressed by `materialize` for [`Source::Embedded`].
+    pub(crate) blob: &'static [u8],
 }
 
 impl std::fmt::Debug for Plugin {
@@ -123,8 +136,8 @@ impl Plugin {
         format!("{}@{}", self.name, self.marketplace)
     }
 
-    pub(crate) fn tree(&self) -> &'static include_dir::Dir<'static> {
-        self.tree
+    pub(crate) fn blob(&self) -> &'static [u8] {
+        self.blob
     }
 }
 
@@ -137,8 +150,10 @@ pub trait PluginHost {
     const DEFAULT_SOURCE: Source;
     const AGENTS: &'static [&'static str];
 
-    /// The tree baked in via `include_dir!` in the host's own crate.
-    fn embedded_tree() -> &'static include_dir::Dir<'static>;
+    /// The plugin tree baked into the host crate as a compressed `.tar.br` blob
+    /// (the derive's `include_bytes!`). Empty when the derive's `embed` attr is
+    /// off; [`Source::Embedded`] then errors at materialize.
+    fn embedded_blob() -> &'static [u8];
 
     fn descriptor() -> Plugin {
         Plugin {
@@ -146,7 +161,7 @@ pub trait PluginHost {
             marketplace: Self::MARKETPLACE,
             version: Self::VERSION,
             agents: Self::AGENTS,
-            tree: Self::embedded_tree(),
+            blob: Self::embedded_blob(),
         }
     }
 
@@ -172,7 +187,7 @@ pub trait PluginHost {
     }
 
     fn doctor() -> Result<DoctorReport> {
-        crate::doctor::doctor(&Self::descriptor(), Self::DEFAULT_SOURCE)
+        crate::doctor::doctor(&Self::descriptor(), &Self::DEFAULT_SOURCE)
     }
 }
 

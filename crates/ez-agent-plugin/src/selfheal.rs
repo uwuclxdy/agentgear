@@ -40,8 +40,9 @@ pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
 
         (false, Some(_present)) => {
             // Adopt: converge (repairs it if broken), then record ownership.
-            let outcome = claude::reconcile(plugin, &Desired { source, reenable: false }, &scope)?;
-            stamp::write(plugin, &scope, source)?;
+            let desired = Desired { source, reenable: false };
+            let outcome = claude::reconcile(plugin, &desired, &scope)?;
+            stamp::write(plugin, &scope, &desired.source)?;
             Ok(match outcome {
                 Outcome::NoOp => Outcome::Adopted,
                 other => other,
@@ -63,8 +64,9 @@ pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
             if files_ok && monotonic_current {
                 return Ok(Outcome::NoOp); // healthy fast path: no mutation, no downgrade
             }
-            let outcome = claude::reconcile(plugin, &Desired { source, reenable: false }, &scope)?;
-            stamp::write(plugin, &scope, source)?;
+            let desired = Desired { source, reenable: false };
+            let outcome = claude::reconcile(plugin, &desired, &scope)?;
+            stamp::write(plugin, &scope, &desired.source)?;
             Ok(outcome)
         }
     }

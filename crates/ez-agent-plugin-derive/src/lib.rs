@@ -1,8 +1,9 @@
 //! `#[derive(PluginHost)]` + `#[plugin(..)]`. At expansion the macro reads the
 //! shipped `plugin.json` (existence, JSON validity, and a name cross-check against
-//! the `name` attr), bakes the tree in via `include_dir!`, implements the
-//! `PluginHost` trait from the attrs, and emits a const-panic guard that fires if
-//! the host forgot its `build.rs` (design §7, §10).
+//! the `name` attr), bakes the compressed tree in via `include_bytes!` of the blob
+//! the build.rs produced (`EZ_PLUGIN_BLOB`), implements the `PluginHost` trait from
+//! the attrs, and emits a const-panic guard that fires if the host forgot its
+//! `build.rs` (design §7, §10). `embed = false` bakes nothing (an empty blob).
 
 use std::path::Path;
 
@@ -26,6 +27,7 @@ struct Attrs {
     default_source: String,
     github_repo: Option<String>,
     agents: Vec<String>,
+    embed: bool,
     span: proc_macro2::Span,
 }
 
@@ -38,9 +40,18 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &attrs.name;
     let marketplace = &attrs.marketplace;
     let version = &attrs.version;
-    let tree = &attrs.tree;
     let agents = &attrs.agents;
     let default_source = default_source_tokens(&attrs)?;
+
+    // `embed = true` (default): bake the build.rs blob via `include_bytes!` of the
+    // `EZ_PLUGIN_BLOB` path. `embed = false`: an empty slice (`Source::Embedded`
+    // then errors at materialize). Pairs with the lib's `embed` feature: turning
+    // that off but leaving this on makes `env!("EZ_PLUGIN_BLOB")` a compile error.
+    let embedded_blob_body = if attrs.embed {
+        quote! { ::core::include_bytes!(::core::env!("EZ_PLUGIN_BLOB")) }
+    } else {
+        quote! { &[] }
+    };
 
     Ok(quote! {
         impl ::ez_agent_plugin::PluginHost for #ident {
@@ -50,11 +61,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             const DEFAULT_SOURCE: ::ez_agent_plugin::Source = #default_source;
             const AGENTS: &'static [&'static str] = &[#(#agents),*];
 
-            fn embedded_tree() -> &'static ::ez_agent_plugin::__private::include_dir_crate::Dir<'static> {
-                use ::ez_agent_plugin::__private::include_dir_crate as include_dir;
-                static TREE: ::ez_agent_plugin::__private::include_dir_crate::Dir<'static> =
-                    ::ez_agent_plugin::__private::include_dir_macro!(#tree);
-                &TREE
+            fn embedded_blob() -> &'static [u8] {
+                #embedded_blob_body
             }
         }
 
@@ -80,6 +88,7 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
     let mut default_source: Option<String> = None;
     let mut github_repo: Option<String> = None;
     let mut agents: Option<Vec<String>> = None;
+    let mut embed: Option<bool> = None;
 
     let attr = input
         .attrs
@@ -103,6 +112,7 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
             "default_source" => default_source = Some(lit_str(&pair.value)?),
             "github_repo" => github_repo = Some(lit_str(&pair.value)?),
             "agents" => agents = Some(str_array(&pair.value)?),
+            "embed" => embed = Some(lit_bool(&pair.value)?),
             other => return Err(syn::Error::new_spanned(&pair.path, format!("unknown `plugin` key `{other}`"))),
         }
     }
@@ -116,8 +126,9 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
     if agents.is_empty() {
         return Err(syn::Error::new(span, "`agents` must list at least one backend; an empty list is a silent no-op host"));
     }
+    let embed = embed.unwrap_or(true);
 
-    Ok(Attrs { name, marketplace, version, tree, default_source, github_repo, agents, span })
+    Ok(Attrs { name, marketplace, version, tree, default_source, github_repo, agents, embed, span })
 }
 
 fn default_source_tokens(attrs: &Attrs) -> syn::Result<TokenStream2> {
@@ -167,6 +178,13 @@ fn lit_str(expr: &Expr) -> syn::Result<String> {
     match expr {
         Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) => Ok(s.value()),
         other => Err(syn::Error::new_spanned(other, "expected a string literal")),
+    }
+}
+
+fn lit_bool(expr: &Expr) -> syn::Result<bool> {
+    match expr {
+        Expr::Lit(ExprLit { lit: Lit::Bool(b), .. }) => Ok(b.value),
+        other => Err(syn::Error::new_spanned(other, "expected a bool literal (`true` or `false`)")),
     }
 }
 

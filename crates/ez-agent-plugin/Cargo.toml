@@ -11,21 +11,26 @@ authors.workspace = true
 workspace = true
 
 [features]
-default = ["derive", "claude"]
+default = ["derive", "claude", "embed"]
 derive = ["dep:ez-agent-plugin-derive"]
 claude = []
 codex = []
 opencode = []
+# Bakes the plugin tree into the binary as a compressed `.tar.br` blob (build.rs
+# tars + brotli-compresses it; materialize decompresses). Off = zero embed bytes
+# for a github/path-only host; pair with `embed = false` on the derive.
+embed = ["dep:tar", "dep:brotli"]
 
 [dependencies]
+brotli = { version = "8.0.4", optional = true }
 dirs = "6.0.0"
 ez-agent-plugin-derive = { workspace = true, optional = true }
 fastrand = "2.4.1"
 fs4 = { version = "1.1.0", features = ["sync"] }
-include_dir = "0.7.4"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 sha2 = "0.11.0"
+tar = { version = "0.4.46", optional = true, default-features = false }
 thiserror = "2.0.18"
 which = "8.0.4"
 

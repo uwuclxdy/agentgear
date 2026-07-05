@@ -6,8 +6,10 @@
 //!
 //! It enforces `plugin.json` `version` == `CARGO_PKG_VERSION` at build time (CC
 //! caches on version, so a mismatch would ship a silent no-op), tracks the tree
-//! for rebuilds (`include_dir!` has no rebuild tracking of its own), and emits the
-//! `EZ_PLUGIN_GUARD` env the derive's const-panic checks for.
+//! for rebuilds, and emits the `EZ_PLUGIN_GUARD` env the derive's const-panic
+//! checks for. With the `embed` feature (default) it also tars + brotli-compresses
+//! the tree to `$OUT_DIR/ez-plugin.tar.br` and emits `EZ_PLUGIN_BLOB` (the path the
+//! derive's `include_bytes!` bakes in).
 
 use std::path::Path;
 
@@ -44,6 +46,21 @@ pub fn assert_plugin_version_at(tree_dir: impl AsRef<Path>) {
 
     println!("cargo:rerun-if-changed={}", tree_dir.display());
     println!("cargo:rustc-env=EZ_PLUGIN_GUARD=1");
+
+    #[cfg(feature = "embed")]
+    embed_blob(tree_dir);
+}
+
+/// Compress the tree to `$OUT_DIR/ez-plugin.tar.br` and point the derive's
+/// `include_bytes!` at it via `EZ_PLUGIN_BLOB`.
+#[cfg(feature = "embed")]
+fn embed_blob(tree_dir: &Path) {
+    let out_dir = env_or_panic("OUT_DIR");
+    let blob = crate::materialize::compress_dir(tree_dir)
+        .unwrap_or_else(|e| panic!("ez-agent-plugin: failed to compress the plugin tree at {} ({e})", tree_dir.display()));
+    let blob_path = Path::new(&out_dir).join("ez-plugin.tar.br");
+    std::fs::write(&blob_path, &blob).unwrap_or_else(|e| panic!("ez-agent-plugin: cannot write {} ({e})", blob_path.display()));
+    println!("cargo:rustc-env=EZ_PLUGIN_BLOB={}", blob_path.display());
 }
 
 fn env_or_panic(key: &str) -> String {

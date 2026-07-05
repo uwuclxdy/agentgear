@@ -9,15 +9,17 @@ use crate::{lock, stamp};
 
 pub(crate) fn install(plugin: &Plugin, scope: Scope, source: Source) -> Result<Outcome> {
     let _lock = lock::acquire()?;
-    let outcome = reconcile_all(plugin, &Desired { source, reenable: true }, &scope)?;
-    stamp::write(plugin, &scope, source)?;
+    let desired = Desired { source, reenable: true };
+    let outcome = reconcile_all(plugin, &desired, &scope)?;
+    stamp::write(plugin, &scope, &desired.source)?;
     Ok(outcome)
 }
 
 pub(crate) fn update(plugin: &Plugin, scope: Scope, source: Source) -> Result<Outcome> {
     let _lock = lock::acquire()?;
-    let outcome = reconcile_all(plugin, &Desired { source, reenable: true }, &scope)?;
-    stamp::write(plugin, &scope, source)?;
+    let desired = Desired { source, reenable: true };
+    let outcome = reconcile_all(plugin, &desired, &scope)?;
+    stamp::write(plugin, &scope, &desired.source)?;
     Ok(outcome)
 }
 

@@ -1,7 +1,13 @@
-//! Embedded-mode materialize: lay the baked plugin tree down as a content-keyed
-//! versioned dir and flip an atomic `current` pointer at it, so `claude plugin
-//! marketplace add <root>/current` always sees a complete tree and a crash mid-way
-//! leaves the prior `current` intact.
+//! Materialize: lay a plugin tree down as a content-keyed versioned dir and flip
+//! an atomic `current` pointer at it, so `claude plugin marketplace add
+//! <root>/current` always sees a complete tree and a crash mid-way leaves the
+//! prior `current` intact.
+//!
+//! The tree comes from one of two [`TreeSource`]s: the compile-time compressed
+//! blob baked into the binary (`Source::Embedded`, a `.tar.br` the build.rs
+//! produced) or an on-disk directory (`Source::Path`). Both flatten to the same
+//! `(rel-path, bytes)` entries before the write, so the rest of the pipeline is
+//! source-agnostic.
 //!
 //! ```text
 //! <data_root>/
@@ -13,7 +19,6 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use include_dir::{Dir, DirEntry};
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, IoContext, Result};
@@ -21,15 +26,34 @@ use crate::host::{Plugin, data_root};
 use crate::manifest::{MarketplaceManifest, MarketplacePlugin, PluginManifest};
 
 /// The generated file is excluded from tree hashing: it is a derived artifact, so
-/// an embedded tree (which ships only `plugin.json`) and a materialized tree (which
+/// a source tree (which ships only `plugin.json`) and a materialized tree (which
 /// also holds the generated one) must hash equal.
 const GENERATED_MARKETPLACE: &str = ".claude-plugin/marketplace.json";
+
+/// Where a materialize reads its plugin tree from. `Blob` is the compile-time
+/// `.tar.br` baked into the binary (`Source::Embedded`); `Dir` is an on-disk
+/// plugin tree (`Source::Path`).
+pub(crate) enum TreeSource<'a> {
+    Blob(&'a [u8]),
+    Dir(&'a Path),
+}
+
+impl TreeSource<'_> {
+    /// The tree flattened to `(relative-path, bytes)` file entries, ready to write.
+    fn entries(&self) -> Result<Vec<(String, Vec<u8>)>> {
+        match self {
+            TreeSource::Blob(blob) => blob_entries(blob),
+            TreeSource::Dir(dir) => dir_entries(dir),
+        }
+    }
+}
 
 /// Ensure `versions/<version>/` exists with the full tree + generated marketplace,
 /// then point `current` at it. Returns the `current` pointer path to hand to
 /// `marketplace add`. Idempotent: an existing version dir is reused (dedup across
-/// coexisting binaries).
-pub(crate) fn materialize(plugin: &Plugin) -> Result<PathBuf> {
+/// coexisting binaries), and its tree is not re-read (the blob is only
+/// decompressed when a write is actually needed).
+pub(crate) fn materialize(plugin: &Plugin, tree: TreeSource<'_>) -> Result<PathBuf> {
     let version = plugin.version;
     let unsafe_segment =
         |c: char| c.is_whitespace() || c.is_control() || std::path::is_separator(c) || matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*');
@@ -45,7 +69,8 @@ pub(crate) fn materialize(plugin: &Plugin) -> Result<PathBuf> {
 
     let version_dir = versions.join(version);
     if !version_dir.exists() {
-        write_version_dir(plugin, &versions, &version_dir)?;
+        let entries = tree.entries()?;
+        write_version_dir(plugin, &entries, &versions, &version_dir)?;
     }
 
     flip_pointer(&root, version, &version_dir)?;
@@ -55,13 +80,13 @@ pub(crate) fn materialize(plugin: &Plugin) -> Result<PathBuf> {
 /// Write the tree into a temp sibling, then atomically rename onto the versioned
 /// target. The target is created exactly once and never renamed onto while
 /// non-empty, so `ENOTEMPTY` cannot happen on the happy path.
-fn write_version_dir(plugin: &Plugin, versions: &Path, version_dir: &Path) -> Result<()> {
+fn write_version_dir(plugin: &Plugin, entries: &[(String, Vec<u8>)], versions: &Path, version_dir: &Path) -> Result<()> {
     let tmp = versions.join(format!("{}.tmp.{}", plugin.version, rand_suffix()));
     fs::create_dir_all(&tmp).io_ctx(|| format!("creating {}", tmp.display()))?;
 
     let result = (|| {
-        write_entries(plugin.tree().entries(), &tmp)?;
-        let mkt = generate_marketplace(plugin)?;
+        write_entries(entries, &tmp)?;
+        let mkt = generate_marketplace(plugin, entries)?;
         let mkt_path = tmp.join(GENERATED_MARKETPLACE);
         if let Some(parent) = mkt_path.parent() {
             fs::create_dir_all(parent).io_ctx(|| format!("creating {}", parent.display()))?;
@@ -89,30 +114,21 @@ fn write_version_dir(plugin: &Plugin, versions: &Path, version_dir: &Path) -> Re
     Ok(())
 }
 
-fn write_entries(entries: &[DirEntry<'_>], dest: &Path) -> Result<()> {
-    for entry in entries {
-        match entry {
-            DirEntry::Dir(dir) => {
-                let path = dest.join(dir.path());
-                fs::create_dir_all(&path).io_ctx(|| format!("creating {}", path.display()))?;
-                write_entries(dir.entries(), dest)?;
-            }
-            DirEntry::File(file) => {
-                let path = dest.join(file.path());
-                if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent).io_ctx(|| format!("creating {}", parent.display()))?;
-                }
-                write_no_bom(&path, file.contents())?;
-            }
+fn write_entries(entries: &[(String, Vec<u8>)], dest: &Path) -> Result<()> {
+    for (rel, bytes) in entries {
+        let path = dest.join(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).io_ctx(|| format!("creating {}", parent.display()))?;
         }
+        write_no_bom(&path, bytes)?;
     }
     Ok(())
 }
 
-/// Write bytes verbatim and fsync the file data. serde_json and `include_dir`
-/// never prepend a UTF-8 BOM (which `claude plugin validate` rejects on windows);
-/// the sync makes the contents durable before the version-dir rename, so a
-/// power-loss cannot leave a `current` pointer at a zero-length tree.
+/// Write bytes verbatim and fsync the file data. Neither brotli/tar output nor an
+/// on-disk tree carries a UTF-8 BOM (which `claude plugin validate` rejects on
+/// windows); the sync makes the contents durable before the version-dir rename, so
+/// a power-loss cannot leave a `current` pointer at a zero-length tree.
 fn write_no_bom(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut f = File::create(path).io_ctx(|| format!("creating {}", path.display()))?;
     f.write_all(bytes).io_ctx(|| format!("writing {}", path.display()))?;
@@ -120,8 +136,8 @@ fn write_no_bom(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn generate_marketplace(plugin: &Plugin) -> Result<Vec<u8>> {
-    let manifest = read_plugin_manifest(plugin.tree())?;
+fn generate_marketplace(plugin: &Plugin, entries: &[(String, Vec<u8>)]) -> Result<Vec<u8>> {
+    let manifest = read_plugin_manifest(entries)?;
     let owner = manifest
         .author
         .ok_or_else(|| {
@@ -140,33 +156,141 @@ fn generate_marketplace(plugin: &Plugin) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Read the shipped `plugin.json` out of the embedded tree.
-pub(crate) fn read_plugin_manifest(tree: &Dir<'_>) -> Result<PluginManifest> {
-    let file = find_plugin_json(tree).ok_or_else(|| Error::Tree("embedded tree has no .claude-plugin/plugin.json".into()))?;
-    serde_json::from_slice(file.contents()).map_err(|source| Error::Json { what: "plugin.json".into(), source })
+/// Read the shipped `plugin.json` out of the flattened tree entries.
+pub(crate) fn read_plugin_manifest(entries: &[(String, Vec<u8>)]) -> Result<PluginManifest> {
+    let bytes = entries
+        .iter()
+        .find(|(rel, _)| is_plugin_json(rel))
+        .map(|(_, b)| b)
+        .ok_or_else(|| Error::Tree("plugin tree has no .claude-plugin/plugin.json".into()))?;
+    serde_json::from_slice(bytes).map_err(|source| Error::Json { what: "plugin.json".into(), source })
 }
 
-fn find_plugin_json<'a>(tree: &'a Dir<'a>) -> Option<&'a include_dir::File<'a>> {
-    fn walk<'a>(entries: &'a [DirEntry<'a>]) -> Option<&'a include_dir::File<'a>> {
-        for entry in entries {
-            match entry {
-                DirEntry::File(f) => {
-                    let is_plugin_json = f.path().file_name().is_some_and(|n| n == "plugin.json");
-                    let in_claude_plugin = f.path().parent().and_then(Path::file_name).is_some_and(|d| d == ".claude-plugin");
-                    if is_plugin_json && in_claude_plugin {
-                        return Some(f);
-                    }
-                }
-                DirEntry::Dir(d) => {
-                    if let Some(found) = walk(d.entries()) {
-                        return Some(found);
-                    }
-                }
-            }
-        }
-        None
+fn is_plugin_json(rel: &str) -> bool {
+    let rel = rel.replace('\\', "/");
+    rel == ".claude-plugin/plugin.json" || rel.ends_with("/.claude-plugin/plugin.json")
+}
+
+// --- tree sources ------------------------------------------------------------
+
+/// Decompress the embedded `.tar.br` blob and flatten it to file entries. Feature
+/// `embed` gates the brotli/tar deps; without it this errors (a `default-features
+/// = false` host cannot use `Source::Embedded`).
+#[cfg(feature = "embed")]
+pub(crate) fn blob_entries(blob: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
+    use std::io::Read;
+
+    if blob.is_empty() {
+        return Err(Error::Tree(
+            "embedded blob is empty: the derive's `embed` attr is off but `Source::Embedded` was requested (use `Source::Path`/`Source::GitHub` or turn `embed` on)".into(),
+        ));
     }
-    walk(tree.entries())
+    let mut tar_bytes = Vec::new();
+    brotli::Decompressor::new(std::io::Cursor::new(blob), 4096)
+        .read_to_end(&mut tar_bytes)
+        .io_ctx(|| "brotli-decompressing the embedded plugin blob".to_string())?;
+
+    let mut archive = tar::Archive::new(std::io::Cursor::new(tar_bytes));
+    let mut out = Vec::new();
+    for entry in archive.entries().io_ctx(|| "reading the embedded plugin tar".to_string())? {
+        let mut entry = entry.io_ctx(|| "reading a plugin tar entry".to_string())?;
+        if entry.header().entry_type().is_dir() {
+            continue;
+        }
+        let raw = entry.path().io_ctx(|| "reading a plugin tar entry path".to_string())?;
+        let rel = normalize_rel(&raw.to_string_lossy())?;
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).io_ctx(|| format!("reading plugin tar entry {rel}"))?;
+        out.push((rel, bytes));
+    }
+    Ok(out)
+}
+
+#[cfg(not(feature = "embed"))]
+pub(crate) fn blob_entries(_blob: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
+    Err(Error::Tree("this binary was built without the `embed` feature; use `Source::Path` or `Source::GitHub`, or enable `embed`".into()))
+}
+
+/// Read an on-disk plugin tree (`Source::Path`) into file entries.
+fn dir_entries(dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
+    if !dir.join(".claude-plugin").join("plugin.json").exists() {
+        return Err(Error::Tree(format!("{} is not a plugin tree (no .claude-plugin/plugin.json)", dir.display())));
+    }
+    let mut out = Vec::new();
+    collect_dir(dir, dir, &mut out)?;
+    Ok(out)
+}
+
+fn collect_dir(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) -> Result<()> {
+    for entry in fs::read_dir(dir).io_ctx(|| format!("reading {}", dir.display()))? {
+        let entry = entry.io_ctx(|| format!("reading entry in {}", dir.display()))?;
+        let path = entry.path();
+        let ft = entry.file_type().io_ctx(|| format!("stat {}", path.display()))?;
+        if ft.is_dir() {
+            collect_dir(root, &path, out)?;
+        } else if ft.is_file() {
+            let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
+            let bytes = fs::read(&path).io_ctx(|| format!("reading {}", path.display()))?;
+            out.push((rel, bytes));
+        }
+    }
+    Ok(())
+}
+
+/// Normalize a tar entry path to a forward-slash relative path, rejecting any
+/// `..`/absolute segment so a corrupt blob cannot write outside the temp dir.
+#[cfg(feature = "embed")]
+fn normalize_rel(rel: &str) -> Result<String> {
+    let rel = rel.replace('\\', "/");
+    let rel = rel.trim_start_matches("./").trim_start_matches('/');
+    if rel.is_empty() || rel.split('/').any(|c| c == "..") {
+        return Err(Error::Tree(format!("plugin tree entry {rel:?} escapes the tree (`..` or absolute path)")));
+    }
+    Ok(rel.to_string())
+}
+
+// --- compression (build.rs helper + tests) -----------------------------------
+
+/// Tar the plugin tree at `dir` and brotli-compress it into a `.tar.br` blob. Used
+/// by `build::assert_plugin_version` to bake the embedded blob; deterministic
+/// (sorted walk, contents only, no mtime).
+#[cfg(feature = "embed")]
+pub(crate) fn compress_dir(dir: &Path) -> Result<Vec<u8>> {
+    if !dir.join(".claude-plugin").join("plugin.json").exists() {
+        return Err(Error::Tree(format!("{} is not a plugin tree (no .claude-plugin/plugin.json)", dir.display())));
+    }
+    let mut builder = tar::Builder::new(Vec::new());
+    append_tree(&mut builder, dir, dir)?;
+    let tar_bytes = builder.into_inner().io_ctx(|| "finishing the plugin tar".to_string())?;
+
+    let mut out = Vec::new();
+    {
+        // quality 11 (max ratio), lgwin 22 (max window); one-time per tree change.
+        let mut w = brotli::CompressorWriter::new(&mut out, 4096, 11, 22);
+        w.write_all(&tar_bytes).io_ctx(|| "brotli-compressing the plugin tar".to_string())?;
+    }
+    Ok(out)
+}
+
+#[cfg(feature = "embed")]
+fn append_tree(builder: &mut tar::Builder<Vec<u8>>, base: &Path, dir: &Path) -> Result<()> {
+    let mut paths: Vec<PathBuf> =
+        fs::read_dir(dir).io_ctx(|| format!("reading {}", dir.display()))?.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    paths.sort();
+    for path in paths {
+        let meta = fs::symlink_metadata(&path).io_ctx(|| format!("stat {}", path.display()))?;
+        if meta.is_dir() {
+            append_tree(builder, base, &path)?;
+        } else if meta.is_file() {
+            let rel = path.strip_prefix(base).unwrap_or(&path);
+            let data = fs::read(&path).io_ctx(|| format!("reading {}", path.display()))?;
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            builder.append_data(&mut header, rel, data.as_slice()).io_ctx(|| format!("adding {} to the plugin tar", path.display()))?;
+        }
+    }
+    Ok(())
 }
 
 // --- pointer flip ------------------------------------------------------------
@@ -218,29 +342,18 @@ fn rand_suffix() -> String {
 
 // --- content hashing ---------------------------------------------------------
 
-/// Stable hash of the embedded source tree (excludes the generated marketplace).
-pub(crate) fn tree_hash(tree: &Dir<'_>) -> String {
-    let mut files: Vec<(String, &[u8])> = Vec::new();
-    collect_embedded(tree.entries(), &mut files);
-    hash_pairs(&mut files)
-}
-
-fn collect_embedded<'a>(entries: &'a [DirEntry<'a>], out: &mut Vec<(String, &'a [u8])>) {
-    for entry in entries {
-        match entry {
-            DirEntry::Dir(d) => collect_embedded(d.entries(), out),
-            DirEntry::File(f) => {
-                let rel = f.path().to_string_lossy().replace('\\', "/");
-                if rel != GENERATED_MARKETPLACE {
-                    out.push((rel, f.contents()));
-                }
-            }
-        }
-    }
+/// Stable hash of the embedded source tree (excludes the generated marketplace),
+/// for the doctor check that `current` has not gone stale or corrupt. Decompresses
+/// the blob first, so it errors without the `embed` feature.
+pub(crate) fn tree_hash(blob: &[u8]) -> Result<String> {
+    let entries = blob_entries(blob)?;
+    let mut files: Vec<(String, &[u8])> =
+        entries.iter().filter(|(rel, _)| rel != GENERATED_MARKETPLACE).map(|(rel, bytes)| (rel.clone(), bytes.as_slice())).collect();
+    Ok(hash_pairs(&mut files))
 }
 
 /// Stable hash of a materialized tree on disk (same exclusion), for the doctor
-/// check that `current` has not gone stale or corrupt versus the embedded tree.
+/// check that `current` matches its source tree.
 pub(crate) fn dir_hash(root: &Path) -> Result<String> {
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     collect_disk(root, root, &mut files)?;
@@ -284,6 +397,6 @@ fn hash_pairs(files: &mut [(String, &[u8])]) -> String {
     hex
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "embed"))]
 #[path = "../tests/unit/materialize.rs"]
 mod materialize_tests;

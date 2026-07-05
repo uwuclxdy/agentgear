@@ -40,8 +40,13 @@ impl Env {
 
     /// Run a fixture subcommand, returning (exit_ok, stdout-trimmed).
     fn fixture(&self, sub: &str) -> (bool, String) {
+        self.fixture_args(&[sub])
+    }
+
+    /// Run the fixture with arbitrary args (e.g. `["setup", "--path", dir]`).
+    fn fixture_args(&self, args: &[&str]) -> (bool, String) {
         let mut cmd = Command::new(BIN);
-        cmd.arg(sub);
+        cmd.args(args);
         self.apply(&mut cmd);
         let out = cmd.output().unwrap();
         (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
@@ -147,6 +152,28 @@ fn full_lifecycle() {
     assert!(ok && out == "Removed", "uninstall failed: {out}");
     assert_eq!(env.plugin_list(), "[]", "plugin still present after uninstall");
     assert_eq!(env.marketplace_list(), "[]", "marketplace not refcount-removed after uninstall");
+}
+
+#[test]
+#[ignore = "spawns the real `claude` CLI; run with --ignored"]
+fn install_via_path_source() {
+    if !claude_available() {
+        eprintln!("skipping: `claude` not on PATH");
+        return;
+    }
+    let env = Env::new("path");
+    let plugin_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("plugin");
+
+    // Source::Path materializes an on-disk tree instead of the baked blob; it must
+    // reach the same registered state as the embedded path.
+    let (ok, out) = env.fixture_args(&["setup", "--path", plugin_dir.to_str().unwrap()]);
+    assert!(ok, "path setup failed: {out}");
+    assert_eq!(out, "Installed", "path install did not register");
+    assert!(env.plugin_list().contains(PLUGIN_ID), "plugin not registered after path setup");
+
+    let (ok, out) = env.fixture("uninstall");
+    assert!(ok && out == "Removed", "uninstall after path install failed: {out}");
+    assert_eq!(env.plugin_list(), "[]", "plugin still present after uninstall");
 }
 
 #[test]

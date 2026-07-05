@@ -24,10 +24,11 @@ pub(crate) struct Marker {
     pub project_path: Option<String>,
 }
 
-fn source_mode(source: Source) -> &'static str {
+fn source_mode(source: &Source) -> &'static str {
     match source {
         Source::Embedded => "embedded",
         Source::GitHub { .. } => "github",
+        Source::Path(_) => "path",
     }
 }
 
@@ -51,7 +52,7 @@ pub(crate) fn read(plugin: &Plugin, scope: &Scope) -> Result<Option<Marker>> {
     }
 }
 
-pub(crate) fn write(plugin: &Plugin, scope: &Scope, source: Source) -> Result<()> {
+pub(crate) fn write(plugin: &Plugin, scope: &Scope, source: &Source) -> Result<()> {
     let path = marker_path(plugin, scope)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).io_ctx(|| format!("creating {}", parent.display()))?;

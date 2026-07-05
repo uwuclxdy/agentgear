@@ -27,7 +27,7 @@ pub trait AgentBackend: sealed::Sealed {
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome>;
     /// Undo the install (does not touch the stamp marker; the caller owns that).
     fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome>;
-    fn report(&self, plugin: &Plugin, source: Source) -> DoctorReport;
+    fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport;
 }
 
 /// Resolve a backend by id. v1 ships only the Claude backend; the match is where
