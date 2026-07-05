@@ -30,6 +30,15 @@ fn main() -> ExitCode {
     match sub.as_str() {
         "setup" | "install" => report(FixtureHost::install(Scope::User, source_from_args())),
         "self-heal" => report(FixtureHost::self_heal()),
+        // UserPromptSubmit hook entry: prints the restart-pending notice as plain
+        // stdout (CC treats non-JSON stdout as context) when an update landed, else
+        // silent. Always exits 0 so it never blocks the prompt.
+        "check-restart" => {
+            if let Some(message) = FixtureHost::restart_pending() {
+                println!("{message}");
+            }
+            ExitCode::SUCCESS
+        }
         "update" => report(FixtureHost::update(Scope::User)),
         "uninstall" => report(FixtureHost::uninstall(Scope::User)),
         "doctor" => match FixtureHost::doctor() {
@@ -43,7 +52,7 @@ fn main() -> ExitCode {
             }
         },
         other => {
-            eprintln!("usage: host_fixture <setup|self-heal|update|uninstall|doctor> (got {other:?})");
+            eprintln!("usage: host_fixture <setup|self-heal|check-restart|update|uninstall|doctor> (got {other:?})");
             ExitCode::from(2)
         }
     }

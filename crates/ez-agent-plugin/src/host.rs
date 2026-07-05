@@ -186,6 +186,17 @@ pub trait PluginHost {
         crate::selfheal::self_heal(&Self::descriptor(), Self::DEFAULT_SOURCE)
     }
 
+    /// `Some(message)` when an update landed that the running CC session has not
+    /// loaded yet (CC reads plugin contents at session start, no mid-session
+    /// hot-reload). A `UserPromptSubmit` hook in the plugin tree calls a host
+    /// `check-restart` subcommand that prints this; the model then asks the user to
+    /// restart Claude Code. Disk errors collapse to `None`: a per-prompt hook must
+    /// stay benign, and a real disk failure surfaces through the mutate paths.
+    fn restart_pending() -> Option<String> {
+        let plugin = Self::descriptor();
+        crate::restart::pending(&plugin).ok().flatten().map(|()| crate::restart::message(Self::NAME, Self::VERSION))
+    }
+
     fn doctor() -> Result<DoctorReport> {
         crate::doctor::doctor(&Self::descriptor(), &Self::DEFAULT_SOURCE)
     }

@@ -23,7 +23,7 @@ use crate::agents::claude;
 use crate::cli::{ClaudeCli, version_lt};
 use crate::error::Result;
 use crate::host::{Desired, Outcome, Plugin, Scope, Source};
-use crate::{lock, stamp};
+use crate::{lock, restart, stamp};
 
 pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
     // The SessionStart hook targets user-scoped installs; project scope has no
@@ -39,7 +39,9 @@ pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
         (false, None) => Ok(Outcome::NoOp),
 
         (false, Some(_present)) => {
-            // Adopt: converge (repairs it if broken), then record ownership.
+            // Adopt: converge (repairs it if broken), then record ownership. Not an
+            // update we triggered, so clear any stale restart-pending flag.
+            let _ = restart::clear(plugin);
             let desired = Desired { source, reenable: false };
             let outcome = claude::reconcile(plugin, &desired, &scope)?;
             stamp::write(plugin, &scope, &desired.source)?;
@@ -51,6 +53,7 @@ pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
 
         (true, None) => {
             // Clean uninstall under our marker: forget it, do not reinstall.
+            let _ = restart::clear(plugin);
             stamp::clear(plugin, &scope)?;
             Ok(Outcome::Cleared)
         }
@@ -62,10 +65,17 @@ pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
             let files_ok = entry.install_path.as_ref().is_none_or(|p| Path::new(p).exists());
             let monotonic_current = !version_lt(entry.version.as_deref(), plugin.version);
             if files_ok && monotonic_current {
+                // Healthy + current: the running session already has this plugin, so
+                // a prior restart-pending flag no longer applies. Best-effort clear.
+                let _ = restart::clear(plugin);
                 return Ok(Outcome::NoOp); // healthy fast path: no mutation, no downgrade
             }
             let desired = Desired { source, reenable: false };
             let outcome = claude::reconcile(plugin, &desired, &scope)?;
+            // A repair re-materialized the plugin; the running session is now stale.
+            if outcome != Outcome::NoOp {
+                let _ = restart::set(plugin);
+            }
             stamp::write(plugin, &scope, &desired.source)?;
             Ok(outcome)
         }

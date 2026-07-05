@@ -19,6 +19,13 @@ pub(crate) fn update(plugin: &Plugin, scope: Scope, source: Source) -> Result<Ou
     let _lock = lock::acquire()?;
     let desired = Desired { source, reenable: true };
     let outcome = reconcile_all(plugin, &desired, &scope)?;
+    // A real change (version bumped, or a stale install re-materialized) leaves
+    // the running CC session on the old plugin; flag it so the restart-nag fires.
+    // `set` is best-effort: a flag-write failure must not flip a successful update
+    // red (the same `data_root` disk error surfaces through `stamp::write` below).
+    if outcome != Outcome::NoOp {
+        let _ = crate::restart::set(plugin);
+    }
     stamp::write(plugin, &scope, &desired.source)?;
     Ok(outcome)
 }

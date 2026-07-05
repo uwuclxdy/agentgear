@@ -228,3 +228,44 @@ fn self_heal_respects_disable_but_explicit_install_reenables() {
 
     env.fixture("uninstall");
 }
+
+#[test]
+#[ignore = "spawns the real `claude` CLI; run with --ignored"]
+fn restart_flag_lifecycle() {
+    if !claude_available() {
+        eprintln!("skipping: `claude` not on PATH");
+        return;
+    }
+    let env = Env::new("restart");
+
+    // A fresh install never sets the flag (install precedes any session that uses
+    // the plugin), so the UserPromptSubmit hook stays silent.
+    let (ok, _) = env.fixture("setup");
+    assert!(ok);
+    let (ok, out) = env.fixture("check-restart");
+    assert!(ok && out.is_empty(), "check-restart should be silent after install, got {out:?}");
+
+    // A no-op update at the same version is silent too.
+    let (ok, out) = env.fixture("update");
+    assert!(ok && out == "NoOp", "same-version update should no-op, got {out}");
+    let (ok, out) = env.fixture("check-restart");
+    assert!(ok && out.is_empty(), "check-restart should be silent after a no-op update, got {out:?}");
+
+    // An update that actually re-materializes (cache files gone) leaves the running
+    // session stale; the flag is set and check-restart prints the notice.
+    env.break_cache();
+    let (ok, _) = env.fixture("update");
+    assert!(ok);
+    let (ok, out) = env.fixture("check-restart");
+    assert!(ok, "check-restart errored: {out}");
+    assert!(out.contains("ez-fixture-plugin"), "notice should name the plugin: {out}");
+    assert!(out.contains("/reload-plugins"), "notice should name the remedy: {out}");
+
+    // A healthy self_heal (fast path) clears the flag: the running install is current.
+    let (ok, out) = env.fixture("self-heal");
+    assert!(ok && out == "NoOp", "post-update self-heal should no-op, got {out}");
+    let (ok, out) = env.fixture("check-restart");
+    assert!(ok && out.is_empty(), "check-restart should be silent once healthy, got {out:?}");
+
+    env.fixture("uninstall");
+}

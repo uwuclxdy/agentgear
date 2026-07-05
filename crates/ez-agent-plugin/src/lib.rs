@@ -31,6 +31,7 @@ mod install;
 mod lock;
 mod manifest;
 mod materialize;
+mod restart;
 mod selfheal;
 mod stamp;
 mod util;
