@@ -103,7 +103,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        harness: [codex, opencode, gemini, cursor, cline, devin]
+        harness: [
+          codex, opencode, gemini, cursor, cline, devin,
+          qwen-code, copilot-cli, kimi, kiro, omp, openclaw, kilo,
+          antigravity-cli, goose, amp, crush, droid, augment,
+        ]
     steps:
       - uses: actions/checkout@v7
       - name: docker leg (${{ matrix.harness }})
