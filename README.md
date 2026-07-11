@@ -2,9 +2,9 @@
 
 # agentgear
 
-**Ship a Claude Code plugin straight from your Rust binary.** One `setup` command replaces `/plugin marketplace add` + `/plugin install`; a SessionStart hook self-heals the install across upgrades.
+**Ship a coding-agent plugin straight from your Rust binary: Claude Code, codex, opencode, gemini, cursor, cline, and Devin Local.** One `setup` command installs into every agent it detects; a SessionStart hook self-heals the install across upgrades.
 
-Rust library and derive macro for shipping a coding-agent plugin from a binary. It orchestrates the supported `claude plugin` CLI as its transaction boundary and never forges Claude Code's on-disk registry state.
+Rust library and derive macro for shipping a coding-agent plugin from a binary. For Claude Code it orchestrates the `claude plugin` CLI and never forges its on-disk registry state. For the other six agents it read-modify-writes each tool's own config file, touching only the entries it wrote.
 
 [![ci](https://shields.uwuclxdy.dev/github/actions/workflow/status/uwuclxdy/agentgear/ci.yml?label=ci)](https://github.com/uwuclxdy/agentgear/actions/workflows/ci.yml)
 [![license](https://shields.uwuclxdy.dev/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
@@ -28,6 +28,7 @@ $ mytool doctor
 
 ## Why
 
+- **One binary, seven agents.** `agents = [...]` in the derive picks the targets. Claude Code gets the full plugin lifecycle; the rest get config-merge: mcp servers, hooks, commands, and agent defs translated into each tool's own config file. Only installed tools are touched.
 - **One dependency, one derive.** Add the crate, write a `#[derive(PluginHost)]` struct and a one-line `build.rs`. The binary then gets `install` / `update` / `uninstall` / `self_heal` / `doctor`.
 - **The CLI is the source of truth.** Every mutation goes through `claude plugin …`, so a Claude Code registry schema bump never breaks the crate. It reads state back through `list --json` for drift checks.
 - **Self-heal that respects the user.** A SessionStart hook repairs a broken install without overriding a deliberate choice: it never resurrects an uninstall, re-enables a disable, or downgrades a newer install.
@@ -47,6 +48,8 @@ $ mytool doctor
 | stamp | record a marker so `self_heal` can tell an install it owns from one it should leave alone |
 
 `self_heal` runs from the plugin's own SessionStart hook and reduces to the same reconcile, driven by the stamp marker and `list --json` state. Full state table: [How it works](https://github.com/uwuclxdy/agentgear/wiki/How-It-Works).
+
+The six config-merge agents (codex, opencode, gemini, cursor, cline, devin) skip the marketplace steps: their `reconcile` read-modify-writes the tool's own config file instead. See [Supported agents](#supported-agents).
 
 ## Install
 
@@ -106,11 +109,29 @@ The plugin tree lives at `<crate>/plugin/.claude-plugin/plugin.json` by default,
 | `derive` | on | re-exports `#[derive(PluginHost)]` |
 | `claude` | on | the Claude Code backend |
 | `embed` | on | bakes the plugin tree into the binary as a compressed blob; turn off (with `embed = false` on the derive) for a `default_source = "github"` host that tracks a remote ref and ships no baked tree |
-| `codex`, `opencode` | off | reserved backend seams, unimplemented in v1 |
+| `codex` | off | the codex backend (pulls in `toml_edit`) |
+| `opencode`, `gemini`, `cursor`, `cline`, `devin` | off | the matching config-merge backend |
+| `all-agents` | off | every backend above, enabled at once |
+
+## Supported agents
+
+Every id in the derive's `agents = [...]` list gets its own backend. Claude Code runs the full plugin lifecycle described above; the other six read-modify-write the target tool's own config file, translating what the plugin declares into that tool's shape. A backend only writes when it detects the tool installed.
+
+| agent | mode | config | translated | not translated |
+|---|---|---|---|---|
+| `claude` | plugin lifecycle | marketplace + materialize | mcp, hooks, commands, agents, skills | none |
+| `codex` | config-merge | `~/.codex/config.toml` | mcp, hooks, commands, agents | skills |
+| `opencode` | config-merge | `~/.config/opencode/opencode.json` | mcp, commands, agents | hooks, skills |
+| `gemini` | config-merge | `~/.gemini/settings.json` | mcp, hooks, commands | agents, skills |
+| `cursor` | config-merge | `~/.cursor/mcp.json` + `hooks.json` | mcp, hooks, commands, agents | skills, rules |
+| `cline` | config-merge | `cline_mcp_settings.json` (path varies) | mcp, hooks, commands | agents, skills |
+| `devin` (Devin Local) | config-merge | `~/.config/devin/config.json` | mcp, hooks, commands, agents | skills |
+
+Codex's hooks are written but stay inert until a user approves them in codex's `/hooks` TUI. Every backend keys its own entries by name, so `uninstall` removes exactly what agentgear wrote and leaves the rest of the file alone.
 
 ## Status
 
-v1 targets Claude Code. The `AgentBackend` trait is a sealed seam for other coding agents; only the Claude Code backend is implemented. The trait stays sealed until a second backend lands from real use. Linux and macOS are the tested platforms; Windows support is designed in (directory junctions) but not gated in CI.
+Seven agent backends ship: Claude Code plus codex, opencode, gemini, cursor, cline, and devin. The `AgentBackend` trait is unsealed, so an external crate can add another agent. Linux and macOS are the tested platforms; Windows support is designed in (directory junctions) but not gated in CI.
 
 ## Alternatives
 
@@ -140,7 +161,7 @@ A SessionStart hook that reinstalls unconditionally will resurrect a plugin the 
 Yes. The SessionStart hook calls `self_heal`, which re-registers a plugin whose files went missing or stale after an upgrade. It never downgrades an install that is already newer.
 
 **Does it work with coding agents other than Claude Code?**
-Not yet. The `AgentBackend` trait is the seam for other agents such as codex or opencode. Only the Claude Code backend ships in v1; the trait stays sealed until a second backend lands from real use.
+Yes, seven of them: `agents = ["claude", "codex", "opencode", "gemini", "cursor", "cline", "devin"]` in the derive installs into every one listed. See [Supported agents](#supported-agents) for what each translates.
 
 **Do I need to publish the plugin to a marketplace?**
 No. In embedded mode the plugin tree is baked into the binary as a compressed blob and served from a locally generated marketplace. A GitHub source mode is available when you want `claude plugin update` to pull plugin changes without a binary release. A `Source::Path` mode installs from an on-disk tree at runtime; the recurring `self_heal`/`update`/`doctor` still resolve against the derive's `default_source`, so a self-healing host keeps an `embedded` or `github` default.
@@ -153,7 +174,7 @@ The README is a map. The reference lives in the wiki.
 |---|---|
 | [Getting started](https://github.com/uwuclxdy/agentgear/wiki/Getting-Started) | add the crate, derive, build guard, hook wiring |
 | [How it works](https://github.com/uwuclxdy/agentgear/wiki/How-It-Works) | lifecycle to CLI mapping, materialize, the self-heal state table |
-| [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) | the sealed trait and how a second agent would plug in |
+| [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) | the unsealed trait, the six config-merge backends, and how to add another |
 | [Doctor](https://github.com/uwuclxdy/agentgear/wiki/Doctor) | the six health checks and their fix hints |
 
 ## Development
