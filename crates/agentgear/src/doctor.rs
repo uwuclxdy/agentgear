@@ -87,7 +87,13 @@ pub(crate) fn doctor(plugin: &Plugin, source: &Source) -> Result<DoctorReport> {
     let mut checks = vec![check_host_binary()];
     for id in plugin.agents {
         let backend = crate::install::resolve(id)?;
-        checks.extend(backend.report(plugin, source).checks);
+        if backend.detect() {
+            checks.extend(backend.report(plugin, source).checks);
+        } else {
+            // A declared harness that isn't installed here is not a failure: it is
+            // simply not this host's concern, exactly as install/self_heal skip it.
+            checks.push(DoctorCheck { name: id, status: CheckStatus::Ok("not installed on this host; skipped".into()) });
+        }
     }
     Ok(DoctorReport { checks })
 }
