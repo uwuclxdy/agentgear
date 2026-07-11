@@ -39,6 +39,9 @@ pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
         if !backend.detect() {
             continue; // a tool that isn't installed has nothing to heal
         }
+        if !backend.capabilities().scopes.contains(&scope.as_cli()) {
+            continue; // no user-scope surface (e.g. a repo-config-only IDE backend)
+        }
         let outcome = heal_agent(&*backend, plugin, &source, &scope, *id == "claude")?;
         merged = merge(merged, outcome);
     }

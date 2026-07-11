@@ -19,26 +19,98 @@ pub(crate) mod codex;
 #[allow(dead_code)]
 pub(crate) mod mcptoml;
 
+#[cfg(feature = "amp")]
+pub(crate) mod amp;
+#[cfg(feature = "antigravity")]
+pub(crate) mod antigravity;
+#[cfg(feature = "antigravity-cli")]
+pub(crate) mod antigravity_cli;
+#[cfg(feature = "augment")]
+pub(crate) mod augment;
 #[cfg(feature = "cline")]
 pub(crate) mod cline;
+#[cfg(feature = "copilot-cli")]
+pub(crate) mod copilot_cli;
+#[cfg(feature = "crush")]
+pub(crate) mod crush;
 #[cfg(feature = "cursor")]
 pub(crate) mod cursor;
 #[cfg(feature = "devin")]
 pub(crate) mod devin;
+#[cfg(feature = "droid")]
+pub(crate) mod droid;
 #[cfg(feature = "gemini")]
 pub(crate) mod gemini;
+#[cfg(feature = "goose")]
+pub(crate) mod goose;
+#[cfg(feature = "jetbrains-copilot")]
+pub(crate) mod jetbrains_copilot;
+#[cfg(feature = "kilo")]
+pub(crate) mod kilo;
+#[cfg(feature = "kimi")]
+pub(crate) mod kimi;
+#[cfg(feature = "kiro")]
+pub(crate) mod kiro;
+#[cfg(feature = "omp")]
+pub(crate) mod omp;
+#[cfg(feature = "openclaw")]
+pub(crate) mod openclaw;
 #[cfg(feature = "opencode")]
 pub(crate) mod opencode;
+#[cfg(feature = "pi")]
+pub(crate) mod pi;
+#[cfg(feature = "qwen-code")]
+pub(crate) mod qwen_code;
+#[cfg(feature = "vscode-copilot")]
+pub(crate) mod vscode_copilot;
+#[cfg(feature = "zed")]
+pub(crate) mod zed;
+
+/// Every feature whose backend read-modify-writes a harness config file (all of
+/// them except `claude`, which orchestrates the `claude plugin` CLI instead).
+macro_rules! cfg_config_backends {
+    ($item:item) => {
+        #[cfg(any(
+            feature = "codex",
+            feature = "opencode",
+            feature = "gemini",
+            feature = "cursor",
+            feature = "cline",
+            feature = "devin",
+            feature = "qwen-code",
+            feature = "copilot-cli",
+            feature = "vscode-copilot",
+            feature = "jetbrains-copilot",
+            feature = "kimi",
+            feature = "kiro",
+            feature = "zed",
+            feature = "omp",
+            feature = "openclaw",
+            feature = "kilo",
+            feature = "antigravity",
+            feature = "antigravity-cli",
+            feature = "pi",
+            feature = "goose",
+            feature = "amp",
+            feature = "crush",
+            feature = "droid",
+            feature = "augment",
+        ))]
+        $item
+    };
+}
 
 // Shared config-writing helpers, compiled only when a non-CC backend needs them.
-// `allow(dead_code)`: the calls land when the harness workflows fill their stubs
-// (pass B); until then the renderer + editor sit unreferenced under `--all-features`.
-#[cfg(any(feature = "opencode", feature = "gemini", feature = "cursor", feature = "cline", feature = "devin", feature = "codex"))]
-#[allow(dead_code)]
-pub(crate) mod confedit;
-#[cfg(any(feature = "gemini", feature = "cursor", feature = "cline", feature = "devin"))]
-#[allow(dead_code)]
-pub(crate) mod mcpjson;
+// `allow(dead_code)`: not every enabled backend uses every helper, so a single-
+// feature build leaves parts of the shared surface unreferenced.
+cfg_config_backends! {
+    #[allow(dead_code)]
+    pub(crate) mod confedit;
+}
+cfg_config_backends! {
+    #[allow(dead_code)]
+    pub(crate) mod mcpjson;
+}
 
 /// What `probe` classifies a plugin's per-agent state as. Drives self_heal's
 /// marker × state table (never resurrect, never re-enable, repair drift).
@@ -82,6 +154,42 @@ pub(crate) fn backend_for(id: &str) -> Option<Box<dyn AgentBackend>> {
         "cline" => Some(Box::new(cline::ClineBackend)),
         #[cfg(feature = "devin")]
         "devin" => Some(Box::new(devin::DevinBackend)),
+        #[cfg(feature = "qwen-code")]
+        "qwen-code" => Some(Box::new(qwen_code::QwenCodeBackend)),
+        #[cfg(feature = "copilot-cli")]
+        "copilot-cli" => Some(Box::new(copilot_cli::CopilotCliBackend)),
+        #[cfg(feature = "vscode-copilot")]
+        "vscode-copilot" => Some(Box::new(vscode_copilot::VscodeCopilotBackend)),
+        #[cfg(feature = "jetbrains-copilot")]
+        "jetbrains-copilot" => Some(Box::new(jetbrains_copilot::JetbrainsCopilotBackend)),
+        #[cfg(feature = "kimi")]
+        "kimi" => Some(Box::new(kimi::KimiBackend)),
+        #[cfg(feature = "kiro")]
+        "kiro" => Some(Box::new(kiro::KiroBackend)),
+        #[cfg(feature = "zed")]
+        "zed" => Some(Box::new(zed::ZedBackend)),
+        #[cfg(feature = "omp")]
+        "omp" => Some(Box::new(omp::OmpBackend)),
+        #[cfg(feature = "openclaw")]
+        "openclaw" => Some(Box::new(openclaw::OpenclawBackend)),
+        #[cfg(feature = "kilo")]
+        "kilo" => Some(Box::new(kilo::KiloBackend)),
+        #[cfg(feature = "antigravity")]
+        "antigravity" => Some(Box::new(antigravity::AntigravityBackend)),
+        #[cfg(feature = "antigravity-cli")]
+        "antigravity-cli" => Some(Box::new(antigravity_cli::AntigravityCliBackend)),
+        #[cfg(feature = "pi")]
+        "pi" => Some(Box::new(pi::PiBackend)),
+        #[cfg(feature = "goose")]
+        "goose" => Some(Box::new(goose::GooseBackend)),
+        #[cfg(feature = "amp")]
+        "amp" => Some(Box::new(amp::AmpBackend)),
+        #[cfg(feature = "crush")]
+        "crush" => Some(Box::new(crush::CrushBackend)),
+        #[cfg(feature = "droid")]
+        "droid" => Some(Box::new(droid::DroidBackend)),
+        #[cfg(feature = "augment")]
+        "augment" => Some(Box::new(augment::AugmentBackend)),
         _ => None,
     }
 }

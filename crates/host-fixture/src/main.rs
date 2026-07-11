@@ -10,7 +10,13 @@ use std::process::ExitCode;
 use agentgear::{PluginHost, Scope, Source};
 
 #[derive(PluginHost)]
-#[plugin(name = "ez-fixture-plugin", agents = ["claude", "codex", "opencode", "gemini", "cursor", "cline", "devin"])]
+#[plugin(name = "ez-fixture-plugin", agents = [
+    "claude", "codex", "opencode", "gemini", "cursor", "cline", "devin",
+    "qwen-code", "copilot-cli", "vscode-copilot", "jetbrains-copilot",
+    "kimi", "kiro", "zed", "omp", "openclaw", "kilo",
+    "antigravity", "antigravity-cli", "pi",
+    "goose", "amp", "crush", "droid", "augment",
+])]
 struct FixtureHost;
 
 /// Parse `setup`/`install` flags: `--path <dir>` selects `Source::Path`, else the

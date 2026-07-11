@@ -44,7 +44,7 @@ pub(crate) fn uninstall(plugin: &Plugin, scope: Scope) -> Result<Outcome> {
         let backend = resolve(id)?;
         // An absent tool has nothing of ours to remove, but the marker is agentgear's
         // own state — clear it unconditionally so an explicit uninstall never orphans one.
-        if backend.detect() {
+        if backend.detect() && backend.capabilities().scopes.contains(&scope.as_cli()) {
             outcome = merge(outcome, backend.remove(plugin, &scope)?);
         }
         stamp::clear(plugin, &scope, id)?;
@@ -69,6 +69,12 @@ fn reconcile_all(plugin: &Plugin, desired: &Desired, scope: &Scope, filter: &[&s
         let backend = resolve(id)?;
         if !backend.detect() {
             continue; // never forge config for a tool that isn't installed (design §0)
+        }
+        // No surface at this scope (e.g. a repo-config-only IDE backend at user
+        // scope): skip, no marker. Deliberately silent even for an explicit
+        // `install_into` filter, matching the detect-skip semantic above.
+        if !backend.capabilities().scopes.contains(&scope.as_cli()) {
+            continue;
         }
         let outcome = backend.reconcile(plugin, desired, scope)?;
         stamp::write(plugin, scope, &desired.source, id)?;

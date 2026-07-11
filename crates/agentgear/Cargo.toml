@@ -21,8 +21,34 @@ gemini = []
 cursor = []
 cline = []
 devin = []
+qwen-code = []
+copilot-cli = []
+vscode-copilot = []
+jetbrains-copilot = []
+# kimi's hook config lives in `~/.kimi-code/config.toml`, so it pulls the toml editor.
+kimi = ["dep:toml_edit"]
+kiro = []
+zed = []
+omp = []
+openclaw = []
+kilo = []
+antigravity = []
+antigravity-cli = []
+pi = []
+# goose's config is YAML, so it pulls the serde yaml codec.
+goose = ["dep:serde_norway"]
+amp = []
+crush = []
+droid = []
+augment = []
 # Every non-CC backend at once (the fixture host + the docker legs enable this).
-all-agents = ["claude", "codex", "opencode", "gemini", "cursor", "cline", "devin"]
+all-agents = [
+    "claude", "codex", "opencode", "gemini", "cursor", "cline", "devin",
+    "qwen-code", "copilot-cli", "vscode-copilot", "jetbrains-copilot",
+    "kimi", "kiro", "zed", "omp", "openclaw", "kilo",
+    "antigravity", "antigravity-cli", "pi",
+    "goose", "amp", "crush", "droid", "augment",
+]
 # Bakes the plugin tree into the binary as a compressed `.tar.br` blob (build.rs
 # tars + brotli-compresses it; materialize decompresses). Off = zero embed bytes
 # for a github/path-only host; pair with `embed = false` on the derive.
@@ -38,6 +64,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 # preserve_order: a config read-modify-write keeps the user's existing key order
 # instead of re-sorting their whole file on our first write.
 serde_json = { version = "1.0.150", features = ["preserve_order"] }
+serde_norway = { version = "0.9.42", optional = true }
 sha2 = "0.11.0"
 tar = { version = "0.4.46", optional = true, default-features = false }
 thiserror = "2.0.18"

@@ -20,3 +20,7 @@ agentgear = { path = "../agentgear", features = ["all-agents"] }
 
 [build-dependencies]
 agentgear = { path = "../agentgear" }
+
+# The hermetic harness tests parse the config files the backends write.
+[dev-dependencies]
+serde_json = "1.0.150"

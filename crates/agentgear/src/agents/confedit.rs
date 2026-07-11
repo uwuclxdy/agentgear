@@ -44,8 +44,9 @@ pub(crate) fn json_edit(path: &Path, edit: impl FnOnce(&mut Value) -> Result<()>
 }
 
 /// Same as [`json_edit`] for TOML via `toml_edit::DocumentMut` (comment/format
-/// preserving). Codex-only; the toml editor is gated behind the `codex` feature.
-#[cfg(feature = "codex")]
+/// preserving). Gated on the backends whose configs are TOML (codex's config.toml,
+/// kimi's hook-bearing config.toml).
+#[cfg(any(feature = "codex", feature = "kimi"))]
 pub(crate) fn toml_edit(path: &Path, edit: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()>) -> Result<bool> {
     let existing = match fs::read_to_string(path) {
         Ok(s) => Some(s),
@@ -68,6 +69,44 @@ pub(crate) fn toml_edit(path: &Path, edit: impl FnOnce(&mut toml_edit::DocumentM
         return Ok(false);
     }
     atomic_write(path, rendered.as_bytes())?;
+    Ok(true)
+}
+
+/// Same as [`json_edit`] for YAML via `serde_norway`. Unlike the toml editor this
+/// is NOT comment/format preserving (no comment-preserving YAML editor exists in
+/// pure Rust): a write re-renders the document, keeping keys and values but
+/// dropping comments, anchors/aliases, and tags. A multi-document (`---`) file
+/// fails the single-`Value` parse and surfaces as `Error::Config` (refused, never
+/// clobbered). Backends must keep edits semantically no-op-aware so an
+/// already-converged config is never rewritten. Goose-only for now.
+#[cfg(feature = "goose")]
+pub(crate) fn yaml_edit(path: &Path, edit: impl FnOnce(&mut serde_norway::Value) -> Result<()>) -> Result<bool> {
+    use serde_norway::{Mapping, Value as Yaml};
+    let mut root = match fs::read(path) {
+        Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => Yaml::Mapping(Mapping::new()),
+        Ok(bytes) => serde_norway::from_slice(&bytes)
+            .map_err(|e| Error::Config { path: path.display().to_string(), detail: e.to_string() })?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Yaml::Mapping(Mapping::new()),
+        Err(source) => return Err(Error::Io { context: format!("reading {}", path.display()), source }),
+    };
+    // A YAML `~` (null) document is what an empty-but-commented file parses to;
+    // treat it like missing. Any other non-mapping root is refused, same as JSON.
+    if root.is_null() {
+        root = Yaml::Mapping(Mapping::new());
+    }
+    if !root.is_mapping() {
+        return Err(Error::Config { path: path.display().to_string(), detail: "config root is not a YAML mapping".into() });
+    }
+
+    let before = root.clone();
+    edit(&mut root)?;
+    if root == before {
+        return Ok(false);
+    }
+
+    let text = serde_norway::to_string(&root)
+        .map_err(|e| Error::Config { path: path.display().to_string(), detail: format!("rendering YAML: {e}") })?;
+    atomic_write(path, text.as_bytes())?;
     Ok(true)
 }
 

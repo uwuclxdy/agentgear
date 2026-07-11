@@ -12,7 +12,7 @@
 #            `host_fixture uninstall` and assert it is gone.
 set -euo pipefail
 
-harness="${1:?usage: run.sh <codex|opencode|gemini|cursor|cline|devin>}"
+harness="${1:?usage: run.sh <harness-id> (any dir here holding a Dockerfile)}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 dockerfile="$here/$harness/Dockerfile"
 
