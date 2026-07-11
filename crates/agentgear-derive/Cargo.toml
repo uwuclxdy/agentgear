@@ -1,6 +1,6 @@
 [package]
-name = "ez-agent-plugin-derive"
-description = "Derive macro for ez-agent-plugin: #[derive(PluginHost)] + #[plugin(..)]."
+name = "agentgear-derive"
+description = "Derive macro for agentgear: #[derive(PluginHost)] + #[plugin(..)]."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

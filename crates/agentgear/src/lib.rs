@@ -7,7 +7,7 @@
 //! lives in `docs/design.md`.
 //!
 //! ```ignore
-//! use ez_agent_plugin::{PluginHost, Scope, Source};
+//! use agentgear::{PluginHost, Scope, Source};
 //!
 //! #[derive(PluginHost)]
 //! #[plugin(name = "claudix", agents = ["claude"])]
@@ -18,7 +18,7 @@
 //! ```
 //!
 //! The host also authors a one-line `build.rs`:
-//! `fn main() { ez_agent_plugin::build::assert_plugin_version(); }`.
+//! `fn main() { agentgear::build::assert_plugin_version(); }`.
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
@@ -44,7 +44,7 @@ pub use error::{Error, Result};
 pub use host::{Capabilities, Desired, Outcome, Plugin, PluginHost, Scope, Source};
 
 #[cfg(feature = "derive")]
-pub use ez_agent_plugin_derive::PluginHost;
+pub use agentgear_derive::PluginHost;
 
 /// A ready-to-glob prelude for host binaries.
 pub mod prelude {

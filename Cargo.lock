@@ -3,6 +3,34 @@
 version = 4
 
 [[package]]
+name = "agentgear"
+version = "0.1.0"
+dependencies = [
+ "agentgear-derive",
+ "brotli",
+ "dirs",
+ "fastrand",
+ "fs4",
+ "junction",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "thiserror",
+ "which",
+]
+
+[[package]]
+name = "agentgear-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn",
+]
+
+[[package]]
 name = "alloc-no-stdlib"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -126,34 +154,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ez-agent-plugin"
-version = "0.1.0"
-dependencies = [
- "brotli",
- "dirs",
- "ez-agent-plugin-derive",
- "fastrand",
- "fs4",
- "junction",
- "serde",
- "serde_json",
- "sha2",
- "tar",
- "thiserror",
- "which",
-]
-
-[[package]]
-name = "ez-agent-plugin-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "serde_json",
- "syn",
-]
-
-[[package]]
 name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -194,7 +194,7 @@ dependencies = [
 name = "host-fixture"
 version = "0.1.0"
 dependencies = [
- "ez-agent-plugin",
+ "agentgear",
 ]
 
 [[package]]

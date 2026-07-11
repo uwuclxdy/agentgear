@@ -74,7 +74,7 @@ jobs:
       - name: install claude code
         run: npm install -g @anthropic-ai/claude-code
       - name: validate test plugin tree
-        run: claude plugin validate crates/ez-agent-plugin/tests/fixtures/plugin --strict
+        run: claude plugin validate crates/agentgear/tests/fixtures/plugin --strict
       - name: validate host-fixture plugin tree
         run: claude plugin validate crates/host-fixture/plugin --strict
 

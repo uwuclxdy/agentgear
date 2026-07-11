@@ -10,7 +10,7 @@ repository = "https://github.com/uwuclxdy/ez-agent-plugin"
 authors = ["uwuclxdy"]
 
 [workspace.dependencies]
-ez-agent-plugin-derive = { path = "crates/ez-agent-plugin-derive", version = "0.1.0" }
+agentgear-derive = { path = "crates/agentgear-derive", version = "0.1.0" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

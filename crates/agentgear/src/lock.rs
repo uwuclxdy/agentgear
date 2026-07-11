@@ -10,7 +10,7 @@ use fs4::FileExt;
 use crate::error::{Error, Result};
 
 fn lock_path() -> PathBuf {
-    dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join("ez-agent-plugin.lock")
+    dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join("agentgear.lock")
 }
 
 /// Releases the exclusive lock on drop. Closing the fd would release it too; the

@@ -1,7 +1,7 @@
 //! `#[derive(PluginHost)]` + `#[plugin(..)]`. At expansion the macro reads the
 //! shipped `plugin.json` (existence, JSON validity, and a name cross-check against
 //! the `name` attr), bakes the compressed tree in via `include_bytes!` of the blob
-//! the build.rs produced (`EZ_PLUGIN_BLOB`), implements the `PluginHost` trait from
+//! the build.rs produced (`AGENTGEAR_BLOB`), implements the `PluginHost` trait from
 //! the attrs, and emits a const-panic guard that fires if the host forgot its
 //! `build.rs` (design §7, §10). `embed = false` bakes nothing (an empty blob).
 
@@ -44,21 +44,21 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let default_source = default_source_tokens(&attrs)?;
 
     // `embed = true` (default): bake the build.rs blob via `include_bytes!` of the
-    // `EZ_PLUGIN_BLOB` path. `embed = false`: an empty slice (`Source::Embedded`
+    // `AGENTGEAR_BLOB` path. `embed = false`: an empty slice (`Source::Embedded`
     // then errors at materialize). Pairs with the lib's `embed` feature: turning
-    // that off but leaving this on makes `env!("EZ_PLUGIN_BLOB")` a compile error.
+    // that off but leaving this on makes `env!("AGENTGEAR_BLOB")` a compile error.
     let embedded_blob_body = if attrs.embed {
-        quote! { ::core::include_bytes!(::core::env!("EZ_PLUGIN_BLOB")) }
+        quote! { ::core::include_bytes!(::core::env!("AGENTGEAR_BLOB")) }
     } else {
         quote! { &[] }
     };
 
     Ok(quote! {
-        impl ::ez_agent_plugin::PluginHost for #ident {
+        impl ::agentgear::PluginHost for #ident {
             const NAME: &'static str = #name;
             const MARKETPLACE: &'static str = #marketplace;
             const VERSION: &'static str = #version;
-            const DEFAULT_SOURCE: ::ez_agent_plugin::Source = #default_source;
+            const DEFAULT_SOURCE: ::agentgear::Source = #default_source;
             const AGENTS: &'static [&'static str] = &[#(#agents),*];
 
             fn embedded_blob() -> &'static [u8] {
@@ -70,9 +70,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         // version guard and the include_dir rebuild tracking. A compile error with
         // the fix beats a silent no-op.
         const _: () = {
-            if ::core::option_env!("EZ_PLUGIN_GUARD").is_none() {
+            if ::core::option_env!("AGENTGEAR_GUARD").is_none() {
                 ::core::panic!(
-                    "ez-agent-plugin: host is missing its build.rs calling ez_agent_plugin::build::assert_plugin_version() (see the crate docs)"
+                    "agentgear: host is missing its build.rs calling agentgear::build::assert_plugin_version() (see the crate docs)"
                 );
             }
         };
@@ -134,14 +134,14 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
 fn default_source_tokens(attrs: &Attrs) -> syn::Result<TokenStream2> {
     let version = &attrs.version;
     match attrs.default_source.as_str() {
-        "embedded" => Ok(quote! { ::ez_agent_plugin::Source::Embedded }),
+        "embedded" => Ok(quote! { ::agentgear::Source::Embedded }),
         "github" => {
             let repo = attrs
                 .github_repo
                 .as_ref()
                 .ok_or_else(|| syn::Error::new(attrs.span, "`default_source = \"github\"` requires `github_repo = \"owner/repo\"`"))?;
             Ok(quote! {
-                ::ez_agent_plugin::Source::GitHub { repo: #repo, ref_: ::core::concat!("v", #version) }
+                ::agentgear::Source::GitHub { repo: #repo, ref_: ::core::concat!("v", #version) }
             })
         }
         other => Err(syn::Error::new(attrs.span, format!("`default_source` must be \"embedded\" or \"github\", got {other:?}"))),

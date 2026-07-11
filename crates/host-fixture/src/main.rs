@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use ez_agent_plugin::{PluginHost, Scope, Source};
+use agentgear::{PluginHost, Scope, Source};
 
 #[derive(PluginHost)]
 #[plugin(name = "ez-fixture-plugin", agents = ["claude"])]
@@ -58,7 +58,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn report(result: ez_agent_plugin::Result<ez_agent_plugin::Outcome>) -> ExitCode {
+fn report(result: agentgear::Result<agentgear::Outcome>) -> ExitCode {
     match result {
         Ok(outcome) => {
             println!("{outcome:?}");

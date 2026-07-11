@@ -1,6 +1,6 @@
 {
   "name": "ez-test-plugin",
   "version": "0.1.0",
-  "description": "test fixture plugin for ez-agent-plugin CI + integration tests",
+  "description": "test fixture plugin for agentgear CI + integration tests",
   "author": { "name": "uwuclxdy" }
 }

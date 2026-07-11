@@ -92,7 +92,7 @@ impl ClaudeCli {
             Some(v) if v < FLOOR => Err(Error::ClaudeTooOld { found: raw, floor: MIN_CLAUDE_VERSION }),
             Some(_) => Ok(()),
             None => {
-                eprintln!("ez-agent-plugin: could not parse `claude --version` output {raw:?}; proceeding");
+                eprintln!("agentgear: could not parse `claude --version` output {raw:?}; proceeding");
                 Ok(())
             }
         }
