@@ -1,6 +1,10 @@
 //! End-to-end lifecycle against a real `claude` in a fully isolated environment
-//! (temp `CLAUDE_CONFIG_DIR` + `XDG_DATA_HOME` + `XDG_RUNTIME_DIR`, never the real
-//! `~/.claude`). Ignored by default — spawns the real CLI. Run with:
+//! (temp `CLAUDE_CONFIG_DIR` + `HOME` + `XDG_CONFIG_HOME` + `XDG_DATA_HOME` +
+//! `XDG_RUNTIME_DIR`, never the real `~/.claude`). Isolating `HOME` +
+//! `XDG_CONFIG_HOME` keeps the non-CC backends' `detect()` false (their config
+//! dirs don't exist under the temp home), so the fan-out stays a pure Claude
+//! exercise and never touches the dev's real `~/.gemini`, `~/.codex`, … Ignored by
+//! default — spawns the real CLI. Run with:
 //!
 //! ```sh
 //! cargo test -p host-fixture -- --ignored
@@ -8,6 +12,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -19,6 +24,9 @@ struct Env {
     cfg: PathBuf,
     data: PathBuf,
     run: PathBuf,
+    /// Curated `PATH` holding only `claude` + the fixture, so the non-CC backends'
+    /// `which` arm stays false regardless of what the machine has installed.
+    path: OsString,
 }
 
 impl Env {
@@ -27,7 +35,7 @@ impl Env {
     fn new(name: &str) -> Self {
         let root = std::env::temp_dir().join(format!("ez-e2e-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let env = Env { cfg: root.join("cfg"), data: root.join("data"), run: root.join("run"), root };
+        let env = Env { cfg: root.join("cfg"), data: root.join("data"), run: root.join("run"), path: curated_path(), root };
         for dir in [&env.cfg, &env.data, &env.run] {
             std::fs::create_dir_all(dir).unwrap();
         }
@@ -35,7 +43,17 @@ impl Env {
     }
 
     fn apply(&self, cmd: &mut Command) {
-        cmd.env("CLAUDE_CONFIG_DIR", &self.cfg).env("XDG_DATA_HOME", &self.data).env("XDG_RUNTIME_DIR", &self.run);
+        // Two arms of the non-CC `detect()` must both stay false so the fan-out is
+        // a pure Claude exercise: `HOME` + `XDG_CONFIG_HOME` under the temp root kill
+        // the config-dir arm (no `~/.gemini`, `~/.config/opencode`, …), and the
+        // curated `PATH` kills the `which` arm (a dev box may have `codex`/`opencode`
+        // installed). Both also pin any write a filled backend might do to the sandbox.
+        cmd.env("CLAUDE_CONFIG_DIR", &self.cfg)
+            .env("HOME", &self.root)
+            .env("XDG_CONFIG_HOME", self.root.join("config"))
+            .env("XDG_DATA_HOME", &self.data)
+            .env("XDG_RUNTIME_DIR", &self.run)
+            .env("PATH", &self.path);
     }
 
     /// Run a fixture subcommand, returning (exit_ok, stdout-trimmed).
@@ -52,13 +70,11 @@ impl Env {
         (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
-    /// Run `doctor` with the fixture binary's dir on PATH so the host-binary
-    /// check resolves.
+    /// Run `doctor`. The curated PATH already carries the fixture binary's dir, so
+    /// the host-binary check resolves without extra PATH juggling.
     fn doctor(&self) -> (bool, String) {
-        let bindir = Path::new(BIN).parent().unwrap();
-        let path = format!("{}:{}", bindir.display(), std::env::var("PATH").unwrap_or_default());
         let mut cmd = Command::new(BIN);
-        cmd.arg("doctor").env("PATH", path);
+        cmd.arg("doctor");
         self.apply(&mut cmd);
         let out = cmd.output().unwrap();
         (out.status.success(), String::from_utf8_lossy(&out.stdout).to_string())
@@ -108,6 +124,29 @@ impl Drop for Env {
 
 fn claude_available() -> bool {
     Command::new("claude").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// The first `name` found on the inherited `PATH`.
+fn locate(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).map(|dir| dir.join(name)).find(|p| p.is_file())
+}
+
+/// A `PATH` holding only the fixture binary's dir and `claude`'s dir, so `which`
+/// resolves `claude` + `host_fixture` but not a `codex`/`opencode`/… a dev box may
+/// have installed. Claude's plugin ops need nothing else on PATH (local
+/// marketplace, no git), so this stays a pure Claude exercise.
+fn curated_path() -> OsString {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = Path::new(BIN).parent() {
+        dirs.push(dir.to_path_buf());
+    }
+    if let Some(claude) = locate("claude")
+        && let Some(dir) = claude.parent()
+    {
+        dirs.push(dir.to_path_buf());
+    }
+    std::env::join_paths(&dirs).unwrap_or_default()
 }
 
 #[test]

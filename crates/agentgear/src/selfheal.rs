@@ -2,27 +2,29 @@
 //! fires on an install that already exists: self_heal repairs *broken* installs,
 //! never resurrects an *absent* one (a resurrected uninstall reads as adware).
 //!
-//! Driven by the stamp marker × `list --json` state (design §6):
+//! Fans out over the plugin's configured agents (user scope only — project scope
+//! has no stable session context to key on in v1). Each *detected* backend's
+//! per-agent marker × `probe()` state drives the table (design §5):
 //!
-//! | marker | plugin | action |
-//! |--------|--------|--------|
-//! | absent | absent  | no-op |
-//! | absent | present | adopt (converge, then write marker) |
-//! | present| absent  | clear marker, no-op (never resurrect) |
-//! | present| present, disabled | no-op (never re-enable) |
-//! | present| present, healthy + monotonic-current | no-op |
-//! | present| present, broken/stale | repair/update, write marker |
+//! | marker | state | action |
+//! |--------|-------|--------|
+//! | absent | Absent | no-op |
+//! | absent | Healthy | adopt: reconcile + write marker (no-op maps to `Adopted`) |
+//! | absent | Disabled/NeedsRepair | reconcile + write marker (its own outcome) |
+//! | present| Absent | clear marker, no-op (never resurrect) |
+//! | present| Disabled | no-op (never re-enable) |
+//! | present| Healthy | no-op |
+//! | present| NeedsRepair | reconcile + write marker (repair/update) |
 //!
-//! v1 heals the Claude backend (the only one). It does one `plugin list --json`
-//! read for the never-resurrect gate + healthy fast path; convergence (which
-//! re-reads) only runs on a genuinely broken/stale install.
+//! The restart-pending flag is Claude-only: CC has no mid-session hot-reload, so a
+//! repair strands the running session; config-family harnesses re-read each
+//! session and need no nag. A healthy, adopted, or cleanly-removed CC install
+//! clears it; a CC repair that changed something sets it.
 
-use std::path::Path;
-
-use crate::agents::claude;
-use crate::cli::{ClaudeCli, version_lt};
+use crate::agents::{AgentBackend, BackendState};
 use crate::error::Result;
 use crate::host::{Desired, Outcome, Plugin, Scope, Source};
+use crate::install::{merge, resolve};
 use crate::{lock, restart, stamp};
 
 pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
@@ -31,52 +33,82 @@ pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
     let scope = Scope::User;
     let _lock = lock::acquire()?;
 
-    let marker = stamp::read(plugin, &scope)?;
-    let cli = ClaudeCli::locate()?;
-    let entry = claude::find_plugin(&cli, &scope, plugin.name, plugin.marketplace)?;
+    let mut merged = Outcome::NoOp;
+    for id in plugin.agents {
+        let backend = resolve(id)?;
+        if !backend.detect() {
+            continue; // a tool that isn't installed has nothing to heal
+        }
+        let outcome = heal_agent(&*backend, plugin, &source, &scope, *id == "claude")?;
+        merged = merge(merged, outcome);
+    }
+    Ok(merged)
+}
 
-    match (marker.is_some(), entry) {
-        (false, None) => Ok(Outcome::NoOp),
+/// Drive one detected backend's marker × `probe()` table. `is_claude` gates the
+/// CC-only restart flag; convergence delegates to the backend's `reconcile`.
+fn heal_agent(backend: &dyn AgentBackend, plugin: &Plugin, source: &Source, scope: &Scope, is_claude: bool) -> Result<Outcome> {
+    let marker = stamp::read(plugin, scope, backend.id())?;
+    let state = backend.probe(plugin, scope)?;
+    // self_heal never re-enables a deliberate disable (the design's install-only
+    // enable flip); adopt/repair both converge without touching enable state.
+    let desired = Desired { source: source.clone(), reenable: false };
 
-        (false, Some(_present)) => {
-            // Adopt: converge (repairs it if broken), then record ownership. Not an
-            // update we triggered, so clear any stale restart-pending flag.
-            let _ = restart::clear(plugin);
-            let desired = Desired { source, reenable: false };
-            let outcome = claude::reconcile(plugin, &desired, &scope)?;
-            stamp::write(plugin, &scope, &desired.source)?;
+    match (marker.is_some(), state) {
+        (false, BackendState::Absent) => Ok(Outcome::NoOp),
+
+        (false, BackendState::Healthy) => {
+            // Adopt a healthy pre-existing install: converge (a no-op here), record
+            // ownership; not our update, so clear any stale restart flag.
+            if is_claude {
+                let _ = restart::clear(plugin);
+            }
+            let outcome = backend.reconcile(plugin, &desired, scope)?;
+            stamp::write(plugin, scope, &desired.source, backend.id())?;
             Ok(match outcome {
                 Outcome::NoOp => Outcome::Adopted,
                 other => other,
             })
         }
 
-        (true, None) => {
+        (false, BackendState::Disabled | BackendState::NeedsRepair) => {
+            // Adopt a disabled/broken install: reconcile (leaves a disable alone,
+            // repairs a break), record ownership; not our update -> clear the flag.
+            if is_claude {
+                let _ = restart::clear(plugin);
+            }
+            let outcome = backend.reconcile(plugin, &desired, scope)?;
+            stamp::write(plugin, scope, &desired.source, backend.id())?;
+            Ok(outcome)
+        }
+
+        (true, BackendState::Absent) => {
             // Clean uninstall under our marker: forget it, do not reinstall.
-            let _ = restart::clear(plugin);
-            stamp::clear(plugin, &scope)?;
+            if is_claude {
+                let _ = restart::clear(plugin);
+            }
+            stamp::clear(plugin, scope, backend.id())?;
             Ok(Outcome::Cleared)
         }
 
-        (true, Some(entry)) => {
-            if entry.enabled == Some(false) {
-                return Ok(Outcome::NoOp); // never re-enable a deliberate disable
-            }
-            let files_ok = entry.install_path.as_ref().is_none_or(|p| Path::new(p).exists());
-            let monotonic_current = !version_lt(entry.version.as_deref(), plugin.version);
-            if files_ok && monotonic_current {
-                // Healthy + current: the running session already has this plugin, so
-                // a prior restart-pending flag no longer applies. Best-effort clear.
+        (true, BackendState::Disabled) => Ok(Outcome::NoOp), // never re-enable a deliberate disable
+
+        (true, BackendState::Healthy) => {
+            // Healthy + current: a fresh session already loaded this plugin, so a
+            // prior restart-pending flag no longer applies. Best-effort clear.
+            if is_claude {
                 let _ = restart::clear(plugin);
-                return Ok(Outcome::NoOp); // healthy fast path: no mutation, no downgrade
             }
-            let desired = Desired { source, reenable: false };
-            let outcome = claude::reconcile(plugin, &desired, &scope)?;
-            // A repair re-materialized the plugin; the running session is now stale.
-            if outcome != Outcome::NoOp {
+            Ok(Outcome::NoOp)
+        }
+
+        (true, BackendState::NeedsRepair) => {
+            let outcome = backend.reconcile(plugin, &desired, scope)?;
+            // A repair re-materialized the plugin; the running CC session is now stale.
+            if is_claude && outcome != Outcome::NoOp {
                 let _ = restart::set(plugin);
             }
-            stamp::write(plugin, &scope, &desired.source)?;
+            stamp::write(plugin, scope, &desired.source, backend.id())?;
             Ok(outcome)
         }
     }

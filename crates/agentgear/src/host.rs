@@ -139,6 +139,13 @@ impl Plugin {
     pub(crate) fn blob(&self) -> &'static [u8] {
         self.blob
     }
+
+    /// The harness-agnostic components IR for this plugin's tree. `allow(dead_code)`:
+    /// wired by the per-harness backends + doctor in pass B.
+    #[allow(dead_code)]
+    pub(crate) fn components(&self, source: &Source) -> Result<crate::components::PluginComponents> {
+        crate::components::PluginComponents::parse(&crate::materialize::entries_for(self, source)?)
+    }
 }
 
 /// Implemented by the `#[derive(PluginHost)]` macro. The consts carry the
@@ -168,6 +175,13 @@ pub trait PluginHost {
     /// Idempotent: ensure the plugin is installed at the embedded version.
     fn install(scope: Scope, source: Source) -> Result<Outcome> {
         crate::install::install(&Self::descriptor(), scope, source)
+    }
+
+    /// Like [`PluginHost::install`] but only into the `AGENTS` whose id is in
+    /// `agents` (an empty slice = all of `AGENTS`). Lets a host target one backend
+    /// (`setup --agent gemini`) without touching the others.
+    fn install_into(scope: Scope, source: Source, agents: &[&str]) -> Result<Outcome> {
+        crate::install::install_filtered(&Self::descriptor(), scope, source, agents)
     }
 
     /// Materialize a new versioned tree, then update the marketplace + plugin.

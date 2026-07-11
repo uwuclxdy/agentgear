@@ -13,8 +13,10 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
+# `all-agents` so `setup --agent <id>` can target any backend (default already
+# supplies derive + claude + embed).
 [dependencies]
-agentgear = { path = "../agentgear" }
+agentgear = { path = "../agentgear", features = ["all-agents"] }
 
 [build-dependencies]
 agentgear = { path = "../agentgear" }

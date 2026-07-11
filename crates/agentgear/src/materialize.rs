@@ -173,6 +173,23 @@ fn is_plugin_json(rel: &str) -> bool {
 
 // --- tree sources ------------------------------------------------------------
 
+/// Flatten a non-github source to `(rel-path, bytes)` entries for the components
+/// IR (`Embedded` -> the baked blob, `Path` -> the on-disk tree). GitHub is not a
+/// materializable local tree for non-CC backends in v1.
+///
+/// `allow(dead_code)`: wired by the per-harness backends + doctor in pass B.
+#[allow(dead_code)]
+pub(crate) fn entries_for(plugin: &Plugin, source: &crate::host::Source) -> Result<Vec<(String, Vec<u8>)>> {
+    use crate::host::Source;
+    match source {
+        Source::Embedded => blob_entries(plugin.blob()),
+        Source::Path(dir) => dir_entries(dir),
+        Source::GitHub { .. } => {
+            Err(Error::Tree("github source is unsupported for non-Claude backends in v1; use Source::Embedded or Source::Path".into()))
+        }
+    }
+}
+
 /// Decompress the embedded `.tar.br` blob and flatten it to file entries. Feature
 /// `embed` gates the brotli/tar deps; without it this errors (a `default-features
 /// = false` host cannot use `Source::Embedded`).

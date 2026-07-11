@@ -37,6 +37,11 @@ pub enum Error {
     #[error("invalid plugin tree: {0}")]
     Tree(String),
 
+    /// A harness config file exists but does not parse; a read-modify-write
+    /// refuses to clobber it rather than risk destroying the user's config.
+    #[error("could not parse config {path}: {detail}")]
+    Config { path: String, detail: String },
+
     /// A mutating CLI call reported success but `list --json` does not reflect the
     /// expected end state. The CLI's own state is the reconcile target, so this is
     /// a genuine inconsistency, not a retryable bad-input error.

@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use super::AgentBackend;
+use super::{AgentBackend, BackendState};
 use crate::cli::{ClaudeCli, version_lt};
 use crate::doctor::DoctorReport;
 use crate::error::{Error, Result};
@@ -13,8 +13,6 @@ use crate::manifest::{MarketplaceEntry, PluginEntry};
 use crate::materialize::{TreeSource, materialize};
 
 pub(crate) struct ClaudeBackend;
-
-impl super::sealed::Sealed for ClaudeBackend {}
 
 impl AgentBackend for ClaudeBackend {
     fn id(&self) -> &'static str {
@@ -29,6 +27,21 @@ impl AgentBackend for ClaudeBackend {
         Capabilities { plugins: true, mcp: true, hooks: true, scopes: &["user", "project"] }
     }
 
+    /// The classification self_heal keys on: disabled beats broken beats stale.
+    /// Mirrors selfheal.rs's inline logic (moved here so pass B can delegate to it).
+    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
+        let cli = ClaudeCli::locate()?;
+        let Some(entry) = find_plugin(&cli, scope, plugin.name, plugin.marketplace)? else {
+            return Ok(BackendState::Absent);
+        };
+        if entry.enabled == Some(false) {
+            return Ok(BackendState::Disabled);
+        }
+        let files_ok = entry.install_path.as_ref().is_none_or(|p| Path::new(p).exists());
+        let monotonic_current = !version_lt(entry.version.as_deref(), plugin.version);
+        Ok(if files_ok && monotonic_current { BackendState::Healthy } else { BackendState::NeedsRepair })
+    }
+
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         reconcile(plugin, desired, scope)
     }
@@ -38,7 +51,9 @@ impl AgentBackend for ClaudeBackend {
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {
-        crate::doctor::doctor(plugin, source).unwrap_or_else(DoctorReport::from_error)
+        // The claude-specific checks only; the doctor fan-out owns the shared
+        // host-binary check (calling `doctor` here would recurse through `report`).
+        crate::doctor::claude_report(plugin, source)
     }
 }
 

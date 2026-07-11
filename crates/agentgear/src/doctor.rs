@@ -43,6 +43,18 @@ impl DoctorReport {
         !self.checks.iter().any(|c| matches!(c.status, CheckStatus::Fail { .. }))
     }
 
+    /// Build a report from a check list (a non-CC backend's `report` assembles its
+    /// own checks). `allow(dead_code)`: only the feature-gated non-CC backends call
+    /// it, so a default (claude-only) build sees it unused.
+    #[allow(dead_code)]
+    pub(crate) fn from_checks(checks: Vec<DoctorCheck>) -> Self {
+        Self { checks }
+    }
+
+    /// Collapse a fallible backend `report` into a single failed check. `allow`:
+    /// the claude report is infallible; the non-CC backends wrap their config
+    /// reads through this when their workflow fills them.
+    #[allow(dead_code)]
     pub(crate) fn from_error(err: crate::error::Error) -> Self {
         Self {
             checks: vec![DoctorCheck {
@@ -68,10 +80,24 @@ impl fmt::Display for DoctorReport {
     }
 }
 
+/// The full health report: one shared "host binary on PATH" check, then every
+/// configured agent's own `report` merged in (design §6). `PluginHost::doctor`
+/// calls this; a claude-only host gets exactly today's six checks in order.
 pub(crate) fn doctor(plugin: &Plugin, source: &Source) -> Result<DoctorReport> {
-    let mut checks = Vec::new();
+    let mut checks = vec![check_host_binary()];
+    for id in plugin.agents {
+        let backend = crate::install::resolve(id)?;
+        checks.extend(backend.report(plugin, source).checks);
+    }
+    Ok(DoctorReport { checks })
+}
 
-    checks.push(check_host_binary());
+/// The Claude backend's slice of the report: version floor, registry presence,
+/// manifest validation, tree-hash integrity, hook commands on PATH. The shared
+/// host-binary check lives in the fan-out, not here, so the merged claude-only
+/// report is unchanged. Infallible — every check resolves to a status.
+pub(crate) fn claude_report(plugin: &Plugin, source: &Source) -> DoctorReport {
+    let mut checks = Vec::new();
 
     let cli = match ClaudeCli::locate() {
         Ok(cli) => {
@@ -100,7 +126,7 @@ pub(crate) fn doctor(plugin: &Plugin, source: &Source) -> Result<DoctorReport> {
     checks.push(check_tree_hash(plugin, source));
     checks.push(check_hook_commands(plugin));
 
-    Ok(DoctorReport { checks })
+    DoctorReport { checks }
 }
 
 fn check_host_binary() -> DoctorCheck {

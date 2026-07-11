@@ -24,6 +24,10 @@
 
 mod agents;
 mod cli;
+// The IR + parser is consumed by the non-CC backends + doctor in pass B;
+// `allow(dead_code)` until those calls land.
+#[allow(dead_code)]
+mod components;
 mod doctor;
 mod error;
 mod host;
@@ -38,7 +42,8 @@ mod util;
 
 pub mod build;
 
-pub use agents::AgentBackend;
+pub use agents::{AgentBackend, BackendState};
+pub use components::{HookBinding, MarkdownDoc, McpKind, McpServer, PluginComponents, SkillDir};
 pub use doctor::{CheckStatus, DoctorCheck, DoctorReport};
 pub use error::{Error, Result};
 pub use host::{Capabilities, Desired, Outcome, Plugin, PluginHost, Scope, Source};
