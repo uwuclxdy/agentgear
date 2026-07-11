@@ -26,7 +26,7 @@ Checks 4 and 5 need no `claude`, so they run even when Claude Code is absent.
 
 ## Config-merge agent checks
 
-A detected config-merge backend (codex, opencode, gemini, cursor, cline, devin) contributes its own slice:
+A detected config-merge backend contributes its own slice:
 
 | check | passes when |
 |---|---|
@@ -36,7 +36,7 @@ A detected config-merge backend (codex, opencode, gemini, cursor, cline, devin) 
 | mcp command on PATH | the server's bare command resolves on PATH |
 | translated files present | the commands/agents/hooks agentgear wrote for the tool are on disk |
 
-codex reports its translated hooks as a warning: they sit in `hooks.json` inert until a human trusts them through codex's `/hooks` TUI.
+codex and kimi report their translated hooks as a warning: they sit inert in the tool's config until a human trusts them through the tool's `/hooks` TUI.
 
 ## Reading the output
 
