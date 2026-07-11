@@ -33,7 +33,7 @@ reconcile with a different desired state. `probe` classifies the plugin's curren
 
 `capabilities()` lets `setup` report a partial fit ("this agent hosts MCP servers, not
 hooks") instead of dropping features without a word. The trait is unsealed: an external
-crate can implement `AgentBackend` for an agent this crate does not ship.
+crate can write an `AgentBackend` for an agent this crate does not ship.
 
 ## Install models
 
@@ -66,10 +66,15 @@ TUI.
 Skills have no backend yet on any of the six. Each backend's exact event-name mapping and
 skipped surfaces are documented in its own module (`agents/<id>.rs` in the crate source).
 
+Every backend in this table is verified against its real tool CLI. A docker leg per
+backend installs the tool, runs `setup`, then confirms the plugin's MCP server through the
+tool's own `mcp list`. Uninstall then removes only what agentgear wrote; a seeded
+foreign entry survives untouched. All six pass.
+
 ## Add a backend
 
 1. Add a feature and a module under `agents/`.
-2. Implement `AgentBackend` for the agent, writing whatever it supports.
+2. Write an `AgentBackend` impl for the agent, translating the surfaces it has.
 3. Register it in the backend lookup keyed by id.
 
 A host opts a plugin into an agent by naming it in the derive, for example

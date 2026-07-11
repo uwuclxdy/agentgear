@@ -2,7 +2,7 @@
 
 # agentgear
 
-**Ship a coding-agent plugin straight from your Rust binary: Claude Code, codex, opencode, gemini, cursor, cline, and Devin Local.** One `setup` command installs into every agent it detects; a SessionStart hook self-heals the install across upgrades.
+**Ship a coding-agent plugin straight from your Rust binary: Claude Code, codex, opencode, gemini, cursor, cline, Devin Local.** One `setup` command installs into every agent it detects; a SessionStart hook self-heals the install after a version bump.
 
 Rust library and derive macro for shipping a coding-agent plugin from a binary. For Claude Code it orchestrates the `claude plugin` CLI and never forges its on-disk registry state. For the other six agents it read-modify-writes each tool's own config file, touching only the entries it wrote.
 
@@ -131,7 +131,7 @@ Codex's hooks are written but stay inert until a user approves them in codex's `
 
 ## Status
 
-Seven agent backends ship: Claude Code plus codex, opencode, gemini, cursor, cline, and devin. The `AgentBackend` trait is unsealed, so an external crate can add another agent. Linux and macOS are the tested platforms; Windows support is designed in (directory junctions) but not gated in CI.
+Seven agent backends ship: Claude Code, plus six config-merge backends (codex, opencode, gemini, cursor, cline, devin). Every config-merge backend is verified against its real tool CLI. A per-tool docker leg installs the tool, runs `setup`, then confirms the plugin's MCP server through the tool's own `mcp list`; a follow-up `uninstall` must strip exactly what agentgear wrote and leave the user's own entries in place. All six pass, native `mcp list` included. The `AgentBackend` trait is unsealed, so an external crate can add an agent this crate does not ship. Linux is CI-gated, macOS is tested, Windows is designed in (directory junctions) but not gated in CI.
 
 ## Alternatives
 
@@ -180,9 +180,10 @@ The README is a map. The reference lives in the wiki.
 ## Development
 
 ```sh
-cargo test                       # unit tests
-cargo test -- --ignored          # end-to-end suite (needs `claude` on PATH)
+cargo test                                          # unit + hermetic backend tests
+cargo test -- --ignored                             # Claude Code e2e (needs `claude` on PATH)
 cargo clippy --all-targets --all-features -- -D warnings
+crates/host-fixture/tests/docker/run.sh <harness>   # one backend vs its real CLI (needs Docker + buildx)
 ```
 
 ## License
