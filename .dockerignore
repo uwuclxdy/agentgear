@@ -1,0 +1,4 @@
+# The harness docker legs COPY the repo root as build context; keep it lean.
+target/
+.target/
+.git/

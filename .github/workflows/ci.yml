@@ -93,3 +93,18 @@ jobs:
       # CLAUDE_CONFIG_DIR; it is the golden drift gate (design §11).
       - name: end-to-end lifecycle
         run: cargo test --all-features -- --ignored
+
+  # One leg per non-Claude harness: build host_fixture, install the real CLI in a
+  # container, and prove the tool ingests the config agentgear writes (native `mcp
+  # list` where auth-free, else a config-file parse). fail-fast off so one flaky
+  # upstream CLI never masks the others.
+  harness-docker:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: [codex, opencode, gemini, cursor, cline, devin]
+    steps:
+      - uses: actions/checkout@v7
+      - name: docker leg (${{ matrix.harness }})
+        run: bash crates/host-fixture/tests/docker/run.sh ${{ matrix.harness }}
