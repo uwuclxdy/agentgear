@@ -26,7 +26,15 @@ fi
 repo_root="$(cd "$here/../../../.." && pwd)"
 tag="agentgear-harness-$harness"
 
-# TODO(<harness> workflow): a Dockerfile lands under $harness/; this then builds
-# and runs it. Keep the assertion inside the container so the leg is hermetic.
-docker build -f "$dockerfile" -t "$tag" "$repo_root"
+# The Dockerfiles use `RUN <<'SH'` heredocs, a BuildKit-only feature. The legacy
+# builder parses them without error but never runs the script-writing body, so it
+# produces an image whose entrypoint script is missing and fails cryptically at run
+# time. Require buildx and build through it so that fallback can't happen silently.
+if ! docker buildx version >/dev/null 2>&1; then
+    echo "the harness docker legs need Docker BuildKit (the Dockerfiles use RUN heredocs)." >&2
+    echo "install the buildx plugin: https://docs.docker.com/go/buildx/" >&2
+    exit 1
+fi
+
+docker buildx build --load -f "$dockerfile" -t "$tag" "$repo_root"
 docker run --rm "$tag"
