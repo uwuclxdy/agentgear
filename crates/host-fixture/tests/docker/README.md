@@ -12,7 +12,8 @@ crates/host-fixture/tests/docker/run.sh <codex|opencode|gemini|cursor|cline|devi
 ```
 
 `run.sh` builds `<harness>/Dockerfile` (context = repo root) and runs it; a nonzero
-container exit fails the leg.
+container exit fails the leg. It needs Docker with the buildx plugin (the Dockerfiles
+use `RUN` heredocs, a BuildKit feature) and errors early if buildx is missing.
 
 ## what each Dockerfile must do (the contract)
 
