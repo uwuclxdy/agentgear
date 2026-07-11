@@ -1,5 +1,5 @@
 {
-  "name": "ez-agent-plugin-test",
+  "name": "agentgear-test",
   "description": "test fixture marketplace for agentgear CI + integration tests",
   "owner": { "name": "uwuclxdy" },
   "plugins": [

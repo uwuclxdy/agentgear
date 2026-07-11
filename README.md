@@ -1,12 +1,12 @@
 <div align="center">
 
-# ez-agent-plugin
+# agentgear
 
 **Ship a Claude Code plugin straight from your Rust binary.** One `setup` command replaces `/plugin marketplace add` + `/plugin install`; a SessionStart hook self-heals the install across upgrades.
 
 Rust library and derive macro for shipping a coding-agent plugin from a binary. It orchestrates the supported `claude plugin` CLI as its transaction boundary and never forges Claude Code's on-disk registry state.
 
-[![ci](https://shields.uwuclxdy.dev/github/actions/workflow/status/uwuclxdy/ez-agent-plugin/ci.yml?label=ci)](https://github.com/uwuclxdy/ez-agent-plugin/actions/workflows/ci.yml)
+[![ci](https://shields.uwuclxdy.dev/github/actions/workflow/status/uwuclxdy/agentgear/ci.yml?label=ci)](https://github.com/uwuclxdy/agentgear/actions/workflows/ci.yml)
 [![license](https://shields.uwuclxdy.dev/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 [![claude code](https://shields.uwuclxdy.dev/badge/Claude%20Code-plugin%20lifecycle-8A2BE2)](https://code.claude.com/docs/en/plugins-reference)
 
@@ -46,7 +46,7 @@ $ mytool doctor
 | install | `claude plugin install <name>@<marketplace>`, verified via `list --json` |
 | stamp | record a marker so `self_heal` can tell an install it owns from one it should leave alone |
 
-`self_heal` runs from the plugin's own SessionStart hook and reduces to the same reconcile, driven by the stamp marker and `list --json` state. Full state table: [How it works](https://github.com/uwuclxdy/ez-agent-plugin/wiki/How-It-Works).
+`self_heal` runs from the plugin's own SessionStart hook and reduces to the same reconcile, driven by the stamp marker and `list --json` state. Full state table: [How it works](https://github.com/uwuclxdy/agentgear/wiki/How-It-Works).
 
 ## Install
 
@@ -55,10 +55,10 @@ $ mytool doctor
 
 ```toml
 [dependencies]
-ez-agent-plugin = { git = "https://github.com/uwuclxdy/ez-agent-plugin" }
+agentgear = { git = "https://github.com/uwuclxdy/agentgear" }
 
 [build-dependencies]
-ez-agent-plugin = { git = "https://github.com/uwuclxdy/ez-agent-plugin" }
+agentgear = { git = "https://github.com/uwuclxdy/agentgear" }
 ```
 
 The derive ships with the crate behind the default `derive` feature, so consumers add one dependency.
@@ -68,7 +68,7 @@ The derive ships with the crate behind the default `derive` feature, so consumer
 Point the derive at the plugin tree your binary embeds and add the build guard:
 
 ```rust
-use ez_agent_plugin::{PluginHost, Scope, Source};
+use agentgear::{PluginHost, Scope, Source};
 
 #[derive(PluginHost)]
 #[plugin(name = "mytool", agents = ["claude"])]
@@ -87,7 +87,7 @@ fn main() -> anyhow::Result<()> {
 ```rust
 // build.rs
 fn main() {
-    ez_agent_plugin::build::assert_plugin_version();
+    agentgear::build::assert_plugin_version();
 }
 ```
 
@@ -151,10 +151,10 @@ The README is a map. The reference lives in the wiki.
 
 | page | topic |
 |---|---|
-| [Getting started](https://github.com/uwuclxdy/ez-agent-plugin/wiki/Getting-Started) | add the crate, derive, build guard, hook wiring |
-| [How it works](https://github.com/uwuclxdy/ez-agent-plugin/wiki/How-It-Works) | lifecycle to CLI mapping, materialize, the self-heal state table |
-| [Agent backends](https://github.com/uwuclxdy/ez-agent-plugin/wiki/Agent-Backends) | the sealed trait and how a second agent would plug in |
-| [Doctor](https://github.com/uwuclxdy/ez-agent-plugin/wiki/Doctor) | the six health checks and their fix hints |
+| [Getting started](https://github.com/uwuclxdy/agentgear/wiki/Getting-Started) | add the crate, derive, build guard, hook wiring |
+| [How it works](https://github.com/uwuclxdy/agentgear/wiki/How-It-Works) | lifecycle to CLI mapping, materialize, the self-heal state table |
+| [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) | the sealed trait and how a second agent would plug in |
+| [Doctor](https://github.com/uwuclxdy/agentgear/wiki/Doctor) | the six health checks and their fix hints |
 
 ## Development
 

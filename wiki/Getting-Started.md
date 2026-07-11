@@ -6,10 +6,10 @@ The derive ships behind the default `derive` feature, so a consumer adds one dep
 
 ```toml
 [dependencies]
-ez-agent-plugin = { git = "https://github.com/uwuclxdy/ez-agent-plugin" }
+agentgear = { git = "https://github.com/uwuclxdy/agentgear" }
 
 [build-dependencies]
-ez-agent-plugin = { git = "https://github.com/uwuclxdy/ez-agent-plugin" }
+agentgear = { git = "https://github.com/uwuclxdy/agentgear" }
 ```
 
 ## 2. Lay out the plugin tree
@@ -33,7 +33,7 @@ mytool/
 ## 3. Derive the host
 
 ```rust
-use ez_agent_plugin::{PluginHost, Scope, Source};
+use agentgear::{PluginHost, Scope, Source};
 
 #[derive(PluginHost)]
 #[plugin(name = "mytool", agents = ["claude"])]
@@ -58,7 +58,7 @@ Attributes:
 ```rust
 // build.rs
 fn main() {
-    ez_agent_plugin::build::assert_plugin_version();
+    agentgear::build::assert_plugin_version();
 }
 ```
 

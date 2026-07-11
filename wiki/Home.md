@@ -1,8 +1,8 @@
-# ez-agent-plugin wiki
+# agentgear wiki
 
 A Rust library and derive macro for shipping a coding-agent plugin from a binary. It gives the binary a canonical install/uninstall/update/self-heal lifecycle for the Claude Code plugin it ships, so a `setup` subcommand replaces the user typing `/plugin marketplace add` + `/plugin install`.
 
-The [README](https://github.com/uwuclxdy/ez-agent-plugin#readme) is the overview. These pages hold the reference.
+The [README](https://github.com/uwuclxdy/agentgear#readme) is the overview. These pages hold the reference.
 
 ## Mental model
 

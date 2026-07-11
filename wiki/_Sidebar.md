@@ -1,4 +1,4 @@
-**ez-agent-plugin**
+**agentgear**
 
 - [Home](Home)
 - [Getting Started](Getting-Started)
@@ -7,4 +7,4 @@
 - [Doctor](Doctor)
 
 ---
-[README](https://github.com/uwuclxdy/ez-agent-plugin#readme)
+[README](https://github.com/uwuclxdy/agentgear#readme)
