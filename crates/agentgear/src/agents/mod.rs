@@ -138,7 +138,9 @@ pub trait AgentBackend {
 
 /// Resolve a backend by id. Each non-CC arm is feature-gated so a default build
 /// ships only Claude; `all-agents` (fixture + docker legs) lights every arm.
-pub(crate) fn backend_for(id: &str) -> Option<Box<dyn AgentBackend>> {
+/// Public so a host can enumerate its `AGENTS` (`detect`/`capabilities`) to
+/// build its own setup UI.
+pub fn backend_for(id: &str) -> Option<Box<dyn AgentBackend>> {
     match id {
         #[cfg(feature = "claude")]
         "claude" => Some(Box::new(claude::ClaudeBackend)),
