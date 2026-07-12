@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 
 # Auth-free install (Go binary, no npm). The install location isn't pinned by any
 # doc, so locate the dropped `agy` and put it on a standard PATH dir.
-RUN <<'SH'
+RUN bash <<'SH'
 set -euo pipefail
 curl -fsSL https://antigravity.google/cli/install.sh | bash
 agy_bin="$(command -v agy || find / -type f -name agy 2>/dev/null | head -n1)"
