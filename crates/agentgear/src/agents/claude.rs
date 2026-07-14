@@ -179,10 +179,12 @@ fn ensure_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: &Source, scope: 
         Source::Embedded => materialize(plugin, TreeSource::Blob(plugin.blob()))?.display().to_string(),
         // A path source materializes its on-disk tree the same way embedded does.
         Source::Path(p) => materialize(plugin, TreeSource::Dir(p))?.display().to_string(),
-        // v1 limitation: `ref_` is not yet pinned at the CLI (the ref syntax for
-        // `marketplace add` is unverified); a github marketplace tracks its default
-        // branch and its plugin version is whatever the repo's plugin.json carries.
-        // The embedded source is the tested path.
+        // v1 limitation: `ref_` is not passed, so a github marketplace tracks its
+        // default branch and its plugin version is whatever the repo's plugin.json
+        // carries. `owner/repo@ref` would pin it (probed 2.1.209), but pinning alone
+        // freezes the host at its first-installed ref — `marketplace update` will not
+        // move a pin, so it needs the re-add-on-ref-drift path to land with it.
+        // See docs/design.md §ref-pinning ground truth. Embedded is the tested source.
         Source::GitHub { repo, .. } => repo.to_string(),
     };
     if present {
