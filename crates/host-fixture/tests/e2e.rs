@@ -108,6 +108,14 @@ impl Env {
         std::fs::remove_dir_all(&cache).unwrap();
     }
 
+    /// Delete every stamp marker, leaving the plugin installed and healthy but
+    /// unowned — what a fresh binary meets on a machine that already has the plugin.
+    fn clear_markers(&self) {
+        let markers = self.data.join("ez-fixture-plugin/markers");
+        assert!(markers.is_dir(), "no markers dir to clear at {}", markers.display());
+        std::fs::remove_dir_all(&markers).unwrap();
+    }
+
     fn manual_disable(&self) {
         let mut cmd = Command::new("claude");
         cmd.args(["plugin", "disable", PLUGIN_ID]);
@@ -238,6 +246,34 @@ fn self_heal_repairs_a_broken_install() {
     // A healthy install again + a healthy doctor.
     let (ok, out) = env.fixture("self-heal");
     assert!(ok && out == "NoOp", "post-repair self-heal should no-op, got {out}");
+
+    env.fixture("uninstall");
+}
+
+#[test]
+#[ignore = "spawns the real `claude` CLI; run with --ignored"]
+fn self_heal_adopts_a_healthy_unowned_install() {
+    if !claude_available() {
+        eprintln!("skipping: `claude` not on PATH");
+        return;
+    }
+    let env = Env::new("adopt");
+
+    let (ok, _) = env.fixture("setup");
+    assert!(ok);
+    assert!(env.plugin_list().contains(PLUGIN_ID));
+
+    // Marker absent + install healthy: self_heal takes ownership without mutating
+    // the install (reconcile no-ops, so the outcome is `Adopted`, not `Repaired`).
+    env.clear_markers();
+    let (ok, out) = env.fixture("self-heal");
+    assert!(ok, "self-heal errored on an unowned healthy install: {out}");
+    assert_eq!(out, "Adopted", "expected adoption of a healthy unowned install, got {out}");
+    assert!(env.plugin_list().contains(PLUGIN_ID), "adoption disturbed a healthy install");
+
+    // The marker is back, so the next heal takes the owned-and-healthy fast path.
+    let (ok, out) = env.fixture("self-heal");
+    assert!(ok && out == "NoOp", "post-adopt self-heal should no-op, got {out}");
 
     env.fixture("uninstall");
 }

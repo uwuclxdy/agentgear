@@ -1,6 +1,32 @@
-//! Version-parse + monotonic-compare unit tests. Linked into `cli.rs`.
+//! Env-scrub + version-parse + monotonic-compare unit tests. Linked into `cli.rs`.
 
-use super::{parse_version, version_lt};
+use super::{parse_version, scrub_keys, version_lt};
+
+fn scrub(vars: &[&str]) -> Vec<String> {
+    scrub_keys(vars.iter().map(|key| (*key).to_string()))
+}
+
+#[test]
+fn scrub_drops_the_session_env_and_keeps_the_config_dir() {
+    let keys =
+        scrub(&["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CONFIG_DIR", "CLAUDE_OTHER", "PATH", "HOME"]);
+    assert_eq!(keys, ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"]);
+}
+
+#[test]
+fn scrub_drops_claudecode_even_when_the_parent_has_none() {
+    // Unconditional: a child must never see a session marker, so the key is removed
+    // whether or not this process carries it.
+    assert_eq!(scrub(&[]), ["CLAUDECODE"]);
+    assert_eq!(scrub(&["PATH"]), ["CLAUDECODE"]);
+}
+
+#[test]
+fn scrub_matches_the_prefix_exactly() {
+    // The trailing underscore is load-bearing: `CLAUDE_CODEX` is another tool's var,
+    // not a CC session var, and a mid-string match is not a prefix.
+    assert_eq!(scrub(&["CLAUDE_CODEX", "XCLAUDE_CODE_FOO", "MY_CLAUDECODE"]), ["CLAUDECODE"]);
+}
 
 #[test]
 fn parses_plain_semver() {

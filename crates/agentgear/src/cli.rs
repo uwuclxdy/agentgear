@@ -27,6 +27,14 @@ pub(crate) struct Output {
     pub stderr: Vec<u8>,
 }
 
+/// The parent env keys a CC hook would otherwise leak into the child: the session
+/// marker plus every `CLAUDE_CODE_*`. `CLAUDECODE` is always removed, set or not,
+/// so the child can never inherit one from an outer session. `CLAUDE_CONFIG_DIR`
+/// is deliberately absent from the list: an isolated test root must survive.
+fn scrub_keys(vars: impl Iterator<Item = String>) -> Vec<String> {
+    std::iter::once("CLAUDECODE".to_string()).chain(vars.filter(|key| key.starts_with("CLAUDE_CODE_"))).collect()
+}
+
 impl ClaudeCli {
     pub fn locate() -> Result<Self> {
         which::which("claude").map(|path| Self { path }).map_err(|_| Error::ClaudeNotFound)
@@ -34,16 +42,12 @@ impl ClaudeCli {
 
     /// Build a `claude <args>` command with the session env scrubbed and stdio
     /// wired for a non-interactive context (null stdin => no prompt can hang;
-    /// piped out/err => captured). `CLAUDE_CONFIG_DIR` is deliberately preserved
-    /// so an isolated test root survives the scrub.
+    /// piped out/err => captured).
     fn command(&self, args: &[&str], cwd: Option<&Path>) -> Command {
         let mut cmd = Command::new(&self.path);
         cmd.args(args);
-        cmd.env_remove("CLAUDECODE");
-        for (key, _) in std::env::vars_os().filter_map(|(k, v)| Some((k.into_string().ok()?, v))) {
-            if key.starts_with("CLAUDE_CODE_") {
-                cmd.env_remove(key);
-            }
+        for key in scrub_keys(std::env::vars_os().filter_map(|(k, _)| k.into_string().ok())) {
+            cmd.env_remove(key);
         }
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
