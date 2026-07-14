@@ -108,7 +108,7 @@ The plugin tree lives at `<crate>/plugin/.claude-plugin/plugin.json` by default,
 |---|---|---|
 | `derive` | on | re-exports `#[derive(PluginHost)]` |
 | `claude` | on | the Claude Code backend |
-| `embed` | on | bakes the plugin tree into the binary as a compressed blob; turn off (with `embed = false` on the derive) for a `default_source = "github"` host that tracks a remote ref and ships no baked tree |
+| `embed` | on | bakes the plugin tree into the binary as a compressed blob; turn off (with `embed = false` on the derive) for a `default_source = "github"` host that tracks a remote repo and ships no baked tree |
 | `codex` | off | the codex backend (pulls in `toml_edit`) |
 | one per agent | off | a feature per config-merge backend (24 total); `kimi` also pulls `toml_edit`, `goose` pulls `serde_norway` |
 | `all-agents` | off | every backend above, enabled at once |
