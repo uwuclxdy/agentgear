@@ -48,6 +48,18 @@ jobs:
       - name: test
         run: cargo test --workspace --release --all-targets --all-features
 
+  # Every other leg builds --all-features, so the zero-embed host (a github/path-only
+  # consumer: `default-features = false` + `embed = false`) compiles nowhere else.
+  # The derive half of that pairing is gated by host-fixture's `zero_embed` test.
+  zero-embed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: check the lib with no embed
+        run: cargo check -p agentgear --no-default-features
+
   deny:
     runs-on: ubuntu-latest
     steps:
