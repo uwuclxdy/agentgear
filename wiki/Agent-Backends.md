@@ -62,7 +62,7 @@ Two shapes:
 | copilot-cli | `~/.copilot/mcp-config.json` + `hooks/`, `agents/` | mcp, hooks, agents |
 | vscode-copilot | `<project>/.vscode/mcp.json` + `.github/` (project scope only) | mcp, hooks, agents |
 | jetbrains-copilot | `<config>/github-copilot/intellij/mcp.json` | mcp |
-| kimi | `~/.kimi-code/mcp.json` + `config.toml` | mcp, hooks* |
+| kimi | `~/.kimi-code/mcp.json` + `config.toml` | mcp, hooks |
 | kiro | `~/.kiro/settings/mcp.json` + `agents/default.json` | mcp, hooks |
 | zed | `~/.config/zed/settings.json` | mcp |
 | omp | `~/.omp/agent/mcp.json` + `commands/`, `agents/` | mcp, commands, agents |
@@ -77,8 +77,9 @@ Two shapes:
 | droid | `~/.factory/` (`mcp.json`, `hooks.json`, `commands/`, `droids/`) | mcp, hooks, commands, agents |
 | augment | `~/.augment/settings.json` + `commands/`, `agents/` | mcp, hooks, commands, agents |
 
-\* codex and kimi hooks are written but stay inert until a user trusts them in the tool's
-`/hooks` TUI.
+\* codex hooks are written but stay inert until a user trusts them in codex's `/hooks`
+TUI. kimi has no such gate — its config hooks fire as soon as they are written
+(binary-verified against `@moonshot-ai/kimi-code` 0.24.2).
 
 Skills have no backend yet. Remote (http/sse) mcp is best-effort per tool; stdio is the
 tested path. Each backend's exact config paths, event-name mapping, and skipped surfaces

@@ -130,7 +130,7 @@ Grouped by what each translates:
 | mcp only | `jetbrains-copilot`, `zed`, `openclaw`, `antigravity`, `amp` |
 | detect-only, no surface | `pi` |
 
-No backend translates skills yet. `vscode-copilot` writes at project scope only; the rest are user-scope-primary. Codex's and kimi's hooks are written but stay inert until a user trusts them in the tool's `/hooks` TUI. Per-agent config paths and skipped-surface reasons are on the [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) wiki page.
+No backend translates skills yet. `vscode-copilot` writes at project scope only; the rest are user-scope-primary. Codex's hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI; kimi's fire as soon as they are written. Per-agent config paths and skipped-surface reasons are on the [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) wiki page.
 
 ## Status
 

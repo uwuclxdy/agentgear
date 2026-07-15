@@ -36,7 +36,7 @@ A detected config-merge backend contributes its own slice:
 | mcp command on PATH | the server's bare command resolves on PATH |
 | translated files present | the commands/agents/hooks agentgear wrote for the tool are on disk |
 
-codex and kimi report their translated hooks as a warning: they sit inert in the tool's config until a human trusts them through the tool's `/hooks` TUI.
+codex reports its translated hooks as a warning: they sit inert in its config until a human trusts them through codex's `/hooks` TUI. kimi has no trust gate, so its hooks check reports ok.
 
 ## Reading the output
 
