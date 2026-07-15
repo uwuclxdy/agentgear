@@ -102,6 +102,15 @@ MyHost::self_heal()?; // no-op on a healthy install
 
 The plugin tree lives at `<crate>/plugin/.claude-plugin/plugin.json` by default, with its `version` equal to `CARGO_PKG_VERSION`.
 
+The Claude Code backend needs `claude` ≥ 2.1.196 on PATH at runtime; `setup` fails the version gate with a clear error below that. The config-merge backends have no CLI requirement.
+
+## Examples
+
+Two runnable hosts live in [`examples/`](examples/), both workspace members with tests that run in plain `cargo test`:
+
+- [`hello-mcp`](examples/hello-mcp): the smallest real host. One derive, a one-line `build.rs`, a `setup` subcommand that ships one MCP server to Claude Code.
+- [`kitchen-sink`](examples/kitchen-sink): every component type (MCP server, hooks, command, subagent, skill) across seven harnesses, plus its own dependency-free stdio MCP server and hermetic lifecycle tests.
+
 ## Feature flags
 
 | flag | default | effect |
@@ -134,7 +143,7 @@ No backend translates skills yet. `vscode-copilot` writes at project scope only;
 
 ## Status
 
-25 agent backends ship: Claude Code (full plugin lifecycle) plus 24 config-merge backends. The original six (codex, opencode, gemini, cursor, cline, devin) are verified against their real CLIs: a per-tool docker leg installs the tool, runs `setup`, confirms the plugin's MCP server through the tool's own `mcp list`, then checks `uninstall` strips exactly what agentgear wrote while a seeded foreign entry survives. All six pass, native `mcp list` included. The 18 newer backends are covered by hermetic config-file tests plus unit tests (green locally); their docker legs (13, since GUI/IDE and no-surface backends have none) are authored and first run on CI push. The `AgentBackend` trait is unsealed, so an external crate can add an agent this crate does not ship. Linux is CI-gated, macOS is tested, Windows is designed in (directory junctions) but not gated in CI.
+25 agent backends ship: Claude Code (full plugin lifecycle) plus 24 config-merge backends. The original six (codex, opencode, gemini, cursor, cline, devin) are verified against their real CLIs: a per-tool docker leg installs the tool, runs `setup`, confirms the plugin's MCP server through the tool's own `mcp list`, then checks `uninstall` strips exactly what agentgear wrote while a seeded foreign entry survives. All six pass, native `mcp list` included. The 18 newer backends are covered by hermetic config-file tests plus unit tests (green locally); their docker legs (13, since GUI/IDE and no-surface backends have none) are authored and first run on CI push. The `AgentBackend` trait is unsealed, so an external crate can add an agent this crate does not ship. Linux is CI-gated, macOS is tested, Windows is designed in but not gated in CI: its pointer flip uses a directory junction, and unlike the posix rename it is delete-then-create, so a crash inside that window leaves `current` absent until the next materialize repairs it.
 
 ## Alternatives
 

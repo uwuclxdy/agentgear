@@ -78,7 +78,7 @@ Two shapes:
 | augment | `~/.augment/settings.json` + `commands/`, `agents/` | mcp, hooks, commands, agents |
 
 \* codex hooks are written but stay inert until a user trusts them in codex's `/hooks`
-TUI. kimi has no such gate — its config hooks fire as soon as they are written
+TUI. kimi has no such gate; its config hooks fire as soon as they are written
 (binary-verified against `@moonshot-ai/kimi-code` 0.24.2).
 
 Skills have no backend yet. Remote (http/sse) mcp is best-effort per tool; stdio is the
@@ -94,9 +94,59 @@ backends have none) are authored and first run on CI push.
 
 ## Add a backend
 
-1. Add a feature and a module under `agents/`.
-2. Write an `AgentBackend` impl for the agent, translating the surfaces it has.
-3. Register it in the backend lookup keyed by id.
+`AgentBackend` is the whole seam: six methods, one registry arm.
 
-A host opts a plugin into an agent by naming it in the derive, for example
-`agents = ["claude", "codex"]`.
+```rust
+pub trait AgentBackend {
+    fn id(&self) -> &'static str;
+    /// Is this agent installed on the host?
+    fn detect(&self) -> bool;
+    /// What this agent can host (plugins / mcp / hooks / scopes).
+    fn capabilities(&self) -> Capabilities;
+    /// Classify this plugin's current state (self_heal's input).
+    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState>;
+    /// Idempotent converge to `desired` at `scope`.
+    fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome>;
+    /// Undo the install (the caller owns the stamp marker).
+    fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome>;
+    fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport;
+}
+```
+
+### In this crate
+
+1. Add a feature in `Cargo.toml` and a module under `src/agents/` — one file per
+   backend. `agents/amp.rs` (mcp-only) is the smallest real template to copy.
+2. Implement the trait against the shared writers: `confedit` (atomic, BOM-safe
+   json/toml/yaml read-modify-write), `mcpjson` / `mcptoml` (the common server
+   shapes). Keep the invariants every backend holds: write only entries the
+   plugin owns; `remove` deletes exactly what `reconcile` wrote; a second
+   `reconcile` is a true `NoOp`; skip a surface the tool lacks instead of
+   writing under a guessed key.
+3. Add the id arm in `backend_for` (`src/agents/mod.rs`) and a hermetic
+   lifecycle test against a temp `HOME` (copy any `crates/host-fixture/tests/<id>.rs`).
+
+A host opts a plugin into the backend by naming it in the derive:
+`agents = ["claude", "mytool"]`.
+
+### From an external crate
+
+The trait is public, so a host can drive a backend this crate does not ship.
+It runs beside the built-in fan-out, not inside it:
+
+```rust
+use agentgear::{AgentBackend, Desired, PluginHost, Scope, Source};
+
+let plugin = MyHost::descriptor();
+MyHost::install(Scope::User, Source::Embedded)?; // the built-in agents
+MyToolBackend.reconcile(
+    &plugin,
+    &Desired { source: Source::Embedded, reenable: true },
+    &Scope::User,
+)?; // yours
+```
+
+Two limits today: the id registry is closed, so the derive's `agents = [...]`
+cannot name an external backend (it never joins `install`/`self_heal`'s locked,
+stamped fan-out), and the plugin-tree → components parser is crate-private, so
+an external backend reads the plugin tree itself.
