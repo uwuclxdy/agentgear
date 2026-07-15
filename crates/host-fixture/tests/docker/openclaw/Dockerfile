@@ -11,7 +11,10 @@ COPY . .
 RUN cargo build -p host-fixture --release
 
 # Stage 2: real openclaw CLI + the fixture binary; assert the lifecycle end-to-end.
-FROM node:20-slim
+# Node 24: openclaw's runtime floor is >=22.22.3 (its `openclaw` shim runs under the
+# base node), so node:20 fails the version gate and the native `mcp list` second
+# opinion never runs.
+FROM node:24-slim
 # The install script (headless: `--no-onboard`, no ClawHub login) lands the CLI at
 # build time as root; the leg adds its likely bin dirs to PATH. Tracks the script's
 # latest; bump the pin alongside docs/harness/openclaw.md if the script grows one.
@@ -32,19 +35,23 @@ export PATH="/root/.local/bin:/root/.openclaw/bin:$HOME/.openclaw/bin:/usr/local
 CONFIG="$HOME/.openclaw/openclaw.json"
 mkdir -p "$HOME/.openclaw"
 
-# Seed a foreign mcp server + an unrelated top-level key that must survive install/uninstall.
+# Seed a foreign mcp server + an unrelated top-level key that must survive
+# install/uninstall. openclaw strict-validates the config root (an unrecognized
+# top-level key fails `config validate` AND makes `mcp list` refuse to run), so the
+# seeded key must be a real openclaw section — `env` (a user's env map). A bogus key
+# like `theme` would silently degrade the native `mcp list` second opinion below.
 cat > "$CONFIG" <<'JSON'
 {
-  "theme": "dark",
+  "env": { "AGENTGEAR_KEEP": "seeded" },
   "mcp": { "servers": { "theirs": { "command": "their-server", "args": [], "env": {} } } }
 }
 JSON
 
 host_fixture setup --agent openclaw
 
-if ! grep -q 'ez-fixture' "$CONFIG"; then echo "FAIL: our mcp server not registered"; cat "$CONFIG"; exit 1; fi
-if ! grep -q 'theirs'     "$CONFIG"; then echo "FAIL: seeded server clobbered on install"; exit 1; fi
-if ! grep -q '"theme"'    "$CONFIG"; then echo "FAIL: seeded key clobbered on install"; exit 1; fi
+if ! grep -q 'ez-fixture'     "$CONFIG"; then echo "FAIL: our mcp server not registered"; cat "$CONFIG"; exit 1; fi
+if ! grep -q 'theirs'         "$CONFIG"; then echo "FAIL: seeded server clobbered on install"; exit 1; fi
+if ! grep -q 'AGENTGEAR_KEEP' "$CONFIG"; then echo "FAIL: seeded key clobbered on install"; exit 1; fi
 
 # Native second opinion (best-effort; auth-free config parse above is authoritative).
 if command -v openclaw >/dev/null 2>&1 && out=$(openclaw mcp list 2>&1); then
@@ -59,9 +66,9 @@ fi
 
 host_fixture uninstall
 
-if grep -q 'ez-fixture' "$CONFIG"; then echo "FAIL: our server survived uninstall"; exit 1; fi
-if ! grep -q 'theirs'   "$CONFIG"; then echo "FAIL: uninstall removed the seeded server"; exit 1; fi
-if ! grep -q '"theme"'  "$CONFIG"; then echo "FAIL: uninstall removed the seeded key"; exit 1; fi
+if grep -q 'ez-fixture'       "$CONFIG"; then echo "FAIL: our server survived uninstall"; exit 1; fi
+if ! grep -q 'theirs'         "$CONFIG"; then echo "FAIL: uninstall removed the seeded server"; exit 1; fi
+if ! grep -q 'AGENTGEAR_KEEP' "$CONFIG"; then echo "FAIL: uninstall removed the seeded key"; exit 1; fi
 
 echo "openclaw docker leg: OK"
 TEST
