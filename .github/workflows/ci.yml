@@ -89,6 +89,10 @@ jobs:
         run: claude plugin validate crates/agentgear/tests/fixtures/plugin --strict
       - name: validate host-fixture plugin tree
         run: claude plugin validate crates/host-fixture/plugin --strict
+      - name: validate hello-mcp example plugin tree
+        run: claude plugin validate examples/hello-mcp/plugin --strict
+      - name: validate kitchen-sink example plugin tree
+        run: claude plugin validate examples/kitchen-sink/plugin --strict
 
   e2e:
     runs-on: ubuntu-latest

@@ -1,0 +1,27 @@
+[package]
+name = "kitchen-sink"
+description = "full-surface agentgear host: MCP + hooks + commands + agents + skills across seven harnesses"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# One feature per non-Claude backend this host targets. Default features already
+# supply derive + claude + embed; each id below is a representative harness (json,
+# toml, and yaml config shapes) so the example shows a real multi-harness fan-out.
+# Copy this list down to only the harnesses you actually support.
+[dependencies]
+agentgear = { path = "../../crates/agentgear", features = [
+    "codex",
+    "opencode",
+    "gemini",
+    "cursor",
+    "crush",
+    "goose",
+] }
+
+[build-dependencies]
+agentgear = { path = "../../crates/agentgear" }

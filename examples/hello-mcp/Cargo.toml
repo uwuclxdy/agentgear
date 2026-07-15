@@ -1,0 +1,18 @@
+[package]
+name = "hello-mcp"
+description = "smallest agentgear host: ship one MCP server to Claude Code with a setup subcommand"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# Default features (derive + claude + embed) are all this Claude-only host needs:
+# the derive bakes the plugin tree in, so `setup` works offline from the binary.
+[dependencies]
+agentgear = { path = "../../crates/agentgear" }
+
+[build-dependencies]
+agentgear = { path = "../../crates/agentgear" }
