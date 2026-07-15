@@ -24,6 +24,8 @@ The `claude` backend adds five. A claude-only host sees exactly these plus the s
 
 Checks 4 and 5 need no `claude`, so they run even when Claude Code is absent.
 
+On a zero-embed host (`embed = false`, github source) check 4 reports `github source; not applicable`, but check 5 still reads the baked tree and warns `could not read the embedded tree` on every run. That warning is the expected steady state for such a host today, not a break.
+
 ## Config-merge agent checks
 
 A detected config-merge backend contributes its own slice:
