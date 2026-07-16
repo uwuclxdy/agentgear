@@ -91,8 +91,8 @@ some reject the shape and void the file. Per-tool fixes are queued.
 |---|---|
 | claude | native, no translation (Claude Code reads the tree itself) |
 | amp | faithful. `type` is inert; the tool infers transport from `url` |
-| antigravity | **known limitation**: refused. native wants `serverUrl` (SSE only); the rendered shape voids the file |
-| antigravity-cli | **known limitation**: refused. one bad server voids the whole config; native wants `serverUrl` |
+| antigravity | faithful: sse rendered as native `{serverUrl}`; http skipped (no landing) |
+| antigravity-cli | faithful: sse rendered as native `{serverUrl}`; http skipped (no landing) |
 | augment | faithful. byte-matches the tool's own writer |
 | cline | faithful: rendered with cline's literal `streamableHttp`/`sse` transport values |
 | codex | faithful. streamable-HTTP only; sse maps onto the same `url` |
