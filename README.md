@@ -106,10 +106,13 @@ The Claude Code backend needs `claude` ≥ 2.1.196 on PATH at runtime; `setup` f
 
 ## Examples
 
-Two runnable hosts live in [`examples/`](examples/), both workspace members with tests that run in plain `cargo test`:
+Five runnable hosts live in [`examples/`](examples/), all workspace members with tests that run in plain `cargo test`:
 
 - [`hello-mcp`](examples/hello-mcp): the smallest real host. One derive, a one-line `build.rs`, a `setup` subcommand that ships one MCP server to Claude Code.
 - [`kitchen-sink`](examples/kitchen-sink): every component type (MCP server, hooks, command, subagent, skill) across seven harnesses, plus its own dependency-free stdio MCP server and hermetic lifecycle tests.
+- [`multi-installer`](examples/multi-installer): builds its own agent picker by enumerating backends through `backend_for` (detected vs not), then installs into a filtered subset.
+- [`hooks-everywhere`](examples/hooks-everywhere): four Claude Code hook events translated across the 15 hook-capable harnesses; its README carries the per-harness event map.
+- [`from-github`](examples/from-github): a zero-embed host (`embed = false`, `default_source = "github"`) that tracks a remote repo instead of baking a tree.
 
 ## Feature flags
 
@@ -139,11 +142,19 @@ Grouped by what each translates:
 | mcp only | `jetbrains-copilot`, `zed`, `openclaw`, `antigravity`, `amp` |
 | detect-only, no surface | `pi` |
 
-No backend translates skills yet. `vscode-copilot` writes at project scope only; the rest are user-scope-primary. Codex's hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI; kimi's fire as soon as they are written. Per-agent config paths and skipped-surface reasons are on the [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) wiki page.
+No backend translates skills yet. `vscode-copilot` writes at project scope only; the rest are user-scope-primary. Codex's hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI; kimi's fire as soon as they are written. Per-agent config paths and skipped-surface reasons are on the [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) wiki page; for a side-by-side view of how each tool handles config paths, MCP shapes, hook events, and Claude-Code-config interop, see [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison).
 
 ## Status
 
-25 agent backends ship: Claude Code (full plugin lifecycle) plus 24 config-merge backends. The original six (codex, opencode, gemini, cursor, cline, devin) are verified against their real CLIs: a per-tool docker leg installs the tool, runs `setup`, confirms the plugin's MCP server through the tool's own `mcp list`, then checks `uninstall` strips exactly what agentgear wrote while a seeded foreign entry survives. All six pass, native `mcp list` included. The 18 newer backends are covered by hermetic config-file tests plus unit tests (green locally); their docker legs (13, since GUI/IDE and no-surface backends have none) are authored and first run on CI push. Separately from the docker legs, every non-CC backend has been re-verified against the real shipping tool (July 2026): scratch-home installs of each CLI (shipped extension source for the IDE-bound ones), with negative-control probes before trusting any parse. Remote (http/sse) MCP fidelity varies per tool. Most read the rendered shape as-is, but a few key the transport off other fields or reject the shape whole, so remote servers stay best-effort on non-CC backends until per-tool fixes land; stdio is the verified path everywhere. The `AgentBackend` trait is unsealed, so an external crate can add an agent this crate does not ship. Linux is CI-gated, macOS is tested, Windows is designed in but not gated in CI: its pointer flip uses a directory junction, and unlike the posix rename it is delete-then-create, so a crash inside that window leaves `current` absent until the next materialize repairs it.
+| area | state |
+|---|---|
+| backends | 25 ship: Claude Code (full plugin lifecycle) plus 24 config-merge backends |
+| real-tool verification | every non-CC backend re-verified against the real shipping tool on 2026-07-16: fresh scratch-home installs (shipped extension source for the IDE-bound ones), with positive and negative controls before trusting any parse |
+| docker legs | 19 per-tool legs (GUI/IDE and no-surface backends have none): each installs the real tool, runs `setup`, checks the written config, then checks `uninstall` strips exactly what agentgear wrote and leaves a seeded foreign entry in place. All 19 pass; the CLI-testable legs assert through the tool's own `mcp list` |
+| hermetic tests | every backend has config-file tests plus unit tests, green in plain `cargo test` |
+| remote (http/sse) MCP | fidelity varies per tool: most read the rendered shape as-is, a few key the transport off other fields or reject the shape whole. Remote stays best-effort on non-CC backends until per-tool fixes land; stdio is the verified path everywhere |
+| extensibility | the `AgentBackend` trait is unsealed; an external crate can add an agent this crate does not ship |
+| platforms | Linux CI-gated, macOS tested. Windows is designed in but not CI-gated: its pointer flip uses a directory junction (delete-then-create, unlike the posix rename), so a crash inside that window leaves `current` absent until the next materialize repairs it |
 
 ## Alternatives
 
@@ -187,6 +198,7 @@ The README is a map. The reference lives in the wiki.
 | [Getting started](https://github.com/uwuclxdy/agentgear/wiki/Getting-Started) | add the crate, derive, build guard, hook wiring |
 | [How it works](https://github.com/uwuclxdy/agentgear/wiki/How-It-Works) | lifecycle to CLI mapping, materialize, the self-heal state table |
 | [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) | the unsealed trait, the 24 config-merge backends, adding your own |
+| [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison) | side-by-side support matrix: config paths, MCP fidelity, hook events, CC-config interop |
 | [Doctor](https://github.com/uwuclxdy/agentgear/wiki/Doctor) | the six health checks and their fix hints |
 
 ## Development
