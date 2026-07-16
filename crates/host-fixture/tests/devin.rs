@@ -129,6 +129,21 @@ fn devin_full_lifecycle() {
     assert!(c.contains("check-restart"), "UserPromptSubmit hook command missing:\n{c}");
     // the seeded user config survived our merge.
     assert!(c.contains("theirs") && c.contains("their-server"), "seeded mcp server was clobbered:\n{c}");
+
+    // remote mcp: devin's transport discriminator is `transport` (`type` is never
+    // read — a `type:"sse"` entry silently loads as http), so the render must
+    // carry devin's own key.
+    let parsed: serde_json::Value = serde_json::from_str(&c).unwrap();
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-http"],
+        serde_json::json!({"url": "http://127.0.0.1:39621/mcp", "transport": "http"}),
+        "http remote arm mismatch:\n{c}"
+    );
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-sse"],
+        serde_json::json!({"url": "http://127.0.0.1:39622/sse", "transport": "sse"}),
+        "sse remote arm mismatch:\n{c}"
+    );
     assert!(c.contains("\"theme\"") && c.contains("dark"), "seeded top-level key was clobbered:\n{c}");
     assert!(c.contains("their-startup-hook.sh"), "seeded user SessionStart hook was clobbered:\n{c}");
 

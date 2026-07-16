@@ -20,7 +20,7 @@ use serde_json::Value;
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
 use super::confedit;
-use super::mcpjson::{self, ServerShape};
+use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, McpKind, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -28,6 +28,11 @@ use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 pub(crate) struct KimiBackend;
+
+/// kimi keys remote transport on a `transport` field; `type` is stripped by the
+/// non-strict schema and a bare `{url}` infers http, so the majority shape would
+/// silently downgrade sse to http.
+const SHAPE: ServerShape = ServerShape::plain().with_remote(RemoteShape::TransportKeyed);
 
 impl AgentBackend for KimiBackend {
     fn id(&self) -> &'static str {
@@ -55,7 +60,7 @@ impl AgentBackend for KimiBackend {
         // steady-state source for a non-CC backend (github unsupported, path is
         // install-only), mirroring the claude probe keying on compile-time metadata.
         let comp = plugin.components(&Source::Embedded)?;
-        mcpjson::probe(&mcp_json(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
+        mcpjson::probe(&mcp_json(scope)?, &["mcpServers"], &comp.mcp_servers, SHAPE)
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -63,7 +68,7 @@ impl AgentBackend for KimiBackend {
         let base = kimi_base(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= reconcile_hooks(&base.join("config.toml"), &comp.hooks)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
@@ -73,7 +78,7 @@ impl AgentBackend for KimiBackend {
         let base = kimi_base(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= remove_hooks(&base.join("config.toml"), &comp.hooks)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }

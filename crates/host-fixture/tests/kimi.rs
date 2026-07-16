@@ -146,6 +146,21 @@ fn kimi_full_lifecycle() {
     assert!(m.contains("host_fixture"), "our mcp command missing:\n{m}");
     // the seeded user mcp config survived our merge.
     assert!(m.contains("theirs") && m.contains("their-server"), "seeded mcp server was clobbered:\n{m}");
+
+    // remote mcp: kimi's discriminator is `transport` (`type` is stripped by the
+    // non-strict schema and a bare `{url}` infers http, so a `type:"sse"` entry
+    // silently downgrades to http). The render must carry kimi's own key.
+    let parsed: serde_json::Value = serde_json::from_str(&m).unwrap();
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-http"],
+        serde_json::json!({"url": "http://127.0.0.1:39621/mcp", "transport": "http"}),
+        "http remote arm mismatch:\n{m}"
+    );
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-sse"],
+        serde_json::json!({"url": "http://127.0.0.1:39622/sse", "transport": "sse"}),
+        "sse remote arm mismatch:\n{m}"
+    );
     assert!(m.contains("\"theme\"") && m.contains("dark"), "seeded top-level key was clobbered:\n{m}");
 
     // hooks: CC event names pass through 1:1 as `[[hooks]]` tables in config.toml.

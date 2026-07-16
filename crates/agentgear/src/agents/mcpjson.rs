@@ -36,6 +36,14 @@ pub(crate) enum RemoteShape {
     /// `additionalProperties:false` and refuses `type`/`url` outright — one bad
     /// entry voids the whole file — and http has no landing at all (skipped).
     ServerUrlSseOnly,
+    /// `{url, transport:"http"|"sse"}` — kimi + devin. Both key transport on a
+    /// `transport` field and never read `type` (kimi strips it, devin ignores
+    /// it), so the majority shape silently loads sse over the wrong transport.
+    TransportKeyed,
+    /// Key presence picks the transport: `{httpUrl}` = http, `{url}` = sse —
+    /// qwen-code (`type` is never read, so a `url`-keyed http server would
+    /// silently load over SSE).
+    HttpUrlKeyed,
 }
 
 #[derive(Clone, Copy)]
@@ -104,6 +112,14 @@ fn remote(shape: RemoteShape, kind: &str, url: &str) -> Option<Value> {
                 return None;
             }
             obj.insert("serverUrl".into(), Value::from(url));
+        }
+        RemoteShape::TransportKeyed => {
+            obj.insert("url".into(), Value::from(url));
+            obj.insert("transport".into(), Value::from(kind));
+        }
+        RemoteShape::HttpUrlKeyed => {
+            let key = if kind == "http" { "httpUrl" } else { "url" };
+            obj.insert(key.into(), Value::from(url));
         }
     }
     Some(Value::Object(obj))

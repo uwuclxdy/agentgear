@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 use super::confedit::{json_edit, json_obj_at, write_file_idem};
-use super::mcpjson::{self, ServerShape};
+use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -31,6 +31,10 @@ use crate::error::{Error, IoContext, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 pub(crate) struct DevinBackend;
+
+/// devin keys remote transport on a `transport` field and never reads `type`,
+/// so the majority shape would silently load sse over http.
+const SHAPE: ServerShape = ServerShape::plain().with_remote(RemoteShape::TransportKeyed);
 
 impl AgentBackend for DevinBackend {
     fn id(&self) -> &'static str {
@@ -56,7 +60,7 @@ impl AgentBackend for DevinBackend {
         // install-only), mirroring the claude probe keying on compile-time metadata.
         let comp = plugin.components(&Source::Embedded)?;
         let config = config_base(scope)?.join("config.json");
-        mcpjson::probe(&config, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
+        mcpjson::probe(&config, &["mcpServers"], &comp.mcp_servers, SHAPE)
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -65,7 +69,7 @@ impl AgentBackend for DevinBackend {
         let config = base.join("config.json");
 
         let mut changed = false;
-        changed |= mcpjson::reconcile(&config, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&config, &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= reconcile_hooks(&config, &comp.hooks)?;
 
         // Each skill/agent is its own depth-1 dir (devin discovers `skills/<name>/
@@ -87,7 +91,7 @@ impl AgentBackend for DevinBackend {
         let config = base.join("config.json");
 
         let mut changed = false;
-        changed |= mcpjson::remove(&config, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= mcpjson::remove(&config, &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= remove_hooks(&config, &comp.hooks)?;
 
         // We own each `<plugin>-<stem>/` dir whole, so a recursive drop is exact and

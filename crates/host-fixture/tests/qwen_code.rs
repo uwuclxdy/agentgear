@@ -128,6 +128,21 @@ fn qwen_code_full_lifecycle() {
     assert!(s.contains("check-restart"), "UserPromptSubmit hook command missing:\n{s}");
     // the seeded user config survived our merge.
     assert!(s.contains("theirs") && s.contains("their-server"), "seeded mcp server was clobbered:\n{s}");
+
+    // remote mcp: qwen picks transport purely by key presence (`httpUrl` → http,
+    // `url` → sse; `type` is never read), so a `url`-keyed http server would
+    // silently load over SSE. The render must use qwen's own keys.
+    let parsed: serde_json::Value = serde_json::from_str(&s).unwrap();
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-http"],
+        serde_json::json!({"httpUrl": "http://127.0.0.1:39621/mcp"}),
+        "http remote arm mismatch:\n{s}"
+    );
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-sse"],
+        serde_json::json!({"url": "http://127.0.0.1:39622/sse"}),
+        "sse remote arm mismatch:\n{s}"
+    );
     assert!(s.contains("\"theme\"") && s.contains("dark"), "seeded top-level key was clobbered:\n{s}");
     assert!(s.contains("their-startup-hook.sh"), "seeded user SessionStart hook was clobbered:\n{s}");
 

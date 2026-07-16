@@ -68,6 +68,28 @@ fn renders_remote_server_url_sse_only() {
 }
 
 #[test]
+fn renders_remote_transport_keyed() {
+    use super::RemoteShape;
+    let shape = ServerShape::plain().with_remote(RemoteShape::TransportKeyed);
+    let http = remote_server("h", McpKind::Http { url: "https://x/mcp".into() });
+    let sse = remote_server("s", McpKind::Sse { url: "https://x/sse".into() });
+    // kimi/devin read `transport`, never `type`.
+    assert_eq!(render_server(&http, shape).unwrap(), json!({"url":"https://x/mcp","transport":"http"}));
+    assert_eq!(render_server(&sse, shape).unwrap(), json!({"url":"https://x/sse","transport":"sse"}));
+}
+
+#[test]
+fn renders_remote_http_url_keyed() {
+    use super::RemoteShape;
+    let shape = ServerShape::plain().with_remote(RemoteShape::HttpUrlKeyed);
+    let http = remote_server("h", McpKind::Http { url: "https://x/mcp".into() });
+    let sse = remote_server("s", McpKind::Sse { url: "https://x/sse".into() });
+    // qwen picks the transport from which key is present, never from `type`.
+    assert_eq!(render_server(&http, shape).unwrap(), json!({"httpUrl":"https://x/mcp"}));
+    assert_eq!(render_server(&sse, shape).unwrap(), json!({"url":"https://x/sse"}));
+}
+
+#[test]
 fn remove_never_touches_a_server_we_could_not_have_written() {
     let path = scratch("settings.json");
     // A user's own entry named like our non-portable server, which reconcile skips.
