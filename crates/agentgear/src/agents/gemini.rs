@@ -47,7 +47,7 @@ impl AgentBackend for GeminiBackend {
         // install-only), mirroring the claude probe keying on compile-time metadata.
         let comp = plugin.components(&Source::Embedded)?;
         let settings = settings_path(scope)?;
-        mcpjson::probe(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)
+        mcpjson::probe(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -56,7 +56,7 @@ impl AgentBackend for GeminiBackend {
         let settings = base.join("settings.json");
 
         let mut changed = false;
-        changed |= mcpjson::reconcile(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= reconcile_hooks(&settings, &comp.hooks)?;
 
         let cmd_root = base.join("commands").join(plugin.name);
@@ -73,8 +73,7 @@ impl AgentBackend for GeminiBackend {
         let settings = base.join("settings.json");
 
         let mut changed = false;
-        let names = portable_names(&comp.mcp_servers);
-        changed |= mcpjson::remove(&settings, &["mcpServers"], &names)? != Outcome::NoOp;
+        changed |= mcpjson::remove(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= remove_hooks(&settings, &comp.hooks)?;
 
         // We own the whole `<commands>/<plugin>/` subtree, so a recursive drop is
@@ -107,15 +106,6 @@ fn gemini_dir(scope: &Scope) -> Result<PathBuf> {
 
 fn settings_path(scope: &Scope) -> Result<PathBuf> {
     Ok(gemini_dir(scope)?.join("settings.json"))
-}
-
-/// Server names `reconcile` actually writes (the shared renderer skips
-/// non-portable ones). `remove` must key off the same set: an unfiltered name
-/// list could delete an unrelated user-owned server that happens to share a
-/// name with one we declared but never wrote (e.g. a
-/// `${CLAUDE_PLUGIN_ROOT}`-bearing entry).
-fn portable_names(servers: &[crate::components::McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
 }
 
 /// `commands/hello.md` -> `hello.toml`, preserving any subdir so gemini's `:`

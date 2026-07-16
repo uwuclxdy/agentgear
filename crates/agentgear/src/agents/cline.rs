@@ -62,7 +62,7 @@ impl AgentBackend for ClineBackend {
         // install-only). MCP is global regardless of scope, so scope is unused here.
         let comp = plugin.components(&Source::Embedded)?;
         let settings = mcp_settings_path()?;
-        mcpjson::probe(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)
+        mcpjson::probe(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -70,7 +70,7 @@ impl AgentBackend for ClineBackend {
 
         let mut changed = false;
         let settings = mcp_settings_path()?;
-        changed |= mcpjson::reconcile(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= reconcile_hooks(&hooks_dir(scope)?, plugin.name, &comp.hooks)?;
 
         let wf_root = workflows_dir(scope)?;
@@ -85,7 +85,7 @@ impl AgentBackend for ClineBackend {
 
         let mut changed = false;
         let settings = mcp_settings_path()?;
-        changed |= mcpjson::remove(&settings, &["mcpServers"], &portable_names(&comp.mcp_servers))? != Outcome::NoOp;
+        changed |= mcpjson::remove(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= remove_hooks(&hooks_dir(scope)?, plugin.name, &comp.hooks)?;
 
         // Workflows are plugin-prefixed files shared with the user's own workflows,
@@ -169,13 +169,6 @@ fn global_store() -> Result<PathBuf> {
     dirs::home_dir()
         .map(|h| h.join("Documents").join("Cline"))
         .ok_or_else(|| Error::Tree("no home directory (HOME unset); cannot locate ~/Documents/Cline".into()))
-}
-
-/// Server names `reconcile` actually writes (the shared renderer skips non-portable
-/// ones). `remove` keys off the same set so an unfiltered name list can never delete
-/// a user server sharing a name with one we declared but never wrote.
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
 }
 
 // --- hooks -------------------------------------------------------------------

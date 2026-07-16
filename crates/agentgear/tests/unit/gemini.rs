@@ -3,25 +3,13 @@
 //! must therefore never be a candidate for removal either (removing an
 //! unfiltered name could delete an unrelated user-owned entry of the same name).
 
-use std::collections::BTreeMap;
-
-use super::{hook_is_portable, portable_names, reconcile_hooks, remove_hooks};
-use crate::components::{HookBinding, McpKind, McpServer};
+use super::{hook_is_portable, reconcile_hooks, remove_hooks};
+use crate::components::HookBinding;
 
 fn scratch(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("ez-gemini-unit-{:016x}", fastrand::u64(..)));
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(name)
-}
-
-fn server(name: &str, command: &str) -> McpServer {
-    McpServer { name: name.into(), kind: McpKind::Stdio, command: command.into(), args: Vec::new(), env: BTreeMap::new() }
-}
-
-#[test]
-fn portable_names_excludes_claude_plugin_root_servers() {
-    let servers = [server("ez-fixture", "host_fixture"), server("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky")];
-    assert_eq!(portable_names(&servers), vec!["ez-fixture"]);
 }
 
 #[test]

@@ -4,7 +4,7 @@
 
 use serde_json::Value;
 
-use super::{event_supports_matcher, hook_is_portable, portable_names, reconcile_hooks, remove_hooks, render_hook_entry};
+use super::{event_supports_matcher, hook_is_portable, reconcile_hooks, remove_hooks, render_hook_entry};
 use crate::agents::BackendState;
 use crate::agents::mcpjson::{ServerShape, probe as mcp_probe};
 use crate::components::{HookBinding, McpKind, McpServer};
@@ -35,12 +35,6 @@ const SEED_AGENT: &str = r#"{
   }
 }
 "#;
-
-#[test]
-fn portable_names_excludes_claude_plugin_root_servers() {
-    let servers = [server("ez-fixture", "host_fixture"), server("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky")];
-    assert_eq!(portable_names(&servers), vec!["ez-fixture"]);
-}
 
 #[test]
 fn hook_portability_matches_mcp_server_rule() {
@@ -132,15 +126,15 @@ fn probe_classifies_absent_healthy_and_needs_repair() {
     let key = ["mcpServers"];
 
     // no mcp.json yet -> Absent (our portable server is genuinely not installed).
-    assert!(matches!(mcp_probe(&path, &key, &servers, ServerShape::Plain).unwrap(), BackendState::Absent));
+    assert!(matches!(mcp_probe(&path, &key, &servers, ServerShape::plain()).unwrap(), BackendState::Absent));
 
     // present + matching the Plain render -> Healthy.
     std::fs::write(&path, r#"{"mcpServers":{"ez-fixture":{"command":"host_fixture","args":["mcp"],"env":{}}}}"#).unwrap();
-    assert!(matches!(mcp_probe(&path, &key, &servers, ServerShape::Plain).unwrap(), BackendState::Healthy));
+    assert!(matches!(mcp_probe(&path, &key, &servers, ServerShape::plain()).unwrap(), BackendState::Healthy));
 
     // present but drifted (different command) -> NeedsRepair.
     std::fs::write(&path, r#"{"mcpServers":{"ez-fixture":{"command":"other","args":["mcp"],"env":{}}}}"#).unwrap();
-    assert!(matches!(mcp_probe(&path, &key, &servers, ServerShape::Plain).unwrap(), BackendState::NeedsRepair));
+    assert!(matches!(mcp_probe(&path, &key, &servers, ServerShape::plain()).unwrap(), BackendState::NeedsRepair));
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }

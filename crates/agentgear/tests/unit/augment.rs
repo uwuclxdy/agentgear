@@ -166,24 +166,24 @@ fn mcp_probe_classifies_absent_healthy_and_needs_repair() {
     let servers = [server("ez-fixture", "host_fixture")];
 
     // Absent: nothing written yet.
-    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::Plain).unwrap(), BackendState::Absent));
+    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::plain()).unwrap(), BackendState::Absent));
 
     // Healthy: after a reconcile the on-disk body matches what we'd render.
     assert!(reconcile_settings(&path, &servers, &[]).unwrap());
-    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::Plain).unwrap(), BackendState::Healthy));
+    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::plain()).unwrap(), BackendState::Healthy));
 
     // NeedsRepair: the key is present but its body drifted.
     std::fs::write(&path, r#"{"mcpServers":{"ez-fixture":{"command":"tampered","args":[],"env":{}}}}"#).unwrap();
-    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::Plain).unwrap(), BackendState::NeedsRepair));
+    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::plain()).unwrap(), BackendState::NeedsRepair));
 
     // A plugin with only a non-portable server is Healthy (never Absent), so a present
     // marker is never dropped for an mcp-less-after-filtering plugin.
     let rooted = [server("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky")];
-    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &rooted, ServerShape::Plain).unwrap(), BackendState::Healthy));
+    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &rooted, ServerShape::plain()).unwrap(), BackendState::Healthy));
 
     // Sanity: the shared reconcile agrees this is an Installed (not NoOp) first write.
     let fresh = scratch("settings.json");
-    assert_eq!(mcpjson::reconcile(&fresh, &["mcpServers"], &servers, ServerShape::Plain).unwrap(), Outcome::Installed);
+    assert_eq!(mcpjson::reconcile(&fresh, &["mcpServers"], &servers, ServerShape::plain()).unwrap(), Outcome::Installed);
     std::fs::remove_dir_all(fresh.parent().unwrap()).ok();
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();

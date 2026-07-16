@@ -56,7 +56,7 @@ impl AgentBackend for DevinBackend {
         // install-only), mirroring the claude probe keying on compile-time metadata.
         let comp = plugin.components(&Source::Embedded)?;
         let config = config_base(scope)?.join("config.json");
-        mcpjson::probe(&config, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)
+        mcpjson::probe(&config, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -65,7 +65,7 @@ impl AgentBackend for DevinBackend {
         let config = base.join("config.json");
 
         let mut changed = false;
-        changed |= mcpjson::reconcile(&config, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&config, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= reconcile_hooks(&config, &comp.hooks)?;
 
         // Each skill/agent is its own depth-1 dir (devin discovers `skills/<name>/
@@ -87,7 +87,7 @@ impl AgentBackend for DevinBackend {
         let config = base.join("config.json");
 
         let mut changed = false;
-        changed |= mcpjson::remove(&config, &["mcpServers"], &portable_names(&comp.mcp_servers))? != Outcome::NoOp;
+        changed |= mcpjson::remove(&config, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= remove_hooks(&config, &comp.hooks)?;
 
         // We own each `<plugin>-<stem>/` dir whole, so a recursive drop is exact and
@@ -147,13 +147,6 @@ fn config_base(scope: &Scope) -> Result<PathBuf> {
 /// directory means devin is configured for this checkout.
 fn project_marker_present() -> bool {
     std::env::current_dir().is_ok_and(|d| d.join(".devin").is_dir() || d.join(".cognition").is_dir())
-}
-
-/// Server names `reconcile` actually writes (the shared renderer skips non-portable
-/// ones). `remove` keys off the same set so an unfiltered name list can never delete
-/// a user server sharing a name with one we declared but never wrote.
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
 }
 
 /// `commands/hello.md` -> `<plugin>-hello`; a nested path flattens (`a/b.md` ->

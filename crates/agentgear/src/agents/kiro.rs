@@ -52,14 +52,14 @@ impl AgentBackend for KiroBackend {
         // Source::Embedded is the only steady-state source for a non-CC backend.
         let comp = plugin.components(&Source::Embedded)?;
         let mcp = mcp_path(scope)?;
-        mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)
+        mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?;
 
         let mut changed = false;
-        changed |= mcpjson::reconcile(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= reconcile_hooks(&default_agent_path(scope)?, &comp.hooks)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
@@ -68,8 +68,7 @@ impl AgentBackend for KiroBackend {
         let comp = plugin.components(&Source::Embedded)?;
 
         let mut changed = false;
-        let names = portable_names(&comp.mcp_servers);
-        changed |= mcpjson::remove(&mcp_path(scope)?, &["mcpServers"], &names)? != Outcome::NoOp;
+        changed |= mcpjson::remove(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= remove_hooks(&default_agent_path(scope)?, &comp.hooks)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
@@ -109,14 +108,6 @@ fn mcp_path(scope: &Scope) -> Result<PathBuf> {
 /// We only ever merge into this file when it already exists (never create it).
 fn default_agent_path(scope: &Scope) -> Result<PathBuf> {
     Ok(kiro_base(scope)?.join("agents").join("default.json"))
-}
-
-/// Server names `reconcile` actually writes (the shared renderer skips non-portable
-/// ones). `remove` must key off the same set so it never deletes an unrelated
-/// user-owned server sharing a name with a `${CLAUDE_PLUGIN_ROOT}`-bearing entry we
-/// declared but never wrote.
-fn portable_names(servers: &[crate::components::McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
 }
 
 // --- hooks -------------------------------------------------------------------

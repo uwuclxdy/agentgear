@@ -62,7 +62,7 @@ impl AgentBackend for AugmentBackend {
         // install-only), mirroring the claude probe keying on compile-time metadata.
         let comp = plugin.components(&Source::Embedded)?;
         let settings = augment_dir(scope)?.join("settings.json");
-        mcpjson::probe(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)
+        mcpjson::probe(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -200,7 +200,7 @@ fn reconcile_settings(settings: &Path, servers: &[McpServer], hooks: &[HookBindi
         if !portable_servers.is_empty() {
             let mcp = json_obj_at(root, &["mcpServers"]);
             for server in &portable_servers {
-                mcp.insert(server.name.clone(), mcpjson::render_server(server, ServerShape::Plain));
+                mcp.insert(server.name.clone(), mcpjson::render_server(server, ServerShape::plain()));
             }
         }
         if !writable_hooks.is_empty() {

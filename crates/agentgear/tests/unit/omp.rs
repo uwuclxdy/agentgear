@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
-use super::{doc_file, flat_stem, portable_names, render_agent};
+use super::{doc_file, flat_stem, render_agent};
 use crate::agents::BackendState;
 use crate::agents::mcpjson::{self, ServerShape};
 use crate::components::{MarkdownDoc, McpKind, McpServer};
@@ -40,12 +40,6 @@ fn agent_doc(name: &str, rel: &str, extra: &[(&str, &str)], body: &str) -> Markd
         frontmatter.insert((*k).into(), Value::from(*v));
     }
     MarkdownDoc { name: name.into(), rel: rel.into(), frontmatter, body: body.into(), raw: body.as_bytes().to_vec() }
-}
-
-#[test]
-fn portable_names_excludes_claude_plugin_root_servers() {
-    let servers = [server("ez-fixture", "host_fixture", &["mcp"]), server("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky", &[])];
-    assert_eq!(portable_names(&servers), vec!["ez-fixture"]);
 }
 
 #[test]
@@ -90,7 +84,7 @@ fn mcp_reconcile_writes_plain_shape_then_no_ops_and_preserves_a_user_entry() {
     std::fs::write(&path, r#"{"$schema":"https://x","mcpServers":{"theirs":{"command":"their-server","args":[]}}}"#).unwrap();
 
     let servers = [server("ez-fixture", "host_fixture", &["mcp"])];
-    assert_eq!(mcpjson::reconcile(&path, KEY, &servers, ServerShape::Plain).unwrap(), Outcome::Installed);
+    assert_eq!(mcpjson::reconcile(&path, KEY, &servers, ServerShape::plain()).unwrap(), Outcome::Installed);
 
     let root: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     // Exact Plain body: `{command,args,env}`, no `type` (omp defaults stdio).
@@ -100,7 +94,7 @@ fn mcp_reconcile_writes_plain_shape_then_no_ops_and_preserves_a_user_entry() {
     assert_eq!(root["$schema"], json!("https://x"));
 
     // A second identical reconcile is a true NoOp (no write).
-    assert_eq!(mcpjson::reconcile(&path, KEY, &servers, ServerShape::Plain).unwrap(), Outcome::NoOp);
+    assert_eq!(mcpjson::reconcile(&path, KEY, &servers, ServerShape::plain()).unwrap(), Outcome::NoOp);
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
@@ -112,15 +106,15 @@ fn mcp_probe_classifies_absent_healthy_and_needs_repair() {
 
     // Absent: a file with no `mcpServers` entry of ours.
     std::fs::write(&path, r#"{"mcpServers":{}}"#).unwrap();
-    assert!(matches!(mcpjson::probe(&path, KEY, &servers, ServerShape::Plain).unwrap(), BackendState::Absent));
+    assert!(matches!(mcpjson::probe(&path, KEY, &servers, ServerShape::plain()).unwrap(), BackendState::Absent));
 
     // Healthy: our exact render present.
-    mcpjson::reconcile(&path, KEY, &servers, ServerShape::Plain).unwrap();
-    assert!(matches!(mcpjson::probe(&path, KEY, &servers, ServerShape::Plain).unwrap(), BackendState::Healthy));
+    mcpjson::reconcile(&path, KEY, &servers, ServerShape::plain()).unwrap();
+    assert!(matches!(mcpjson::probe(&path, KEY, &servers, ServerShape::plain()).unwrap(), BackendState::Healthy));
 
     // NeedsRepair: present but drifted (a different command under our key).
     std::fs::write(&path, r#"{"mcpServers":{"ez-fixture":{"command":"stale","args":[],"env":{}}}}"#).unwrap();
-    assert!(matches!(mcpjson::probe(&path, KEY, &servers, ServerShape::Plain).unwrap(), BackendState::NeedsRepair));
+    assert!(matches!(mcpjson::probe(&path, KEY, &servers, ServerShape::plain()).unwrap(), BackendState::NeedsRepair));
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
@@ -129,24 +123,25 @@ fn mcp_probe_classifies_absent_healthy_and_needs_repair() {
 fn mcp_remove_deletes_only_ours_and_a_non_portable_name_is_never_targeted() {
     let path = scratch("mcp.json");
     // Seed a user server whose name collides with a non-portable server we declare
-    // but never write — proves `remove` keys off `portable_names`, not the raw list.
+    // but never write — proves `remove` keys off the same writable filter reconcile
+    // uses, not the raw declared list.
     std::fs::write(&path, r#"{"mcpServers":{"theirs":{"command":"their-server","args":[]},"rooted":{"command":"user-owned"}}}"#).unwrap();
     let servers = [server("ez-fixture", "host_fixture", &["mcp"]), server("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky", &[])];
 
     // reconcile writes only the portable server; the non-portable one is skipped.
-    mcpjson::reconcile(&path, KEY, &servers, ServerShape::Plain).unwrap();
+    mcpjson::reconcile(&path, KEY, &servers, ServerShape::plain()).unwrap();
     let root: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert!(root["mcpServers"].get("ez-fixture").is_some(), "portable server must be written");
     assert_eq!(root["mcpServers"]["rooted"], json!({ "command": "user-owned" }), "non-portable name must not overwrite the user's entry");
 
     // remove drops only our portable key; the user's `theirs` + same-named `rooted` survive.
-    assert_eq!(mcpjson::remove(&path, KEY, &portable_names(&servers)).unwrap(), Outcome::Removed);
+    assert_eq!(mcpjson::remove(&path, KEY, &servers, ServerShape::plain()).unwrap(), Outcome::Removed);
     let root: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert!(root["mcpServers"].get("ez-fixture").is_none(), "our server survived remove");
     assert_eq!(root["mcpServers"]["theirs"], json!({ "command": "their-server", "args": [] }));
     assert_eq!(root["mcpServers"]["rooted"], json!({ "command": "user-owned" }), "remove wrongly touched a same-named user entry");
     // Nothing of ours left -> probe reports Absent.
-    assert!(matches!(mcpjson::probe(&path, KEY, &servers, ServerShape::Plain).unwrap(), BackendState::Absent));
+    assert!(matches!(mcpjson::probe(&path, KEY, &servers, ServerShape::plain()).unwrap(), BackendState::Absent));
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }

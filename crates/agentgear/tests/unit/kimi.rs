@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use super::{hook_is_portable, hook_present, map_event, portable_names, reconcile_hooks, remove_hooks};
+use super::{hook_is_portable, hook_present, map_event, reconcile_hooks, remove_hooks};
 use crate::agents::mcpjson::{self, ServerShape};
 use crate::components::{HookBinding, McpKind, McpServer};
 use crate::host::Outcome;
@@ -25,12 +25,6 @@ fn server(name: &str, command: &str) -> McpServer {
 
 fn hook(event: &str, command: &str) -> HookBinding {
     HookBinding { event: event.into(), matcher: None, command: command.into() }
-}
-
-#[test]
-fn portable_names_excludes_claude_plugin_root_servers() {
-    let servers = [server("ez-fixture", "host_fixture"), server("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky")];
-    assert_eq!(portable_names(&servers), vec!["ez-fixture"]);
 }
 
 #[test]
@@ -150,23 +144,26 @@ fn mcp_probe_classifies_absent_healthy_and_needs_repair() {
     let servers = [server("ez-fixture", "host_fixture")];
 
     // Absent: nothing written yet.
-    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::Plain).unwrap(), crate::agents::BackendState::Absent));
+    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::plain()).unwrap(), crate::agents::BackendState::Absent));
 
     // Healthy: after a reconcile the on-disk body matches.
-    assert_eq!(mcpjson::reconcile(&path, &["mcpServers"], &servers, ServerShape::Plain).unwrap(), Outcome::Installed);
-    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::Plain).unwrap(), crate::agents::BackendState::Healthy));
+    assert_eq!(mcpjson::reconcile(&path, &["mcpServers"], &servers, ServerShape::plain()).unwrap(), Outcome::Installed);
+    assert!(matches!(
+        mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::plain()).unwrap(),
+        crate::agents::BackendState::Healthy
+    ));
 
     // NeedsRepair: the key is present but its body drifted from what we'd render.
     std::fs::write(&path, r#"{"mcpServers":{"ez-fixture":{"command":"tampered","args":[],"env":{}}}}"#).unwrap();
     assert!(matches!(
-        mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::Plain).unwrap(),
+        mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::plain()).unwrap(),
         crate::agents::BackendState::NeedsRepair
     ));
 
     // A plugin with only a non-portable server is Healthy (never Absent), so a
     // present marker is never dropped for an mcp-less-after-filtering plugin.
     let rooted = [server("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky")];
-    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &rooted, ServerShape::Plain).unwrap(), crate::agents::BackendState::Healthy));
+    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &rooted, ServerShape::plain()).unwrap(), crate::agents::BackendState::Healthy));
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }

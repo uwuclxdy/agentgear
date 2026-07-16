@@ -205,15 +205,15 @@ fn probe_classifies_absent_healthy_needsrepair() {
     let servers = [stdio("ez-fixture", "host_fixture", &["mcp"])];
 
     // No file: none of our servers present -> Absent.
-    assert!(matches!(mcpjson::probe(&path, &["mcp"], &servers, ServerShape::Typed).unwrap(), BackendState::Absent));
+    assert!(matches!(mcpjson::probe(&path, &["mcp"], &servers, ServerShape::typed()).unwrap(), BackendState::Absent));
 
     reconcile_config(&path, &servers, &[]).unwrap();
-    assert!(matches!(mcpjson::probe(&path, &["mcp"], &servers, ServerShape::Typed).unwrap(), BackendState::Healthy));
+    assert!(matches!(mcpjson::probe(&path, &["mcp"], &servers, ServerShape::typed()).unwrap(), BackendState::Healthy));
 
     // Drift the on-disk entry so it no longer matches our render -> NeedsRepair.
     let mut root = read(&path);
     root["mcp"]["ez-fixture"]["args"] = json!(["drifted"]);
     std::fs::write(&path, serde_json::to_vec_pretty(&root).unwrap()).unwrap();
-    assert!(matches!(mcpjson::probe(&path, &["mcp"], &servers, ServerShape::Typed).unwrap(), BackendState::NeedsRepair));
+    assert!(matches!(mcpjson::probe(&path, &["mcp"], &servers, ServerShape::typed()).unwrap(), BackendState::NeedsRepair));
     cleanup(&path);
 }

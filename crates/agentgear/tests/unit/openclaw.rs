@@ -1,12 +1,12 @@
 //! openclaw backend unit tests. The mcp glue is the shared json renderer keyed at
-//! `mcp.servers` (two segments) with `ServerShape::Plain`, so these lock the
+//! `mcp.servers` (two segments) with `ServerShape::plain()`, so these lock the
 //! openclaw-specific pieces — the exact key path + body, portability filtering, an
 //! idempotent second reconcile, exact removal that spares a user entry, and the
 //! Absent/Healthy/NeedsRepair classification — against a throwaway config file.
 
 use std::collections::BTreeMap;
 
-use super::{MCP_KEY, portable_names};
+use super::MCP_KEY;
 use crate::agents::BackendState;
 use crate::agents::mcpjson::{self, ServerShape};
 use crate::components::{McpKind, McpServer};
@@ -35,11 +35,11 @@ fn rooted(name: &str) -> McpServer {
 }
 
 fn reconcile(path: &std::path::Path, servers: &[McpServer]) -> Outcome {
-    mcpjson::reconcile(path, MCP_KEY, servers, ServerShape::Plain).unwrap()
+    mcpjson::reconcile(path, MCP_KEY, servers, ServerShape::plain()).unwrap()
 }
 
 fn probe(path: &std::path::Path, servers: &[McpServer]) -> BackendState {
-    mcpjson::probe(path, MCP_KEY, servers, ServerShape::Plain).unwrap()
+    mcpjson::probe(path, MCP_KEY, servers, ServerShape::plain()).unwrap()
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn remove_deletes_only_ours_and_preserves_a_seeded_user_entry() {
     let after_install = std::fs::read_to_string(&path).unwrap();
     assert!(after_install.contains("ez-fixture") && after_install.contains("theirs"), "install must merge, not clobber:\n{after_install}");
 
-    let out = mcpjson::remove(&path, MCP_KEY, &portable_names(&servers)).unwrap();
+    let out = mcpjson::remove(&path, MCP_KEY, &servers, ServerShape::plain()).unwrap();
     assert_eq!(out, Outcome::Removed);
     let after = std::fs::read_to_string(&path).unwrap();
     assert!(!after.contains("ez-fixture"), "our server survived remove:\n{after}");
@@ -112,8 +112,6 @@ fn remove_deletes_only_ours_and_preserves_a_seeded_user_entry() {
 #[test]
 fn portable_filter_skips_claude_plugin_root_servers() {
     let servers = [server("ez-fixture", "host_fixture"), rooted("rooted")];
-    // `remove` keys off exactly the names `reconcile` writes.
-    assert_eq!(portable_names(&servers), vec!["ez-fixture"]);
 
     let path = scratch("openclaw.json");
     reconcile(&path, &servers);

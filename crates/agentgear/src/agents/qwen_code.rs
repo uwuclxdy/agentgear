@@ -56,7 +56,7 @@ impl AgentBackend for QwenCodeBackend {
         // install-only), mirroring the claude probe keying on compile-time metadata.
         let comp = plugin.components(&Source::Embedded)?;
         let settings = settings_path(scope)?;
-        mcpjson::probe(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)
+        mcpjson::probe(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -65,7 +65,7 @@ impl AgentBackend for QwenCodeBackend {
         let settings = base.join("settings.json");
 
         let mut changed = false;
-        changed |= mcpjson::reconcile(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= reconcile_hooks(&settings, &comp.hooks)?;
 
         // Commands copy through verbatim: qwen reads CC's own markdown+frontmatter
@@ -89,7 +89,7 @@ impl AgentBackend for QwenCodeBackend {
         let settings = base.join("settings.json");
 
         let mut changed = false;
-        changed |= mcpjson::remove(&settings, &["mcpServers"], &portable_names(&comp.mcp_servers))? != Outcome::NoOp;
+        changed |= mcpjson::remove(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= remove_hooks(&settings, &comp.hooks)?;
 
         // We own the whole `commands/<plugin>/` subtree, so a recursive drop is exact
@@ -137,14 +137,6 @@ fn qwen_dir(scope: &Scope) -> Result<PathBuf> {
 
 fn settings_path(scope: &Scope) -> Result<PathBuf> {
     Ok(qwen_dir(scope)?.join("settings.json"))
-}
-
-/// Server names `reconcile` actually writes (the shared renderer skips non-portable
-/// ones). `remove` keys off the same set so an unfiltered name list can never delete
-/// a user server sharing a name with one we declared but never wrote (e.g. a
-/// `${CLAUDE_PLUGIN_ROOT}`-bearing entry).
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
 }
 
 // --- hooks -------------------------------------------------------------------

@@ -1,6 +1,6 @@
 //! The openclaw backend: mcp-only, into openclaw's single user-level config
 //! `~/.openclaw/openclaw.json`. MCP goes through the shared json renderer under the
-//! two-segment key path `mcp.servers.<name>` with `ServerShape::Plain` (openclaw's
+//! two-segment key path `mcp.servers.<name>` with `ServerShape::plain()` (openclaw's
 //! stdio body is exactly `{command, args, env}`). Every key is our own server name,
 //! so `remove` is exact and a second reconcile is a true `NoOp`.
 //!
@@ -56,17 +56,17 @@ impl AgentBackend for OpenclawBackend {
         // steady-state source for a non-CC backend (github unsupported, path is
         // install-only), mirroring the claude probe keying on compile-time metadata.
         let comp = plugin.components(&Source::Embedded)?;
-        mcpjson::probe(&config_path()?, MCP_KEY, &comp.mcp_servers, ServerShape::Plain)
+        mcpjson::probe(&config_path()?, MCP_KEY, &comp.mcp_servers, ServerShape::plain())
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, _scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?;
-        mcpjson::reconcile(&config_path()?, MCP_KEY, &comp.mcp_servers, ServerShape::Plain)
+        mcpjson::reconcile(&config_path()?, MCP_KEY, &comp.mcp_servers, ServerShape::plain())
     }
 
     fn remove(&self, plugin: &Plugin, _scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&Source::Embedded)?;
-        mcpjson::remove(&config_path()?, MCP_KEY, &portable_names(&comp.mcp_servers))
+        mcpjson::remove(&config_path()?, MCP_KEY, &comp.mcp_servers, ServerShape::plain())
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {
@@ -106,14 +106,6 @@ fn config_path() -> Result<PathBuf> {
 
 fn env_nonempty(var: &str) -> Option<std::ffi::OsString> {
     std::env::var_os(var).filter(|v| !v.is_empty())
-}
-
-/// Server names `reconcile` actually writes (the shared renderer skips non-portable
-/// ones). `remove` must key off the same set: an unfiltered name list could delete
-/// an unrelated user-owned server that happens to share a name with one we declared
-/// but never wrote (e.g. a `${CLAUDE_PLUGIN_ROOT}`-bearing entry).
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
 }
 
 // --- report ------------------------------------------------------------------

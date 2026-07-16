@@ -124,17 +124,17 @@ fn writable_names(servers: &[McpServer]) -> Vec<&str> {
 /// Insert/update our stdio servers under `context_servers`, leaving the user's own.
 /// `NoOp` when the file already matches.
 fn reconcile_mcp(settings: &Path, servers: &[McpServer]) -> Result<Outcome> {
-    mcpjson::reconcile(settings, MCP_KEY, &stdio_servers(servers), ServerShape::Plain)
+    mcpjson::reconcile(settings, MCP_KEY, &stdio_servers(servers), ServerShape::plain())
 }
 
 /// Classify `context_servers` for our stdio servers (Absent/Healthy/NeedsRepair).
 fn probe_mcp(settings: &Path, servers: &[McpServer]) -> Result<BackendState> {
-    mcpjson::probe(settings, MCP_KEY, &stdio_servers(servers), ServerShape::Plain)
+    mcpjson::probe(settings, MCP_KEY, &stdio_servers(servers), ServerShape::plain())
 }
 
 /// Strip exactly our stdio server keys from `context_servers`, leaving the user's.
 fn remove_mcp(settings: &Path, servers: &[McpServer]) -> Result<Outcome> {
-    mcpjson::remove(settings, MCP_KEY, &writable_names(servers))
+    mcpjson::remove(settings, MCP_KEY, &stdio_servers(servers), ServerShape::plain())
 }
 
 // --- report ------------------------------------------------------------------

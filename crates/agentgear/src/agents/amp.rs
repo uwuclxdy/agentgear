@@ -76,7 +76,7 @@ impl AgentBackend for AmpBackend {
 
     fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&Source::Embedded)?;
-        remove_mcp(&settings_path(scope)?, &portable_names(&comp.mcp_servers))
+        remove_mcp(&settings_path(scope)?, &comp.mcp_servers)
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {
@@ -113,14 +113,6 @@ fn jsonc_sibling(settings: &Path) -> Option<PathBuf> {
     jsonc.is_file().then_some(jsonc)
 }
 
-/// Server names `reconcile` actually writes (the shared renderer skips
-/// non-portable ones). `remove` must key off the same set: an unfiltered name list
-/// could delete an unrelated user-owned server that happens to share a name with a
-/// `${CLAUDE_PLUGIN_ROOT}`-bearing entry we declared but never wrote.
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
-}
-
 // --- mcp (shared json renderer, amp's flat key + Plain body) -----------------
 
 /// Bind amp's `(flat key, Plain shape)` in one place so the trait methods and the
@@ -134,15 +126,15 @@ fn reconcile_mcp(settings: &Path, servers: &[McpServer]) -> Result<Outcome> {
                 .into(),
         });
     }
-    mcpjson::reconcile(settings, MCP_KEY, servers, ServerShape::Plain)
+    mcpjson::reconcile(settings, MCP_KEY, servers, ServerShape::plain())
 }
 
 fn probe_mcp(settings: &Path, servers: &[McpServer]) -> Result<BackendState> {
-    mcpjson::probe(settings, MCP_KEY, servers, ServerShape::Plain)
+    mcpjson::probe(settings, MCP_KEY, servers, ServerShape::plain())
 }
 
-fn remove_mcp(settings: &Path, names: &[&str]) -> Result<Outcome> {
-    mcpjson::remove(settings, MCP_KEY, names)
+fn remove_mcp(settings: &Path, servers: &[McpServer]) -> Result<Outcome> {
+    mcpjson::remove(settings, MCP_KEY, servers, ServerShape::plain())
 }
 
 // --- report ------------------------------------------------------------------

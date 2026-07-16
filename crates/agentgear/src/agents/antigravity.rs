@@ -56,19 +56,19 @@ impl AgentBackend for AntigravityBackend {
         // install-only), mirroring the gemini/claude probe keying on compile-time metadata.
         let comp = plugin.components(&Source::Embedded)?;
         let mcp = mcp_config(scope)?;
-        mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)
+        mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?;
         let mcp = mcp_config(scope)?;
-        mcpjson::reconcile(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)
+        mcpjson::reconcile(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
     }
 
     fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&Source::Embedded)?;
         let mcp = mcp_config(scope)?;
-        mcpjson::remove(&mcp, &["mcpServers"], &portable_names(&comp.mcp_servers))
+        mcpjson::remove(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {
@@ -108,14 +108,6 @@ fn mcp_config(scope: &Scope) -> Result<PathBuf> {
 /// other.
 fn ide_marker() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".gemini").join("antigravity-ide"))
-}
-
-/// Server names `reconcile` actually writes (the shared renderer skips non-portable
-/// ones). `remove` keys off the same set so an unfiltered name list can never delete
-/// a user server sharing a name with one we declared but never wrote (e.g. a
-/// `${CLAUDE_PLUGIN_ROOT}`-bearing entry).
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
 }
 
 // --- report ------------------------------------------------------------------

@@ -70,8 +70,7 @@ fn remove_deletes_only_ours_and_keeps_a_pre_seeded_user_entry() {
     let servers = [server("ez-fixture", "host_fixture")];
     mcpjson::reconcile(&path, super::MCP_KEY, &servers, super::SHAPE).unwrap();
 
-    let names = portable_names(&servers);
-    let removed = mcpjson::remove(&path, super::MCP_KEY, &names).unwrap();
+    let removed = mcpjson::remove(&path, super::MCP_KEY, &servers, super::SHAPE).unwrap();
     assert_eq!(removed, Outcome::Removed);
 
     let root = read(&path);

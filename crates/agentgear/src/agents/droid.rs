@@ -57,7 +57,7 @@ impl AgentBackend for DroidBackend {
         // install-only), mirroring the claude probe keying on compile-time metadata.
         let comp = plugin.components(&Source::Embedded)?;
         let mcp = factory_dir(scope)?.join("mcp.json");
-        mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)
+        mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -65,7 +65,7 @@ impl AgentBackend for DroidBackend {
         let base = factory_dir(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= reconcile_hooks(&base.join("hooks.json"), &comp.hooks)?;
 
         // Commands are droid's own format already (markdown + frontmatter + $ARGUMENTS),
@@ -87,7 +87,7 @@ impl AgentBackend for DroidBackend {
         let base = factory_dir(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &portable_names(&comp.mcp_servers))? != Outcome::NoOp;
+        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= remove_hooks(&base.join("hooks.json"), &comp.hooks)?;
 
         // We wrote each doc as one flat, plugin-prefixed file, so removing exactly those
@@ -118,13 +118,6 @@ fn factory_dir(scope: &Scope) -> Result<PathBuf> {
             .ok_or_else(|| Error::Tree("no home directory (HOME unset); cannot locate ~/.factory".into())),
         Scope::Project { path } => Ok(path.join(".factory")),
     }
-}
-
-/// Server names `reconcile` actually writes (the shared renderer skips non-portable
-/// ones). `remove` keys off the same set so an unfiltered name list can never delete
-/// a user server sharing a name with one we declared but never wrote.
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
 }
 
 /// `commands/hello.md` -> `<plugin>-hello`; a nested path flattens (`a/b.md` ->

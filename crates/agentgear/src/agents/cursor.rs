@@ -54,7 +54,7 @@ impl AgentBackend for CursorBackend {
         // install-only), mirroring the gemini/claude probe keying on compile-time metadata.
         let comp = plugin.components(&Source::Embedded)?;
         let mcp = mcp_path(scope)?;
-        mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::Typed)
+        mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::typed())
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -62,7 +62,7 @@ impl AgentBackend for CursorBackend {
         let base = cursor_dir(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::Typed)? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::typed())? != Outcome::NoOp;
         changed |= reconcile_hooks(&base.join("hooks.json"), &comp.hooks)?;
 
         let cmd_root = base.join("commands");
@@ -81,8 +81,7 @@ impl AgentBackend for CursorBackend {
         let base = cursor_dir(scope)?;
 
         let mut changed = false;
-        let names = portable_names(&comp.mcp_servers);
-        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &names)? != Outcome::NoOp;
+        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::typed())? != Outcome::NoOp;
         changed |= remove_hooks(&base.join("hooks.json"), &comp.hooks)?;
 
         // `commands/` and `agents/` are shared with the user's own files, so we
@@ -119,14 +118,6 @@ fn cursor_dir(scope: &Scope) -> Result<PathBuf> {
 
 fn mcp_path(scope: &Scope) -> Result<PathBuf> {
     Ok(cursor_dir(scope)?.join("mcp.json"))
-}
-
-/// Server names `reconcile` actually writes (the shared renderer skips
-/// non-portable ones). `remove` keys off the same set so an unfiltered name list
-/// can never delete a user server sharing a name with one we declared but never
-/// wrote (e.g. a `${CLAUDE_PLUGIN_ROOT}`-bearing entry).
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
 }
 
 // --- hooks -------------------------------------------------------------------

@@ -58,7 +58,7 @@ impl AgentBackend for CrushBackend {
         // steady-state source for a non-CC backend (github unsupported, path is
         // install-only), mirroring the gemini/claude probe keying on compile-time metadata.
         let comp = plugin.components(&Source::Embedded)?;
-        mcpjson::probe(&config_file(scope)?, &["mcp"], &comp.mcp_servers, ServerShape::Typed)
+        mcpjson::probe(&config_file(scope)?, &["mcp"], &comp.mcp_servers, ServerShape::typed())
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -165,7 +165,7 @@ fn reconcile_config(config: &Path, servers: &[McpServer], hooks: &[HookBinding])
         if !portable.is_empty() {
             let mcp = json_obj_at(root, &["mcp"]);
             for server in &portable {
-                mcp.insert(server.name.clone(), mcpjson::render_server(server, ServerShape::Typed));
+                mcp.insert(server.name.clone(), mcpjson::render_server(server, ServerShape::typed()));
             }
         }
         if !writable_hooks.is_empty() {

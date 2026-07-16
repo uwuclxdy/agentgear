@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 
-use super::{agent_file, command_rel, hook_is_portable, portable_names, reconcile_hooks, remove_hooks, render_agent};
+use super::{agent_file, command_rel, hook_is_portable, reconcile_hooks, remove_hooks, render_agent};
 use crate::agents::BackendState;
 use crate::agents::mcpjson::{self, ServerShape};
 use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer};
@@ -26,12 +26,6 @@ fn server(name: &str, command: &str) -> McpServer {
 
 fn doc(rel: &str) -> MarkdownDoc {
     MarkdownDoc { name: "x".into(), rel: rel.into(), frontmatter: BTreeMap::new(), body: String::new(), raw: Vec::new() }
-}
-
-#[test]
-fn portable_names_excludes_claude_plugin_root_servers() {
-    let servers = [server("ez-fixture", "host_fixture"), server("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky")];
-    assert_eq!(portable_names(&servers), vec!["ez-fixture"]);
 }
 
 #[test]
@@ -94,11 +88,11 @@ fn mcp_reconcile_writes_plain_shape_and_probe_classifies_lifecycle() {
     let servers = [server("ez-fixture", "host_fixture")];
 
     // A missing settings file classifies Absent (nothing of ours present).
-    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::Plain).unwrap(), BackendState::Absent));
+    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::plain()).unwrap(), BackendState::Absent));
 
     // Reconcile writes the qwen Plain shape: `{command,args,env}`, no `type` field
     // (qwen picks the transport by which key is present).
-    assert_eq!(mcpjson::reconcile(&path, &["mcpServers"], &servers, ServerShape::Plain).unwrap(), Outcome::Installed);
+    assert_eq!(mcpjson::reconcile(&path, &["mcpServers"], &servers, ServerShape::plain()).unwrap(), Outcome::Installed);
     let v: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     let entry = &v["mcpServers"]["ez-fixture"];
     assert_eq!(entry["command"], "host_fixture");
@@ -106,12 +100,12 @@ fn mcp_reconcile_writes_plain_shape_and_probe_classifies_lifecycle() {
     assert!(entry.get("args").is_some() && entry.get("env").is_some());
 
     // Now Healthy, and a second reconcile is a true NoOp.
-    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::Plain).unwrap(), BackendState::Healthy));
-    assert_eq!(mcpjson::reconcile(&path, &["mcpServers"], &servers, ServerShape::Plain).unwrap(), Outcome::NoOp);
+    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &servers, ServerShape::plain()).unwrap(), BackendState::Healthy));
+    assert_eq!(mcpjson::reconcile(&path, &["mcpServers"], &servers, ServerShape::plain()).unwrap(), Outcome::NoOp);
 
     // A drifted body (same key, different command) classifies NeedsRepair.
     let drifted = [server("ez-fixture", "some-other-cmd")];
-    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &drifted, ServerShape::Plain).unwrap(), BackendState::NeedsRepair));
+    assert!(matches!(mcpjson::probe(&path, &["mcpServers"], &drifted, ServerShape::plain()).unwrap(), BackendState::NeedsRepair));
 
     fs::remove_dir_all(path.parent().unwrap()).ok();
 }
@@ -124,17 +118,17 @@ fn mcp_non_portable_is_skipped_and_probe_stays_healthy() {
 
     // Reconcile never writes the non-portable server key (the shared renderer may
     // ensure an empty `mcpServers` object, which is benign).
-    mcpjson::reconcile(&path, &["mcpServers"], std::slice::from_ref(&rooted), ServerShape::Plain).unwrap();
+    mcpjson::reconcile(&path, &["mcpServers"], std::slice::from_ref(&rooted), ServerShape::plain()).unwrap();
     let v: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     assert!(v["mcpServers"].get("rooted").is_none(), "a non-portable server must never be written:\n{v}");
     // On an existing file, probe returns Healthy (never Absent) so self_heal never
     // drops a present marker for a plugin with no portable servers.
     assert!(matches!(
-        mcpjson::probe(&path, &["mcpServers"], std::slice::from_ref(&rooted), ServerShape::Plain).unwrap(),
+        mcpjson::probe(&path, &["mcpServers"], std::slice::from_ref(&rooted), ServerShape::plain()).unwrap(),
         BackendState::Healthy
     ));
     // A second reconcile is a true NoOp.
-    assert_eq!(mcpjson::reconcile(&path, &["mcpServers"], std::slice::from_ref(&rooted), ServerShape::Plain).unwrap(), Outcome::NoOp);
+    assert_eq!(mcpjson::reconcile(&path, &["mcpServers"], std::slice::from_ref(&rooted), ServerShape::plain()).unwrap(), Outcome::NoOp);
 
     fs::remove_dir_all(path.parent().unwrap()).ok();
 }
@@ -148,7 +142,7 @@ fn mcp_remove_deletes_only_ours_and_keeps_a_user_entry() {
     // target, even if a user has a server of the same name.
     let declared = [server("ez-fixture", "host_fixture"), server("rooted", "${CLAUDE_PLUGIN_ROOT}/x")];
 
-    assert_eq!(mcpjson::remove(&path, &["mcpServers"], &portable_names(&declared)).unwrap(), Outcome::Removed);
+    assert_eq!(mcpjson::remove(&path, &["mcpServers"], &declared, ServerShape::plain()).unwrap(), Outcome::Removed);
     let v: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     assert!(v["mcpServers"].get("ez-fixture").is_none(), "our server should be gone");
     assert!(v["mcpServers"].get("theirs").is_some(), "the user's server must survive");

@@ -5,7 +5,7 @@
 //! user scope and the lifecycle methods reject `Scope::User` rather than guess a path.
 //!
 //! MCP goes through the shared json renderer into `<project>/.vscode/mcp.json` under
-//! the root key `servers` (NOT CC's `mcpServers`), `ServerShape::Typed` (VS Code
+//! the root key `servers` (NOT CC's `mcpServers`), `ServerShape::typed()` (VS Code
 //! wants an explicit `"type":"stdio"`). Hooks land in a file we own entirely,
 //! `<project>/.github/hooks/<plugin>.json`, with CC event names mapped to VS Code's
 //! (identity for the 7 shared events; `SessionEnd`/`Notification` have no analog and
@@ -33,7 +33,7 @@ pub(crate) struct VscodeCopilotBackend;
 /// `.vscode/mcp.json` nests servers under a bare `servers` object (not CC's
 /// `mcpServers`); stdio entries carry an explicit `"type":"stdio"`.
 const MCP_KEY: &[&str] = &["servers"];
-const SHAPE: ServerShape = ServerShape::Typed;
+const SHAPE: ServerShape = ServerShape::typed();
 
 impl AgentBackend for VscodeCopilotBackend {
     fn id(&self) -> &'static str {
@@ -90,7 +90,7 @@ impl AgentBackend for VscodeCopilotBackend {
         // Key removal off the same portable set reconcile writes: an unfiltered name
         // could delete an unrelated user server sharing a name with a non-portable
         // entry we never wrote (e.g. a `${CLAUDE_PLUGIN_ROOT}`-bearing one).
-        changed |= mcpjson::remove(&mcp_path(root), MCP_KEY, &portable_names(&comp.mcp_servers))? != Outcome::NoOp;
+        changed |= mcpjson::remove(&mcp_path(root), MCP_KEY, &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         // The hooks file is entirely ours (`<plugin>.json`), so a whole-file delete is exact.
         changed |= remove_file_idem(&hooks_path(root, plugin.name))?;
 

@@ -55,7 +55,7 @@ impl AgentBackend for KimiBackend {
         // steady-state source for a non-CC backend (github unsupported, path is
         // install-only), mirroring the claude probe keying on compile-time metadata.
         let comp = plugin.components(&Source::Embedded)?;
-        mcpjson::probe(&mcp_json(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)
+        mcpjson::probe(&mcp_json(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -63,7 +63,7 @@ impl AgentBackend for KimiBackend {
         let base = kimi_base(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= reconcile_hooks(&base.join("config.toml"), &comp.hooks)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
@@ -73,7 +73,7 @@ impl AgentBackend for KimiBackend {
         let base = kimi_base(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &portable_names(&comp.mcp_servers))? != Outcome::NoOp;
+        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= remove_hooks(&base.join("config.toml"), &comp.hooks)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
@@ -111,13 +111,6 @@ fn kimi_base(scope: &Scope) -> Result<PathBuf> {
 
 fn mcp_json(scope: &Scope) -> Result<PathBuf> {
     Ok(kimi_base(scope)?.join("mcp.json"))
-}
-
-/// Server names `reconcile` actually writes (the shared renderer skips non-portable
-/// ones). `remove` keys off the same set so it never deletes a user server that
-/// happens to share a name with one we declared but never wrote.
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
 }
 
 // --- hooks -------------------------------------------------------------------

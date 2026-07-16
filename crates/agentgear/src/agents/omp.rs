@@ -59,7 +59,7 @@ impl AgentBackend for OmpBackend {
         // steady-state source for a non-CC backend (github unsupported, path is
         // install-only), mirroring the claude probe keying on compile-time metadata.
         let comp = plugin.components(&Source::Embedded)?;
-        mcpjson::probe(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)
+        mcpjson::probe(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -67,7 +67,7 @@ impl AgentBackend for OmpBackend {
         let base = surface_base(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::Plain)? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
 
         // Commands are markdown + frontmatter in both CC and omp (omp reads
         // `frontmatter.description` or the first body line), so the verbatim bytes
@@ -89,7 +89,7 @@ impl AgentBackend for OmpBackend {
         let base = surface_base(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &portable_names(&comp.mcp_servers))? != Outcome::NoOp;
+        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
 
         // `commands/` and `agents/` are shared with the user's own files (omp scans
         // them flat), so we delete only our plugin-prefixed files by name — never a
@@ -139,14 +139,6 @@ fn surface_base(scope: &Scope) -> Result<PathBuf> {
 
 fn mcp_path(scope: &Scope) -> Result<PathBuf> {
     Ok(surface_base(scope)?.join("mcp.json"))
-}
-
-/// Server names `reconcile` actually writes (the shared renderer skips non-portable
-/// ones). `remove` keys off the same set so an unfiltered name list can never delete
-/// a user server sharing a name with one we declared but never wrote (e.g. a
-/// `${CLAUDE_PLUGIN_ROOT}`-bearing entry).
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
 }
 
 // --- commands / agents -------------------------------------------------------

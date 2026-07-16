@@ -14,20 +14,62 @@ use crate::error::{Error, Result};
 use crate::host::Outcome;
 
 #[derive(Clone, Copy)]
-pub(crate) enum ServerShape {
+pub(crate) enum StdioShape {
     /// `{command, args, env}` — gemini, cline, devin.
     Plain,
     /// `{type:"stdio", command, args, env}` — cursor.
     Typed,
 }
 
-/// Render one server body per `shape`. Http/Sse ignore the shape and render
-/// `{type, url, headers:{}}`.
+/// The remote (http/sse) dialect. Harnesses agree on the stdio body far more than
+/// on the remote one, so the two axes vary independently.
+#[derive(Clone, Copy)]
+pub(crate) enum RemoteShape {
+    /// `{type:"http"|"sse", url, headers:{}}` — the majority dialect.
+    TypeUrlHeaders,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ServerShape {
+    pub(crate) stdio: StdioShape,
+    pub(crate) remote: RemoteShape,
+}
+
+impl ServerShape {
+    pub(crate) const fn plain() -> Self {
+        Self { stdio: StdioShape::Plain, remote: RemoteShape::TypeUrlHeaders }
+    }
+
+    pub(crate) const fn typed() -> Self {
+        Self { stdio: StdioShape::Typed, remote: RemoteShape::TypeUrlHeaders }
+    }
+
+    /// Whether this dialect has a faithful landing for `kind`. An unsupported kind
+    /// is skipped exactly like a non-portable server: never written, never owned,
+    /// never removed.
+    pub(crate) fn supports(&self, kind: &McpKind) -> bool {
+        match self.remote {
+            RemoteShape::TypeUrlHeaders => {
+                let _ = kind;
+                true
+            }
+        }
+    }
+}
+
+/// The servers this shape actually writes: portable AND supported. reconcile,
+/// probe, and remove all key off this one filter so ownership can never drift
+/// between them (§chokepoint).
+fn writable(servers: &[McpServer], shape: ServerShape) -> Vec<&McpServer> {
+    servers.iter().filter(|s| s.is_portable() && shape.supports(&s.kind)).collect()
+}
+
+/// Render one server body per `shape`.
 pub(crate) fn render_server(server: &McpServer, shape: ServerShape) -> Value {
     match &server.kind {
         McpKind::Stdio => {
             let mut obj = Map::new();
-            if matches!(shape, ServerShape::Typed) {
+            if matches!(shape.stdio, StdioShape::Typed) {
                 obj.insert("type".into(), Value::from("stdio"));
             }
             obj.insert("command".into(), Value::from(server.command.clone()));
@@ -35,17 +77,21 @@ pub(crate) fn render_server(server: &McpServer, shape: ServerShape) -> Value {
             obj.insert("env".into(), env_value(server));
             Value::Object(obj)
         }
-        McpKind::Http { url } => remote("http", url),
-        McpKind::Sse { url } => remote("sse", url),
+        McpKind::Http { url } => remote(shape.remote, "http", url),
+        McpKind::Sse { url } => remote(shape.remote, "sse", url),
     }
 }
 
-fn remote(kind: &str, url: &str) -> Value {
-    let mut obj = Map::new();
-    obj.insert("type".into(), Value::from(kind));
-    obj.insert("url".into(), Value::from(url));
-    obj.insert("headers".into(), Value::Object(Map::new()));
-    Value::Object(obj)
+fn remote(shape: RemoteShape, kind: &str, url: &str) -> Value {
+    match shape {
+        RemoteShape::TypeUrlHeaders => {
+            let mut obj = Map::new();
+            obj.insert("type".into(), Value::from(kind));
+            obj.insert("url".into(), Value::from(url));
+            obj.insert("headers".into(), Value::Object(Map::new()));
+            Value::Object(obj)
+        }
+    }
 }
 
 fn env_value(server: &McpServer) -> Value {
@@ -58,8 +104,9 @@ fn env_value(server: &McpServer) -> Value {
 pub(crate) fn reconcile(path: &Path, key_path: &[&str], servers: &[McpServer], shape: ServerShape) -> Result<Outcome> {
     let changed = json_edit(path, |root| {
         let obj = json_obj_at(root, key_path);
-        // Skip non-portable servers here so no json backend can forget to (§chokepoint).
-        for server in servers.iter().filter(|s| s.is_portable()) {
+        // Skip non-portable/unsupported servers here so no json backend can forget
+        // to (§chokepoint).
+        for server in writable(servers, shape) {
             obj.insert(server.name.clone(), render_server(server, shape));
         }
         Ok(())
@@ -79,17 +126,17 @@ pub(crate) fn probe(path: &Path, key_path: &[&str], servers: &[McpServer], shape
         serde_json::from_slice(&bytes).map_err(|e| Error::Config { path: path.display().to_string(), detail: e.to_string() })?;
     let obj = navigate(&root, key_path);
 
-    // Only portable servers are ever written, so only they define ownership. With
+    // Only writable servers are ever written, so only they define ownership. With
     // none to install, this renderer has nothing that could be "gone" -> Healthy,
     // never Absent (an Absent here would make self_heal drop a present marker).
-    let portable: Vec<&McpServer> = servers.iter().filter(|s| s.is_portable()).collect();
-    if portable.is_empty() {
+    let ours = writable(servers, shape);
+    if ours.is_empty() {
         return Ok(BackendState::Healthy);
     }
 
     let mut present = 0usize;
     let mut matching = 0usize;
-    for server in &portable {
+    for server in &ours {
         if let Some(existing) = obj.and_then(|o| o.get(&server.name)) {
             present += 1;
             if *existing == render_server(server, shape) {
@@ -99,23 +146,26 @@ pub(crate) fn probe(path: &Path, key_path: &[&str], servers: &[McpServer], shape
     }
     Ok(if present == 0 {
         BackendState::Absent
-    } else if matching == portable.len() {
+    } else if matching == ours.len() {
         BackendState::Healthy
     } else {
         BackendState::NeedsRepair
     })
 }
 
-/// Remove exactly our server keys under `key_path`, leaving others. Conservatively
-/// leaves an emptied object in place rather than dropping the file.
-pub(crate) fn remove(path: &Path, key_path: &[&str], server_names: &[&str]) -> Result<Outcome> {
+/// Remove exactly our server keys under `key_path`, leaving others. Ownership is
+/// the same writable filter reconcile uses, so a server we declared but never
+/// wrote (non-portable, or unsupported by this dialect) can never shadow-delete a
+/// same-named user entry. Conservatively leaves an emptied object in place rather
+/// than dropping the file.
+pub(crate) fn remove(path: &Path, key_path: &[&str], servers: &[McpServer], shape: ServerShape) -> Result<Outcome> {
     if !path.exists() {
         return Ok(Outcome::NoOp);
     }
     let changed = json_edit(path, |root| {
         if let Some(obj) = navigate_mut(root, key_path) {
-            for name in server_names {
-                obj.remove(*name);
+            for server in writable(servers, shape) {
+                obj.remove(&server.name);
             }
         }
         Ok(())

@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
-use super::{portable_names, probe_mcp, reconcile_mcp, remove_mcp};
+use super::{probe_mcp, reconcile_mcp, remove_mcp};
 use crate::agents::BackendState;
 use crate::components::{McpKind, McpServer};
 use crate::host::Outcome;
@@ -35,12 +35,6 @@ fn read(path: &std::path::Path) -> Value {
 
 fn cleanup(path: &std::path::Path) {
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
-}
-
-#[test]
-fn portable_names_excludes_claude_plugin_root_servers() {
-    let servers = [srv("ez-fixture", "host_fixture", &["mcp"]), srv("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky", &[])];
-    assert_eq!(portable_names(&servers), vec!["ez-fixture"]);
 }
 
 #[test]
@@ -75,7 +69,7 @@ fn remove_strips_only_our_key_and_keeps_the_user_config() {
     assert!(v["amp.mcpServers"].get("ez-fixture").is_some(), "our server was not merged in");
     assert!(v["amp.mcpServers"].get("theirs").is_some(), "user server was clobbered on install");
 
-    assert_eq!(remove_mcp(&path, &portable_names(&servers)).unwrap(), Outcome::Removed);
+    assert_eq!(remove_mcp(&path, &servers).unwrap(), Outcome::Removed);
     let v = read(&path);
     assert!(v["amp.mcpServers"].get("ez-fixture").is_none(), "our server survived remove");
     assert!(v["amp.mcpServers"].get("theirs").is_some(), "user server was clobbered on remove");
@@ -135,7 +129,7 @@ fn non_portable_servers_are_never_written_or_removed() {
     // remove untouched: it is not in `portable_names`, so we never target it.
     std::fs::write(&path, r#"{"amp.mcpServers":{"rooted":{"command":"users-own"}}}"#).unwrap();
     let before = std::fs::read_to_string(&path).unwrap();
-    assert_eq!(remove_mcp(&path, &portable_names(std::slice::from_ref(&rooted))).unwrap(), Outcome::NoOp);
+    assert_eq!(remove_mcp(&path, std::slice::from_ref(&rooted)).unwrap(), Outcome::NoOp);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), before, "remove touched a server it never wrote");
 
     cleanup(&path);

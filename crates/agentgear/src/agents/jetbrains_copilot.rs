@@ -2,7 +2,7 @@
 //! in practice — the plugin has no CLI and its only user-writable, file-backed
 //! surface is `<config>/github-copilot/intellij/mcp.json` (root key `servers`,
 //! stdio entries shaped `{type:"stdio",command,args,env}`). Written through the
-//! shared json renderer (`ServerShape::Typed`), so `remove` is exact (only our
+//! shared json renderer (`ServerShape::typed()`), so `remove` is exact (only our
 //! server keys) and a second reconcile is a true `NoOp`. Hooks/commands/agents are
 //! repo-level `.github` surfaces (Copilot-CLI / vscode-copilot territory) with no
 //! JetBrains-plugin file consumer, so they are skipped — see
@@ -28,7 +28,7 @@ pub(crate) struct JetbrainsCopilotBackend;
 /// mcp.json nests servers under a bare `servers` object (not VS Code's / CC's
 /// `mcpServers`); stdio entries carry an explicit `"type":"stdio"`.
 const MCP_KEY: &[&str] = &["servers"];
-const SHAPE: ServerShape = ServerShape::Typed;
+const SHAPE: ServerShape = ServerShape::typed();
 
 impl AgentBackend for JetbrainsCopilotBackend {
     fn id(&self) -> &'static str {
@@ -69,7 +69,7 @@ impl AgentBackend for JetbrainsCopilotBackend {
         // Key removal off the same portable-server set reconcile writes: an unfiltered name
         // could delete an unrelated user server sharing a name with a non-portable entry we
         // never wrote (e.g. a `${CLAUDE_PLUGIN_ROOT}`-bearing one).
-        mcpjson::remove(&mcp_path()?, MCP_KEY, &portable_names(&comp.mcp_servers))
+        mcpjson::remove(&mcp_path()?, MCP_KEY, &comp.mcp_servers, SHAPE)
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {
