@@ -1,0 +1,18 @@
+[package]
+name = "multi-installer"
+description = "agentgear setup picker: enumerate every configured backend and target any subset"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# `all-agents` so `status`/`setup --agent <id>` can resolve every id the derive
+# declares (default features already supply derive + claude + embed).
+[dependencies]
+agentgear = { path = "../../crates/agentgear", features = ["all-agents"] }
+
+[build-dependencies]
+agentgear = { path = "../../crates/agentgear" }
