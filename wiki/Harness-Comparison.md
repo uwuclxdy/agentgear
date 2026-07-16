@@ -94,7 +94,7 @@ some reject the shape and void the file. Per-tool fixes are queued.
 | antigravity | **known limitation**: refused. native wants `serverUrl` (SSE only); the rendered shape voids the file |
 | antigravity-cli | **known limitation**: refused. one bad server voids the whole config; native wants `serverUrl` |
 | augment | faithful. byte-matches the tool's own writer |
-| cline | sse faithful; **http known limitation**: needs `streamableHttp`, the rejection drops the whole mcp object |
+| cline | faithful: rendered with cline's literal `streamableHttp`/`sse` transport values |
 | codex | faithful. streamable-HTTP only; sse maps onto the same `url` |
 | copilot-cli | faithful. `tools:["*"]` is required (a bare string voids the file) |
 | crush | faithful. both transports dial-proven |
