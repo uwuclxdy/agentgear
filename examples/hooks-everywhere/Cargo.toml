@@ -1,0 +1,34 @@
+[package]
+name = "hooks-everywhere"
+description = "hook-only agentgear host: the SessionStart/UserPromptSubmit/PreToolUse/PostToolUse lifecycle across every hook-capable harness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# One feature per non-Claude backend this host targets. This plugin ships hooks
+# only (no mcp server, no commands, no agents, no skills), so every id below is a
+# harness whose backend translates hooks at all.
+[dependencies]
+agentgear = { path = "../../crates/agentgear", features = [
+    "codex",
+    "gemini",
+    "cursor",
+    "cline",
+    "devin",
+    "qwen-code",
+    "copilot-cli",
+    "kimi",
+    "kiro",
+    "goose",
+    "crush",
+    "droid",
+    "augment",
+    "antigravity-cli",
+] }
+
+[build-dependencies]
+agentgear = { path = "../../crates/agentgear" }
