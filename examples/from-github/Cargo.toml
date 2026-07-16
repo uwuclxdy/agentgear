@@ -1,0 +1,23 @@
+[package]
+name = "from-github"
+description = "zero-embed agentgear host: ships no baked plugin blob, installs its plugin from a GitHub marketplace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# The zero-embed pairing: `default-features = false` drops the lib's `embed`
+# feature (no `tar`/`brotli`, no decompress path) and `embed = false` on the derive
+# emits an empty blob instead of `include_bytes!`. The binary ships zero embed bytes
+# and installs from `Source::GitHub` instead. `claude` is the only backend this host
+# targets. See `docs/design.md` §distribution "Feature-gate pairing".
+[dependencies]
+agentgear = { path = "../../crates/agentgear", default-features = false, features = ["derive", "claude"] }
+
+# The build.rs still pins plugin.json `version` to CARGO_PKG_VERSION and tracks the
+# tree for rebuilds; with `embed` off it skips the compress-and-bake step.
+[build-dependencies]
+agentgear = { path = "../../crates/agentgear", default-features = false, features = ["derive", "claude"] }
