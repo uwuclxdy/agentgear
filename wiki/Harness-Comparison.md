@@ -102,7 +102,7 @@ some reject the shape and void the file. Per-tool fixes are queued.
 | devin | faithful: rendered with devin's native `{url, transport}` form |
 | droid | faithful. `type` is the live discriminator |
 | gemini | faithful. native `{url, type, headers?}` |
-| goose | http faithful; **sse known limitation**: deserializes then runtime-refuses ("migrate to streamable_http") |
+| goose | http faithful; sse skipped (goose runtime-refuses sse, so a dead extension is never written) |
 | jetbrains-copilot | `type` faithful; headers land at the wrong key (latent, empty today) |
 | kilo | faithful. `type` mandatory, dial-proven |
 | kimi | faithful: rendered with kimi's native `{url, transport}` form |
