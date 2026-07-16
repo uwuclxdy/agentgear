@@ -79,18 +79,26 @@ Two shapes:
 
 \* codex hooks are written but stay inert until a user trusts them in codex's `/hooks`
 TUI. kimi has no such gate; its config hooks fire as soon as they are written
-(binary-verified against `@moonshot-ai/kimi-code` 0.24.2).
+(binary-verified against `@moonshot-ai/kimi-code` 0.24.2). The July 2026 verification
+found that hook writes for kiro, antigravity-cli, and cline's user scope currently land
+where those tools never read them; fixes are queued, treat hooks on those three as not
+yet functional.
 
-Skills have no backend yet. Remote (http/sse) mcp is best-effort per tool; stdio is the
-tested path. Each backend's exact config paths, event-name mapping, and skipped surfaces
-live in its own module (`agents/<id>.rs`) and harness brief.
+Skills have no backend yet. Remote (http/sse) mcp fidelity varies per tool: most read the
+rendered shape as-is, a few key the transport off other fields or reject it whole, so
+remote servers stay best-effort until per-tool fixes land. stdio is the tested path
+everywhere. Each backend's exact config paths, event-name mapping, and skipped surfaces
+live in its own module (`agents/<id>.rs`).
 
 The original six (codex, opencode, gemini, cursor, cline, devin) are verified against their
 real tool CLI: a docker leg installs the tool, runs `setup`, confirms the plugin's MCP
 server through the tool's own `mcp list`, then checks uninstall removes only what agentgear
 wrote while a seeded foreign entry survives. All six pass. The 18 newer backends are covered
 by hermetic config-file tests; their docker legs (13 of them; the GUI/IDE and no-surface
-backends have none) are authored and first run on CI push.
+backends have none) are authored and first run on CI push. On top of the test suites, every
+backend's documented behavior was re-verified against the real shipping tool in July 2026
+(scratch-home installs with negative-control probes; the IDE-bound backends via their
+shipped extension source).
 
 ## Add a backend
 
