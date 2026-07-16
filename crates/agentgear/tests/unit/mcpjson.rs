@@ -46,6 +46,17 @@ fn renders_remote_type_url_headers() {
 }
 
 #[test]
+fn renders_remote_streamable_http_value() {
+    use super::RemoteShape;
+    let shape = ServerShape::plain().with_remote(RemoteShape::StreamableHttpValue);
+    let http = remote_server("h", McpKind::Http { url: "https://x/mcp".into() });
+    let sse = remote_server("s", McpKind::Sse { url: "https://x/sse".into() });
+    // Only the streamable-HTTP discriminator value differs from the majority dialect.
+    assert_eq!(render_server(&http, shape), json!({"type":"streamableHttp","url":"https://x/mcp","headers":{}}));
+    assert_eq!(render_server(&sse, shape), json!({"type":"sse","url":"https://x/sse","headers":{}}));
+}
+
+#[test]
 fn remove_never_touches_a_server_we_could_not_have_written() {
     let path = scratch("settings.json");
     // A user's own entry named like our non-portable server, which reconcile skips.

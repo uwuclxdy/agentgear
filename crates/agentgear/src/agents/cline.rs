@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::confedit::{remove_file_idem, write_file_idem};
-use super::mcpjson::{self, ServerShape};
+use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -36,6 +36,11 @@ use crate::error::{Error, IoContext, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 pub(crate) struct ClineBackend;
+
+/// cline's schema literal-matches the transport value: streamable HTTP is
+/// `streamableHttp`, and the majority `"http"` value is refused — one bad entry
+/// voids the whole `mcpServers` object, user servers included.
+const SHAPE: ServerShape = ServerShape::plain().with_remote(RemoteShape::StreamableHttpValue);
 
 impl AgentBackend for ClineBackend {
     fn id(&self) -> &'static str {
@@ -62,7 +67,7 @@ impl AgentBackend for ClineBackend {
         // install-only). MCP is global regardless of scope, so scope is unused here.
         let comp = plugin.components(&Source::Embedded)?;
         let settings = mcp_settings_path()?;
-        mcpjson::probe(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
+        mcpjson::probe(&settings, &["mcpServers"], &comp.mcp_servers, SHAPE)
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -70,7 +75,7 @@ impl AgentBackend for ClineBackend {
 
         let mut changed = false;
         let settings = mcp_settings_path()?;
-        changed |= mcpjson::reconcile(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&settings, &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= reconcile_hooks(&hooks_dir(scope)?, plugin.name, &comp.hooks)?;
 
         let wf_root = workflows_dir(scope)?;
@@ -85,7 +90,7 @@ impl AgentBackend for ClineBackend {
 
         let mut changed = false;
         let settings = mcp_settings_path()?;
-        changed |= mcpjson::remove(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= mcpjson::remove(&settings, &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= remove_hooks(&hooks_dir(scope)?, plugin.name, &comp.hooks)?;
 
         // Workflows are plugin-prefixed files shared with the user's own workflows,

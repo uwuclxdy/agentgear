@@ -133,6 +133,21 @@ fn cline_full_lifecycle() {
     // Plain shape emits no `disabled`/`autoApprove` defaults.
     assert!(!s.contains("autoApprove"), "Plain shape should not emit autoApprove:\n{s}");
 
+    // remote mcp: cline's schema literal-matches the transport value — its
+    // streamable-HTTP discriminator is `streamableHttp`, and a `type:"http"` entry
+    // voids the whole mcpServers object (user servers included).
+    let parsed: serde_json::Value = serde_json::from_str(&s).unwrap();
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-http"],
+        serde_json::json!({"type": "streamableHttp", "url": "http://127.0.0.1:39621/mcp", "headers": {}}),
+        "http remote arm mismatch:\n{s}"
+    );
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-sse"],
+        serde_json::json!({"type": "sse", "url": "http://127.0.0.1:39622/sse", "headers": {}}),
+        "sse remote arm mismatch:\n{s}"
+    );
+
     // workflows: one plugin-prefixed markdown per command, body only (no frontmatter).
     assert!(env.workflow.exists(), "workflow md not written: {}", env.workflow.display());
     let wf = fs::read_to_string(&env.workflow).unwrap();

@@ -27,6 +27,10 @@ pub(crate) enum StdioShape {
 pub(crate) enum RemoteShape {
     /// `{type:"http"|"sse", url, headers:{}}` — the majority dialect.
     TypeUrlHeaders,
+    /// Same keys, but the streamable-HTTP discriminator value is `streamableHttp`
+    /// — cline's literal-match schema, where a `type:"http"` entry voids the whole
+    /// `mcpServers` object (user servers included).
+    StreamableHttpValue,
 }
 
 #[derive(Clone, Copy)]
@@ -44,12 +48,17 @@ impl ServerShape {
         Self { stdio: StdioShape::Typed, remote: RemoteShape::TypeUrlHeaders }
     }
 
+    pub(crate) const fn with_remote(mut self, remote: RemoteShape) -> Self {
+        self.remote = remote;
+        self
+    }
+
     /// Whether this dialect has a faithful landing for `kind`. An unsupported kind
     /// is skipped exactly like a non-portable server: never written, never owned,
     /// never removed.
     pub(crate) fn supports(&self, kind: &McpKind) -> bool {
         match self.remote {
-            RemoteShape::TypeUrlHeaders => {
+            RemoteShape::TypeUrlHeaders | RemoteShape::StreamableHttpValue => {
                 let _ = kind;
                 true
             }
@@ -84,9 +93,13 @@ pub(crate) fn render_server(server: &McpServer, shape: ServerShape) -> Value {
 
 fn remote(shape: RemoteShape, kind: &str, url: &str) -> Value {
     match shape {
-        RemoteShape::TypeUrlHeaders => {
+        RemoteShape::TypeUrlHeaders | RemoteShape::StreamableHttpValue => {
+            let type_value = match shape {
+                RemoteShape::StreamableHttpValue if kind == "http" => "streamableHttp",
+                _ => kind,
+            };
             let mut obj = Map::new();
-            obj.insert("type".into(), Value::from(kind));
+            obj.insert("type".into(), Value::from(type_value));
             obj.insert("url".into(), Value::from(url));
             obj.insert("headers".into(), Value::Object(Map::new()));
             Value::Object(obj)
