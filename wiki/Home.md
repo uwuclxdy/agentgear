@@ -23,9 +23,10 @@ embeds plugin/ (.tar.br blob) ── materialize ──▶ ~/.local/share/<name>
 |---|---|
 | [Getting Started](Getting-Started) | add the crate, the derive, the build guard, hook wiring |
 | [How It Works](How-It-Works) | lifecycle to CLI mapping, materialize, the self-heal state table |
-| [Agent Backends](Agent-Backends) | the unsealed `AgentBackend` trait, all 25 backends, the two install models |
+| [Agent Backends](Agent-Backends) | the unsealed `AgentBackend` trait, install models, env overrides, hook renames |
+| [Harness Comparison](Harness-Comparison) | side-by-side: support, config paths, remote fidelity, native CC-config interop |
 | [Doctor](Doctor) | the health report: shared checks, per-agent checks, fix hints |
 
 ## Status
 
-v1 ships 25 agent backends: Claude Code (full plugin lifecycle) plus 24 config-merge backends. The original six (codex, opencode, gemini, cursor, cline, devin) are docker-verified against their real tool CLI, the tool's own `mcp list` included; the 18 newer backends are hermetic + unit green locally, their 13 docker legs authored and first run on CI push. The `AgentBackend` trait is unsealed. Linux is CI-gated, macOS is tested, Windows is designed in but not gated in CI.
+v1 ships 25 agent backends: Claude Code (full plugin lifecycle) plus 24 config-merge backends. Every non-CC backend was verified against its real shipping binary on 2026-07-16, with positive and negative controls before any parse was trusted. 19 per-tool docker legs (the GUI/IDE and no-surface backends have none) pass locally; the CI push is pending. Hermetic and unit tests are green in plain `cargo test`. The `AgentBackend` trait is unsealed. Linux is CI-gated, macOS is tested, Windows is designed in but not gated in CI.

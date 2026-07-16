@@ -109,4 +109,10 @@ Installed
 
 The first install is always explicit: the hook that triggers self-heal ships inside the plugin, so it cannot fire until the plugin is installed. See [How It Works](How-It-Works) for what runs under the hood and [Doctor](Doctor) for verifying an install.
 
-Both of these steps exist as runnable hosts in the repo's [`examples/`](https://github.com/uwuclxdy/agentgear/tree/mommy/examples): `hello-mcp` is this page in ~30 lines; `kitchen-sink` adds hooks, a command, a subagent, a skill, and six more harnesses.
+Five runnable hosts live in the repo's [`examples/`](https://github.com/uwuclxdy/agentgear/tree/mommy/examples):
+
+- `hello-mcp`: this page in ~30 lines, one MCP server to Claude Code only.
+- `kitchen-sink`: every component type (MCP server, hooks, command, subagent, skill) across seven harnesses.
+- `multi-installer`: builds its own agent picker through `backend_for`, then installs a filtered subset.
+- `hooks-everywhere`: four hook events fanned across the 15 hook-capable harnesses; its README carries the event map.
+- `from-github`: a zero-embed host (`embed = false`, `default_source = "github"`) that tracks a remote repo.

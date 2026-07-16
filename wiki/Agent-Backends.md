@@ -1,8 +1,13 @@
 # Agent backends
 
-The crate installs a plugin into a coding agent through an `AgentBackend`. One binary can
-target several agents; `install` loops the configured `agents` list and reconciles each
-one. 25 backends ship: Claude Code plus 24 config-merge backends.
+The crate installs a plugin into a coding agent through an `AgentBackend`. One binary can target
+several agents; `install` loops the configured `agents` list and reconciles each one. 25 backends
+ship: Claude Code plus 24 config-merge backends. All 24 non-CC backends were verified against their
+real shipping binary on 2026-07-16.
+
+For the side-by-side cross-view (which backend translates what, config paths, remote fidelity,
+native Claude-Code-config interop) see [Harness comparison](Harness-Comparison). This page holds the
+trait mechanics, backend-specific detail, and how to add your own.
 
 ## The trait
 
@@ -22,125 +27,123 @@ pub trait AgentBackend {
 
 `reconcile` is the seam. Every lifecycle op (`install`, `update`, `self_heal`) reduces to a
 reconcile with a different desired state. `probe` classifies the plugin's current state so
-`self_heal` can run a marker × state table per agent. Each backend defines what
-"converged" means for its agent:
+`self_heal` can run a marker × state table per agent. Each backend defines what "converged" means:
 
-- Claude Code: marketplace present, plugin installed, version at or above the embedded one,
-  files on disk.
-- A config-merge agent (every backend below): its config file matches what the plugin
-  declares.
+- Claude Code: marketplace present, plugin installed, version at or above the embedded one, files on
+  disk.
+- A config-merge agent: its config file matches what the plugin declares.
 
-`capabilities()` lets `setup` report a partial fit ("this agent hosts MCP servers, not
-hooks") instead of dropping features without a word. The trait is unsealed: an external
-crate can write an `AgentBackend` for an agent this crate does not ship.
+`capabilities()` lets `setup` report a partial fit ("this agent hosts MCP servers, not hooks")
+instead of dropping features silently. The trait is unsealed: an external crate can write an
+`AgentBackend` for an agent this crate does not ship.
 
 ## Install models
 
 Two shapes:
 
-- **Claude Code.** The `claude` backend orchestrates the `claude plugin` CLI: materialize
-  the embedded tree, add or update the marketplace source, install or update the plugin,
-  read the result back through `list --json`. Full mcp, hooks, commands, agents, and
-  skills. Details on [How It Works](How-It-Works).
-- **The 24 config-merge agents.** None of these have a plugin or marketplace concept, so
-  each backend read-modify-writes the tool's own config file instead: mcp servers keyed by
-  name, hooks/commands/agent defs translated under a plugin-name-prefixed path. Only the
-  entries agentgear wrote get touched, so the user's own config survives. A backend writes
-  only when `detect()` finds the tool installed and it has a surface at the target scope.
+- **Claude Code.** The `claude` backend orchestrates the `claude plugin` CLI: materialize the
+  embedded tree, add or update the marketplace source, install or update the plugin, read the result
+  back through `list --json`. Full mcp, hooks, commands, agents, and skills. Details on
+  [How It Works](How-It-Works).
+- **The 24 config-merge agents.** None have a plugin or marketplace concept, so each backend
+  read-modify-writes the tool's own config file: mcp servers keyed by name, hooks/commands/agent
+  defs translated under a plugin-name-prefixed path. Only the entries agentgear wrote get touched,
+  so the user's own config survives. A backend writes only when `detect()` finds the tool installed
+  and it has a surface at the target scope.
 
-## Coverage
+## Environment overrides
 
-| agent | config | translated |
+Where a backend honors a config-dir env var, a test (or a real host) can redirect it. The
+**backend ignores** column lists a tool env the real tool honors but agentgear does not yet, so a
+host running under it writes where the tool never reads.
+
+| backend | honored | backend ignores (known limitation) |
 |---|---|---|
-| codex | `~/.codex/config.toml` | mcp, hooks*, commands, agents |
-| opencode | `~/.config/opencode/opencode.json` | mcp, commands, agents |
-| gemini | `~/.gemini/settings.json` | mcp, hooks, commands |
-| cursor | `~/.cursor/mcp.json` + `hooks.json` | mcp, hooks, commands, agents |
-| cline | `cline_mcp_settings.json` (path varies) | mcp, hooks, commands |
-| devin (Devin Local) | `~/.config/devin/config.json` | mcp, hooks, commands, agents |
-| qwen-code | `~/.qwen/settings.json` + `commands/`, `agents/` | mcp, hooks, commands, agents |
-| copilot-cli | `~/.copilot/mcp-config.json` + `hooks/`, `agents/` | mcp, hooks, agents |
-| vscode-copilot | `<project>/.vscode/mcp.json` + `.github/` (project scope only) | mcp, hooks, agents |
-| jetbrains-copilot | `<config>/github-copilot/intellij/mcp.json` | mcp |
-| kimi | `~/.kimi-code/mcp.json` + `config.toml` | mcp, hooks |
-| kiro | `~/.kiro/settings/mcp.json` + `agents/default.json` | mcp, hooks |
-| zed | `~/.config/zed/settings.json` | mcp |
-| omp | `~/.omp/agent/mcp.json` + `commands/`, `agents/` | mcp, commands, agents |
-| openclaw | `~/.openclaw/openclaw.json` | mcp |
-| kilo | `~/.config/kilo/kilo.json` + `commands/`, `agents/` | mcp, commands, agents |
-| antigravity | `~/.gemini/config/mcp_config.json` | mcp |
-| antigravity-cli | `~/.gemini/config/mcp_config.json` + `~/.gemini/antigravity-cli/hooks.json` | mcp, hooks |
-| pi | none (detect-only) | none |
-| goose | `~/.config/goose/config.yaml` + `~/.agents/plugins/<plugin>/hooks/` | mcp, hooks |
-| amp | `~/.config/amp/settings.json` | mcp |
-| crush | `~/.config/crush/crush.json` | mcp, hooks |
-| droid | `~/.factory/` (`mcp.json`, `hooks.json`, `commands/`, `droids/`) | mcp, hooks, commands, agents |
-| augment | `~/.augment/settings.json` + `commands/`, `agents/` | mcp, hooks, commands, agents |
+| codex | `CODEX_HOME` (replaces the config dir) | — |
+| copilot-cli | `COPILOT_HOME` (replaces the whole path) | — |
+| kimi | `KIMI_CODE_HOME` (the config dir) | — |
+| kiro | `KIRO_HOME` (points at the `.kiro`-equivalent dir) | — |
+| qwen-code | `QWEN_HOME` (used directly, no `.qwen` join) | — |
+| crush | `CRUSH_GLOBAL_CONFIG` (dir) | — |
+| openclaw | `OPENCLAW_CONFIG_PATH` → `OPENCLAW_STATE_DIR` → `OPENCLAW_HOME` | layout one level too shallow: writes `<override>/`, tool reads `<override>/.openclaw/` |
+| pi | `PI_CODING_AGENT_DIR` (replaces wholesale) | — |
+| omp | `PI_CONFIG_DIR` (renames the dir under HOME) | absolute value appends rather than replaces |
+| cline | `CLINE_DIR` → `CLINE_DATA_DIR` → `CLINE_MCP_SETTINGS_PATH` (full path) | — |
+| amp | — | `XDG_CONFIG_HOME` (amp honors it; backend rides HOME) |
+| goose | `XDG_CONFIG_HOME` (via `config_dir`) | `GOOSE_PATH_ROOT` (relocates config + the plugins/hooks dir) |
+| zed | `XDG_CONFIG_HOME` (Linux) | honors XDG on macOS where zed hardcodes `~/.config/zed` |
+| kilo, devin | `XDG_CONFIG_HOME` | — |
+| gemini, cursor, droid, augment | HOME-based, no env override | — |
 
-\* codex hooks are written but stay inert until a user trusts them in codex's `/hooks`
-TUI. kimi has no such gate; its config hooks fire as soon as they are written
-(binary-verified against `@moonshot-ai/kimi-code` 0.24.2). The July 2026 verification
-found that hook writes for kiro, antigravity-cli, and cline's user scope currently land
-where those tools never read them; fixes are queued, treat hooks on those three as not
-yet functional.
+## Hook event mapping
 
-Skills have no backend yet. Remote (http/sse) mcp fidelity varies per tool: most read the
-rendered shape as-is, a few key the transport off other fields or reject it whole, so
-remote servers stay best-effort until per-tool fixes land. stdio is the tested path
-everywhere. Each backend's exact config paths, event-name mapping, and skipped surfaces
-live in its own module (`agents/<id>.rs`).
+Most hook-capable backends reuse Claude Code's PascalCase event names, so agentgear maps them 1:1
+where the analog exists and skips events with no analog. Four backends rename the events:
 
-The original six (codex, opencode, gemini, cursor, cline, devin) are verified against their
-real tool CLI: a docker leg installs the tool, runs `setup`, confirms the plugin's MCP
-server through the tool's own `mcp list`, then checks uninstall removes only what agentgear
-wrote while a seeded foreign entry survives. All six pass. The 18 newer backends are covered
-by hermetic config-file tests; their docker legs (13 of them; the GUI/IDE and no-surface
-backends have none) are authored and first run on CI push. On top of the test suites, every
-backend's documented behavior was re-verified against the real shipping tool in July 2026
-(scratch-home installs with negative-control probes; the IDE-bound backends via their
-shipped extension source).
+| CC event | gemini | cursor | copilot-cli | antigravity-cli |
+|---|---|---|---|---|
+| SessionStart | SessionStart | sessionStart | sessionStart | agentSpawn |
+| SessionEnd | SessionEnd | sessionEnd | sessionEnd | — |
+| UserPromptSubmit | BeforeAgent | beforeSubmitPrompt | userPromptSubmitted | userPromptSubmit |
+| PreToolUse | BeforeTool | preToolUse | preToolUse | preToolUse |
+| PostToolUse | AfterTool | postToolUse | postToolUse | postToolUse |
+| Stop | — | stop | agentStop | stop |
+| SubagentStop | — | subagentStop | subagentStop | — |
+| PreCompact | PreCompress | preCompact | preCompact | — |
+| Notification | Notification | — | notification | — |
+
+Per-backend hook notes:
+
+- **codex**: hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI (a
+  content-hash trust gate), not a bug.
+- **kimi**: no trust gate; config hooks fire as soon as they are written.
+- **gemini**: `BeforeTool`/`AfterTool` take a CC tool-name matcher that never matches gemini's own
+  tool names (known limitation).
+- **cline**: project-scope hooks (`.clinerules/hooks/<Event>`) are correct. User-scope hooks land
+  under `~/Documents/Cline/Rules/Hooks/`, which the CLI never scans (it reads `~/Documents/Cline/
+  Hooks/` and `~/.cline/hooks/`), so user-scope cline hooks are silently inert (known limitation).
+- **kiro**: hooks target `agents/default.json`, which is not kiro's run-default-agent mechanism, so
+  the hooks are a practical no-op (known limitation).
+- **antigravity-cli**: the user-scope file lands outside the tool's only customization root, and
+  `agentSpawn`/`BeforeAgent` are not legal event names there. User-scope antigravity-cli hooks do
+  not fire (known limitation).
+
+## MCP shapes
+
+stdio is the verified path on every backend. The rendered server body varies by tool: `{command,
+args, env}` for the json-`mcpServers` family; `type:"stdio"` prefixed for cursor/jetbrains/vscode;
+`type:"local"` with an array command for opencode/kilo; `type:"local"` plus `tools:["*"]` for
+copilot-cli (a bare `"*"` string voids copilot's whole file); a `[mcp_servers.<name>]` inline table
+for codex; a yaml `extensions.<name>` block for goose.
+
+Remote (http/sse) servers stay best-effort. Some tools read the rendered `{type, url, headers}`
+shape faithfully; four load the wrong transport silently (devin, kimi, qwen-code, vscode-copilot
+sse); two refuse the shape and void the whole file (antigravity, antigravity-cli); goose accepts sse
+then refuses it at runtime. The full verdict per tool is on
+[Harness comparison](Harness-Comparison#remote-mcp-fidelity). Servers whose command or args carry
+`${CLAUDE_PLUGIN_ROOT}` are skipped on non-CC backends (that token only expands inside Claude Code).
 
 ## Add a backend
 
-`AgentBackend` is the whole seam: six methods, one registry arm.
-
-```rust
-pub trait AgentBackend {
-    fn id(&self) -> &'static str;
-    /// Is this agent installed on the host?
-    fn detect(&self) -> bool;
-    /// What this agent can host (plugins / mcp / hooks / scopes).
-    fn capabilities(&self) -> Capabilities;
-    /// Classify this plugin's current state (self_heal's input).
-    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState>;
-    /// Idempotent converge to `desired` at `scope`.
-    fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome>;
-    /// Undo the install (the caller owns the stamp marker).
-    fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome>;
-    fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport;
-}
-```
+`AgentBackend` is the whole seam: seven methods, one registry arm. A host opts a plugin into the
+backend by naming it in the derive: `agents = ["claude", "mytool"]`.
 
 ### In this crate
 
-1. Add a feature in `Cargo.toml` and a module under `src/agents/` — one file per
-   backend. `agents/amp.rs` (mcp-only) is the smallest real template to copy.
-2. Implement the trait against the shared writers: `confedit` (atomic, BOM-safe
-   json/toml/yaml read-modify-write), `mcpjson` / `mcptoml` (the common server
-   shapes). Keep the invariants every backend holds: write only entries the
-   plugin owns; `remove` deletes exactly what `reconcile` wrote; a second
-   `reconcile` is a true `NoOp`; skip a surface the tool lacks instead of
-   writing under a guessed key.
-3. Add the id arm in `backend_for` (`src/agents/mod.rs`) and a hermetic
-   lifecycle test against a temp `HOME` (copy any `crates/host-fixture/tests/<id>.rs`).
-
-A host opts a plugin into the backend by naming it in the derive:
-`agents = ["claude", "mytool"]`.
+1. Add a feature in `Cargo.toml` and a module under `src/agents/`, one file per backend.
+   `agents/amp.rs` (mcp-only) is the smallest real template to copy.
+2. Implement the trait against the shared writers: `confedit` (atomic, BOM-safe json/toml/yaml
+   read-modify-write), `mcpjson` / `mcptoml` (the common server shapes). Keep the invariants every
+   backend holds: write only entries the plugin owns; `remove` deletes exactly what `reconcile`
+   wrote; a second `reconcile` is a true `NoOp`; skip a surface the tool lacks instead of writing
+   under a guessed key.
+3. Add the id arm in `backend_for` (`src/agents/mod.rs`) and a hermetic lifecycle test against a
+   temp `HOME` (copy any `crates/host-fixture/tests/<id>.rs`).
 
 ### From an external crate
 
-The trait is public, so a host can drive a backend this crate does not ship.
-It runs beside the built-in fan-out, not inside it:
+The trait is public, so a host can drive a backend this crate does not ship. It runs beside the
+built-in fan-out, not inside it:
 
 ```rust
 use agentgear::{AgentBackend, Desired, PluginHost, Scope, Source};
@@ -154,7 +157,7 @@ MyToolBackend.reconcile(
 )?; // yours
 ```
 
-Two limits today: the id registry is closed, so the derive's `agents = [...]`
-cannot name an external backend (it never joins `install`/`self_heal`'s locked,
-stamped fan-out), and the plugin-tree → components parser is crate-private, so
-an external backend reads the plugin tree itself.
+Two limits today: the id registry is closed, so the derive's `agents = [...]` cannot name an
+external backend (it never joins `install`/`self_heal`'s locked, stamped fan-out), and the
+plugin-tree → components parser is crate-private, so an external backend reads the plugin tree
+itself.
