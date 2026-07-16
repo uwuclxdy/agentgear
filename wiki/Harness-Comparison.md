@@ -99,19 +99,19 @@ some reject the shape and void the file. Per-tool fixes are queued.
 | copilot-cli | faithful. `tools:["*"]` is required (a bare string voids the file) |
 | crush | faithful. both transports dial-proven |
 | cursor | faithful. `type` genuinely picks the transport |
-| devin | **known limitation**: wrong transport. sse silently loads as http |
+| devin | faithful: rendered with devin's native `{url, transport}` form |
 | droid | faithful. `type` is the live discriminator |
 | gemini | faithful. native `{url, type, headers?}` |
 | goose | http faithful; **sse known limitation**: deserializes then runtime-refuses ("migrate to streamable_http") |
 | jetbrains-copilot | `type` faithful; headers land at the wrong key (latent, empty today) |
 | kilo | faithful. `type` mandatory, dial-proven |
-| kimi | **known limitation**: wrong transport. sse silently downgrades to http |
+| kimi | faithful: rendered with kimi's native `{url, transport}` form |
 | kiro | unproven (login-walled). native `{url, headers}`, examples carry no `type` |
 | omp | faithful. matches native exactly |
 | openclaw | faithful, but the tool's own fixer rewrites the transport key → probe churn |
 | opencode | faithful. both transports collapse into `remote` |
 | pi | skipped. core pi has no native mcp surface |
-| qwen-code | **known limitation**: wrong transport. transport is keyed off `httpUrl`/`url`, `type` never read |
+| qwen-code | faithful: rendered with qwen's key-presence form (http `{httpUrl}`, sse `{url}`) |
 | vscode-copilot | http faithful; **sse known limitation**: parser collapses to http, the writer rewrites the stored value → churn |
 | zed | stdio only. the backend filters remotes out before rendering |
 
