@@ -93,6 +93,12 @@ jobs:
         run: claude plugin validate examples/hello-mcp/plugin --strict
       - name: validate kitchen-sink example plugin tree
         run: claude plugin validate examples/kitchen-sink/plugin --strict
+      - name: validate multi-installer example plugin tree
+        run: claude plugin validate examples/multi-installer/plugin --strict
+      - name: validate hooks-everywhere example plugin tree
+        run: claude plugin validate examples/hooks-everywhere/plugin --strict
+      - name: validate from-github example plugin tree
+        run: claude plugin validate examples/from-github/plugin --strict
 
   e2e:
     runs-on: ubuntu-latest
