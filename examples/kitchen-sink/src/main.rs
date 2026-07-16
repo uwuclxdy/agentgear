@@ -2,9 +2,9 @@
 //! plugin component type (MCP server, hooks, a command, a subagent, a skill) and
 //! wires the whole lifecycle across seven harnesses (`claude` + six non-CC backends):
 //!
-//! - `setup [--agent <id>]... [--path <dir>]` — install; `--agent` narrows to one
-//!   backend (what a per-harness installer or test drives), `--path` installs a tree
-//!   from disk instead of the embedded blob.
+//! - `setup [--agent <id>]... [--path <dir>]` (alias `install`) — install; `--agent`
+//!   narrows to one backend (what a per-harness installer or test drives), `--path`
+//!   installs a tree from disk instead of the embedded blob.
 //! - `update`     — re-materialize + bump to the embedded version.
 //! - `uninstall`  — remove our entries from every backend, keep the user's.
 //! - `self-heal`  — the `SessionStart` hook target: repair a broken install, never
