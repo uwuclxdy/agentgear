@@ -1,6 +1,6 @@
 //! The GitHub Copilot CLI backend: a full translate into copilot's own user-level
 //! config, rooted at `~/.copilot/` (override `COPILOT_HOME`). MCP is bespoke json
-//! (`mcp-config.json` `mcpServers.<name>`, copilot's `type:"local"` + `tools:"*"`
+//! (`mcp-config.json` `mcpServers.<name>`, copilot's `type:"local"` + `tools:["*"]`
 //! shape — not the shared `type:"stdio"` renderer); hooks land as ONE file we own
 //! outright at `hooks/<plugin>.json` (rendered deterministically, deleted whole on
 //! remove); CC agent defs become `agents/<plugin>-<name>.agent.md`. Every mcp key is
@@ -147,9 +147,10 @@ fn portable_names(servers: &[McpServer]) -> Vec<&str> {
 // --- mcp (bespoke) -----------------------------------------------------------
 
 /// copilot's server body: `type` is `local`/`http`/`sse` (not CC's `stdio`), and a
-/// `tools:"*"` field selects which tools the server exposes (explicit `"*"` = all,
-/// so an omitted-means-none build still gets every tool). Deterministic so a
-/// re-reconcile is byte-identical -> a true `NoOp`.
+/// `tools:["*"]` field selects which tools the server exposes (explicit `["*"]` = all,
+/// so an omitted-means-none build still gets every tool; the bare string `"*"` fails
+/// copilot's parse and voids the whole file). Deterministic so a re-reconcile is
+/// byte-identical -> a true `NoOp`.
 fn render_mcp_server(server: &McpServer) -> Value {
     let mut obj = Map::new();
     match &server.kind {
@@ -162,7 +163,7 @@ fn render_mcp_server(server: &McpServer) -> Value {
         McpKind::Http { url } => remote(&mut obj, "http", url),
         McpKind::Sse { url } => remote(&mut obj, "sse", url),
     }
-    obj.insert("tools".into(), Value::from("*"));
+    obj.insert("tools".into(), Value::from(vec!["*"]));
     Value::Object(obj)
 }
 

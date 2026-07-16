@@ -123,9 +123,11 @@ fn copilot_cli_full_lifecycle() {
     assert!(m.contains("ez-fixture"), "our mcp server key missing:\n{m}");
     assert!(m.contains("host_fixture"), "our mcp command missing:\n{m}");
     assert!(m.contains("\"local\""), "stdio must render copilot's `local` type:\n{m}");
-    // `tools:"*"` is copilot-specific and only our entry carries it, so it proves the
-    // shape without a JSON parse.
-    assert!(m.contains("\"tools\""), "copilot `tools` field missing:\n{m}");
+    // `tools:["*"]` is copilot-specific and only our entry carries it, so it proves the
+    // shape without a JSON parse. Must be the array form: copilot 1.0.70 rejects the
+    // bare string and voids the whole mcp file (docs/research/verify-copilot-cli.md).
+    let mc: String = m.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(mc.contains("\"tools\":[\"*\"]"), "copilot `tools` must be the [\"*\"] array:\n{m}");
     // the seeded user config survived our merge.
     assert!(m.contains("theirs") && m.contains("their-server"), "seeded mcp server was clobbered:\n{m}");
     assert!(m.contains("editorHint"), "seeded top-level key was clobbered:\n{m}");

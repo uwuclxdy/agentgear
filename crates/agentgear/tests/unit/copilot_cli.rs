@@ -1,5 +1,5 @@
 //! copilot-cli backend unit tests: the bespoke `mcp-config.json` render (copilot's
-//! `type:"local"` + `tools:"*"` shape), the whole-file-owned `hooks/<plugin>.json`
+//! `type:"local"` + `tools:["*"]` shape), the whole-file-owned `hooks/<plugin>.json`
 //! (event-name mapping, idempotent write, delete-only-what-we-wrote), agent
 //! frontmatter, and the portability filter both mcp and hooks share (a
 //! `${CLAUDE_PLUGIN_ROOT}`-bearing entry is never written, so never a removal target).
@@ -66,7 +66,11 @@ fn reconcile_mcp_writes_copilot_shape_and_keeps_a_seeded_user_server() {
     assert_eq!(ours["type"], Value::from("local"), "stdio must render copilot's `local` type, not `stdio`");
     assert_eq!(ours["command"], Value::from("host_fixture"));
     assert_eq!(ours["args"], serde_json::json!(["mcp"]));
-    assert_eq!(ours["tools"], Value::from("*"), "tools must default to `*`");
+    assert_eq!(
+        ours["tools"],
+        serde_json::json!(["*"]),
+        "tools must default to the `[\"*\"]` array (a bare string voids copilot's whole mcp file)"
+    );
     assert!(ours["env"].is_object());
     assert!(root["mcpServers"].get("rooted").is_none(), "a ${{CLAUDE_PLUGIN_ROOT}} server must never be written");
     assert!(root["mcpServers"].get("theirs").is_some(), "seeded user server was clobbered");

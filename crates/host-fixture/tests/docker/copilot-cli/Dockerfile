@@ -1,10 +1,9 @@
 # syntax=docker/dockerfile:1
 # copilot-cli docker leg: the real GitHub Copilot CLI ingesting our written config.
-# Running copilot needs a paid plan + token, so the config-file parse is the
-# authoritative assert (auth-free by construction); `copilot mcp list` is attempted
-# best-effort only and never fails the leg (pre-login behavior is undocumented — see
-# docs/harness/copilot-cli.md). Built + run by tests/docker/run.sh copilot-cli
-# (context = repo root).
+# `copilot mcp list` is auth-free since 1.0.70 (verified 2026-07-16, see
+# docs/research/verify-copilot-cli.md), so the native listing is an authoritative
+# assert alongside the config-file parse. Built + run by tests/docker/run.sh
+# copilot-cli (context = repo root).
 
 # Stage 1: build the fixture host (all backends) from the workspace.
 FROM rust:1-slim-bookworm AS build
@@ -15,9 +14,9 @@ RUN cargo build -p host-fixture --release
 # Stage 2: real copilot CLI (Node >=22) + the fixture binary; assert the lifecycle
 # by parsing the written copilot config under a throwaway COPILOT_HOME.
 FROM node:22-slim
-# `@latest` until a version is verified against a live install; pin + bump it
-# alongside docs/harness/copilot-cli.md.
-RUN npm install -g @github/copilot@latest
+# pin = the version verified against a live install; bump it alongside
+# docs/harness/copilot-cli.md.
+RUN npm install -g @github/copilot@1.0.70
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 
 RUN <<'SH'
@@ -45,7 +44,7 @@ JSON
 host_fixture setup --agent copilot-cli
 
 if ! grep -q 'ez-fixture'      "$MCP";   then echo "FAIL: our mcp server not registered";    cat "$MCP"; exit 1; fi
-if ! grep -q '"tools": "\*"'    "$MCP";   then echo "FAIL: copilot tools:* shape missing";      cat "$MCP"; exit 1; fi
+if ! tr -d ' \n' < "$MCP" | grep -q '"tools":\["\*"\]'; then echo "FAIL: copilot tools:[\"*\"] shape missing"; cat "$MCP"; exit 1; fi
 if ! grep -q 'their-server'    "$MCP";   then echo "FAIL: seeded server clobbered on install"; exit 1; fi
 if ! grep -q 'editorHint'      "$MCP";   then echo "FAIL: seeded key clobbered on install";    exit 1; fi
 if [ ! -f "$HOOKS" ];                    then echo "FAIL: owned hooks file missing";           exit 1; fi
@@ -58,12 +57,12 @@ if [ ! -f "$AGENT" ];                    then echo "FAIL: translated agent file 
 # re-parses cleanly (json_edit errors on an unparseable mcp-config.json).
 if [ "$(host_fixture setup --agent copilot-cli)" != "NoOp" ]; then echo "FAIL: second setup was not NoOp"; exit 1; fi
 
-# Native second opinion (best-effort; auth-free config parse above is authoritative).
-if out=$(copilot mcp list 2>&1) && echo "$out" | grep -q 'ez-fixture'; then
-  echo "native copilot mcp list confirmed ez-fixture"
-else
-  echo "note: copilot mcp list unavailable (needs a paid plan + login); relied on config-file assert"
-fi
+# Native assert (auth-free since 1.0.70): copilot itself must parse the file and
+# list our server AND the seeded user one — a shape copilot rejects voids the whole
+# file, taking the user's servers down with it.
+out=$(copilot mcp list 2>&1) || { echo "FAIL: copilot mcp list errored"; echo "$out"; exit 1; }
+echo "$out" | grep -q 'ez-fixture' || { echo "FAIL: copilot mcp list missing ez-fixture"; echo "$out"; exit 1; }
+echo "$out" | grep -q 'theirs'     || { echo "FAIL: copilot mcp list missing seeded server"; echo "$out"; exit 1; }
 
 host_fixture uninstall
 
