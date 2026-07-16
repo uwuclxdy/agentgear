@@ -86,7 +86,7 @@ impl AgentBackend for GooseBackend {
         let comp = plugin.components(&Source::Embedded)?;
 
         let mut changed = false;
-        changed |= remove_mcp(&config_yaml()?, &portable_names(&comp.mcp_servers))?;
+        changed |= remove_mcp(&config_yaml()?, &writable_names(&comp.mcp_servers))?;
         // The whole plugin dir under `~/.agents/plugins/<plugin>/` is ours (keyed by
         // our plugin name), so a wholesale drop removes only what we wrote.
         changed |= remove_plugin_dir(&plugin_dir(scope, plugin.name)?)?;
@@ -133,11 +133,19 @@ fn hooks_json_path(scope: &Scope, plugin: &str) -> Result<PathBuf> {
     Ok(plugin_dir(scope, plugin)?.join("hooks").join("hooks.json"))
 }
 
-/// Server names `reconcile_mcp` actually writes (non-portable ones are skipped).
-/// `remove` keys off the same set so it never deletes a user server that happens
-/// to share a name with one we declared but never wrote.
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
+/// What goose can faithfully host: stdio and streamable HTTP. An `sse` extension
+/// deserializes, then goose refuses it at runtime ("SSE is unsupported, migrate to
+/// streamable_http") — a permanently dead entry — so sse is skipped exactly like a
+/// non-portable server: never written, never owned, never removed.
+fn is_writable(server: &McpServer) -> bool {
+    server.is_portable() && !matches!(server.kind, McpKind::Sse { .. })
+}
+
+/// Server names `reconcile_mcp` actually writes. `remove` and doctor key off the
+/// same set so a user server sharing a name with one we declared but never wrote
+/// (non-portable, or sse) is never touched or flagged.
+fn writable_names(servers: &[McpServer]) -> Vec<&str> {
+    servers.iter().filter(|s| is_writable(s)).map(|s| s.name.as_str()).collect()
 }
 
 // --- mcp (goose extensions) --------------------------------------------------
@@ -182,12 +190,17 @@ fn render_ext(server: &McpServer, enabled: bool) -> Result<Yaml> {
             enabled,
             timeout: DEFAULT_TIMEOUT,
         }),
-        // goose calls streamable HTTP `streamable_http`; SSE stays `sse`.
+        // goose calls streamable HTTP `streamable_http`.
         McpKind::Http { url } => {
             serde_norway::to_value(RemoteExt { name: &server.name, kind: "streamable_http", uri: url, enabled, timeout: DEFAULT_TIMEOUT })
         }
-        McpKind::Sse { url } => {
-            serde_norway::to_value(RemoteExt { name: &server.name, kind: "sse", uri: url, enabled, timeout: DEFAULT_TIMEOUT })
+        // Unreachable through reconcile (the `is_writable` filter skips sse); kept
+        // as a hard error so a future caller can't write a dead extension.
+        McpKind::Sse { .. } => {
+            return Err(Error::Config {
+                path: "<goose extension>".into(),
+                detail: format!("goose cannot host an SSE extension ({}); it must be skipped, not rendered", server.name),
+            });
         }
     };
     value.map_err(|e| Error::Config { path: "<goose extension>".into(), detail: format!("rendering extension: {e}") })
@@ -214,7 +227,7 @@ fn ext_map(root: &mut Yaml) -> &mut Mapping {
 /// never-re-enable invariant applies to it exactly like CC's plugin disable).
 /// `reenable=true` (an explicit install/update) always re-enables.
 fn reconcile_mcp(config: &Path, servers: &[McpServer], reenable: bool) -> Result<bool> {
-    let portable: Vec<&McpServer> = servers.iter().filter(|s| s.is_portable()).collect();
+    let portable: Vec<&McpServer> = servers.iter().filter(|s| is_writable(s)).collect();
     if portable.is_empty() {
         return Ok(false);
     }
@@ -256,7 +269,7 @@ fn probe_mcp(config: &Path, servers: &[McpServer]) -> Result<BackendState> {
     // Checked before the file read: a plugin declaring no portable server writes no
     // `config.yaml`, so a missing file must still be `Healthy` (never `Absent`, which
     // self_heal maps to marker-drop) — missing- and empty-file must agree here.
-    let portable: Vec<&McpServer> = servers.iter().filter(|s| s.is_portable()).collect();
+    let portable: Vec<&McpServer> = servers.iter().filter(|s| is_writable(s)).collect();
     if portable.is_empty() {
         return Ok(BackendState::Healthy);
     }
@@ -466,7 +479,7 @@ fn report_checks(backend: &GooseBackend, plugin: &Plugin, source: &Source) -> Ve
 
 fn check_mcp_registered(servers: &[McpServer], root: Option<&Yaml>) -> DoctorCheck {
     let name = "mcp extension registered";
-    let portable: Vec<&str> = servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect();
+    let portable: Vec<&str> = writable_names(servers);
     if portable.is_empty() {
         return DoctorCheck { name, status: CheckStatus::Ok("no portable mcp servers to register".into()) };
     }

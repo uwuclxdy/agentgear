@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-use super::{hook_is_portable, portable_names, probe_mcp, reconcile_hooks, reconcile_mcp, remove_mcp, remove_plugin_dir};
+use super::{hook_is_portable, probe_mcp, reconcile_hooks, reconcile_mcp, remove_mcp, remove_plugin_dir, writable_names};
 use crate::agents::BackendState;
 use crate::components::{HookBinding, McpKind, McpServer};
 
@@ -30,9 +30,17 @@ fn stdio(name: &str, command: &str, args: &[&str]) -> McpServer {
 }
 
 #[test]
-fn portable_names_excludes_claude_plugin_root_servers() {
-    let servers = [stdio("ez-fixture", "host_fixture", &["mcp"]), stdio("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky", &[])];
-    assert_eq!(portable_names(&servers), vec!["ez-fixture"]);
+fn writable_names_excludes_rooted_and_sse_servers() {
+    let sse = McpServer {
+        name: "dead-sse".into(),
+        kind: McpKind::Sse { url: "https://x/sse".into() },
+        command: String::new(),
+        args: vec![],
+        env: BTreeMap::new(),
+    };
+    let servers = [stdio("ez-fixture", "host_fixture", &["mcp"]), stdio("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky", &[]), sse];
+    // sse is skipped like a non-portable server: goose runtime-refuses it.
+    assert_eq!(writable_names(&servers), vec!["ez-fixture"]);
 }
 
 #[test]
@@ -72,7 +80,7 @@ fn reconcile_mcp_writes_goose_extension_shape_and_is_idempotent() {
     assert!(!changed, "second identical reconcile must be a NoOp");
 
     // remove strips only ours; the seeded extension stays.
-    let removed = remove_mcp(&config, &portable_names(servers)).unwrap();
+    let removed = remove_mcp(&config, &writable_names(servers)).unwrap();
     assert!(removed, "remove must report a change");
     let text = fs::read_to_string(&config).unwrap();
     assert!(!text.contains("ez-fixture"), "our extension survived remove:\n{text}");
@@ -93,7 +101,7 @@ fn non_portable_server_never_reaches_config_yaml() {
     assert!(!text.contains("rooted"), "non-portable server leaked into config.yaml:\n{text}");
 
     // remove keys off the same filtered set, so it never targets a server it never wrote.
-    let removed = remove_mcp(&config, &portable_names(&servers)).unwrap();
+    let removed = remove_mcp(&config, &writable_names(&servers)).unwrap();
     assert!(removed);
     assert!(!fs::read_to_string(&config).unwrap().contains("ez-fixture"));
 
