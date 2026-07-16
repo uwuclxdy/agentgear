@@ -116,6 +116,18 @@ fn augment_full_lifecycle() {
     // our mcp server landed under `mcpServers`, Plain shape, in the shared settings.json.
     assert!(s.contains("ez-fixture"), "our mcp server key missing:\n{s}");
     assert!(s.contains("host_fixture"), "our mcp command missing:\n{s}");
+    // remote mcp: both arms land in augment's exact accepted shape.
+    let parsed: serde_json::Value = serde_json::from_str(&s).unwrap();
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-http"],
+        serde_json::json!({"type": "http", "url": "http://127.0.0.1:39621/mcp", "headers": {}}),
+        "http remote arm mismatch:\n{s}"
+    );
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-sse"],
+        serde_json::json!({"type": "sse", "url": "http://127.0.0.1:39622/sse", "headers": {}}),
+        "sse remote arm mismatch:\n{s}"
+    );
     // hooks: SessionStart identity maps; UserPromptSubmit has no augment analog -> skipped.
     assert!(s.contains("SessionStart"), "SessionStart hook missing:\n{s}");
     assert!(s.contains("self-heal"), "SessionStart hook command missing:\n{s}");

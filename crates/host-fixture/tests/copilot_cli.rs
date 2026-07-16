@@ -132,6 +132,19 @@ fn copilot_cli_full_lifecycle() {
     assert!(m.contains("theirs") && m.contains("their-server"), "seeded mcp server was clobbered:\n{m}");
     assert!(m.contains("editorHint"), "seeded top-level key was clobbered:\n{m}");
 
+    // remote mcp: both arms land under `mcpServers`, exact copilot shape (`tools:["*"]`).
+    let parsed: serde_json::Value = serde_json::from_str(&m).unwrap();
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-http"],
+        serde_json::json!({"type": "http", "url": "http://127.0.0.1:39621/mcp", "headers": {}, "tools": ["*"]}),
+        "http remote arm mismatch:\n{m}"
+    );
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-sse"],
+        serde_json::json!({"type": "sse", "url": "http://127.0.0.1:39622/sse", "headers": {}, "tools": ["*"]}),
+        "sse remote arm mismatch:\n{m}"
+    );
+
     // hooks: our own file, camelCase events, shell string under `bash`.
     assert!(hooks_file.exists(), "owned hooks file not written: {}", hooks_file.display());
     let h = fs::read_to_string(&hooks_file).unwrap();

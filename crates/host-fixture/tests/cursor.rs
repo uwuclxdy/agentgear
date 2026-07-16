@@ -137,6 +137,18 @@ fn cursor_full_lifecycle() {
     assert!(m.contains("ez-fixture"), "our mcp server key missing:\n{m}");
     assert!(m.contains("host_fixture"), "our mcp command missing:\n{m}");
     assert!(m.contains("\"type\": \"stdio\""), "Typed shape (type:stdio) missing:\n{m}");
+    // remote mcp: both arms land in cursor's exact accepted shape.
+    let parsed: serde_json::Value = serde_json::from_str(&m).unwrap();
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-http"],
+        serde_json::json!({"type": "http", "url": "http://127.0.0.1:39621/mcp", "headers": {}}),
+        "http remote arm mismatch:\n{m}"
+    );
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-sse"],
+        serde_json::json!({"type": "sse", "url": "http://127.0.0.1:39622/sse", "headers": {}}),
+        "sse remote arm mismatch:\n{m}"
+    );
     // the seeded user config survived our merge.
     assert!(m.contains("theirs") && m.contains("their-server"), "seeded mcp server was clobbered:\n{m}");
     assert!(m.contains("editorTelemetry"), "seeded top-level key was clobbered:\n{m}");

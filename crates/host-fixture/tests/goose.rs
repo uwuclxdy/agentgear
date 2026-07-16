@@ -117,6 +117,14 @@ fn goose_full_lifecycle() {
     assert!(c.contains("theirs") && c.contains("their-server"), "seeded extension was clobbered:\n{c}");
     assert!(c.contains("GOOSE_MODEL"), "seeded top-level key was clobbered:\n{c}");
 
+    // remote mcp: only the http arm (sse render is known-broken, a later fix will skip
+    // it) lands under `extensions`, goose's own `streamable_http` shape.
+    assert!(c.contains("name: ez-fixture-http"), "http remote `name` field missing:\n{c}");
+    assert!(c.contains("type: streamable_http"), "http remote `type: streamable_http` missing:\n{c}");
+    assert!(c.contains("uri: http://127.0.0.1:39621/mcp"), "http remote `uri` field missing:\n{c}");
+    assert!(c.contains("enabled: true"), "http remote `enabled: true` missing:\n{c}");
+    assert!(c.contains("timeout: 300"), "http remote `timeout` (DEFAULT_TIMEOUT) missing:\n{c}");
+
     // hooks: CC event names pass through 1:1 into the plugin-owned hooks.json.
     assert!(hooks_file.exists(), "hooks.json not written: {}", hooks_file.display());
     let h = fs::read_to_string(&hooks_file).unwrap();

@@ -4,6 +4,8 @@
   "description": "fixture plugin used by agentgear end-to-end tests",
   "author": { "name": "uwuclxdy" },
   "mcpServers": {
-    "ez-fixture": { "command": "host_fixture", "args": ["mcp"] }
+    "ez-fixture": { "command": "host_fixture", "args": ["mcp"] },
+    "ez-fixture-http": { "type": "http", "url": "http://127.0.0.1:39621/mcp" },
+    "ez-fixture-sse": { "type": "sse", "url": "http://127.0.0.1:39622/sse" }
   }
 }

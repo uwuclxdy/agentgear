@@ -123,6 +123,15 @@ fn fixture_dir() -> OsString {
     Path::new(BIN).parent().map(|d| d.as_os_str().to_os_string()).unwrap_or_default()
 }
 
+/// Slice out one `[mcp_servers.<name>]` table's body from `config.toml`, so an
+/// absence check (no `command` key) doesn't false-positive on a sibling table.
+fn mcp_table_body<'a>(toml: &'a str, header: &str) -> &'a str {
+    let start = toml.find(header).unwrap_or_else(|| panic!("table {header} not found:\n{toml}"));
+    let body = &toml[start + header.len()..];
+    let end = body.find("\n[").unwrap_or(body.len());
+    &body[..end]
+}
+
 #[test]
 fn codex_full_lifecycle() {
     let env = Env::new("lifecycle");
@@ -144,6 +153,14 @@ fn codex_full_lifecycle() {
     assert!(c.contains("[mcp_servers.theirs]") && c.contains("their-server"), "seeded mcp server was clobbered:\n{c}");
     assert!(c.contains("model = \"gpt-5.4\""), "seeded top-level key was clobbered:\n{c}");
     assert!(c.contains("the user's own codex config"), "seeded comment was dropped (naive re-serialize?):\n{c}");
+
+    // remote mcp: codex is url-keyed for both remote kinds (best-effort), no `command`.
+    let http_body = mcp_table_body(&c, "[mcp_servers.ez-fixture-http]");
+    assert!(http_body.contains("url = \"http://127.0.0.1:39621/mcp\""), "http remote url missing:\n{c}");
+    assert!(!http_body.contains("command"), "http remote must not carry `command`:\n{c}");
+    let sse_body = mcp_table_body(&c, "[mcp_servers.ez-fixture-sse]");
+    assert!(sse_body.contains("url = \"http://127.0.0.1:39622/sse\""), "sse remote url missing:\n{c}");
+    assert!(!sse_body.contains("command"), "sse remote must not carry `command`:\n{c}");
 
     // hooks: CC event names pass through 1:1 into hooks.json (inert until /hooks trust).
     assert!(hooks_file.exists(), "hooks.json not written: {}", hooks_file.display());

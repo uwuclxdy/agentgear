@@ -123,6 +123,19 @@ fn crush_full_lifecycle() {
     assert!(c.contains("\"theme\"") && c.contains("dark"), "seeded top-level key was clobbered:\n{c}");
     assert!(c.contains("their-guard.sh"), "seeded user PreToolUse hook was clobbered:\n{c}");
 
+    // remote mcp: both arms land under the root `mcp` map, exact shape.
+    let parsed: serde_json::Value = serde_json::from_str(&c).unwrap();
+    assert_eq!(
+        parsed["mcp"]["ez-fixture-http"],
+        serde_json::json!({"type": "http", "url": "http://127.0.0.1:39621/mcp", "headers": {}}),
+        "http remote arm mismatch:\n{c}"
+    );
+    assert_eq!(
+        parsed["mcp"]["ez-fixture-sse"],
+        serde_json::json!({"type": "sse", "url": "http://127.0.0.1:39622/sse", "headers": {}}),
+        "sse remote arm mismatch:\n{c}"
+    );
+
     // safety: the one file we wrote is under the throwaway temp root.
     assert!(config_file.starts_with(&env.root), "backend wrote outside the temp root: {}", config_file.display());
 

@@ -105,6 +105,19 @@ fn amp_full_lifecycle() {
     assert!(c.contains("theirs") && c.contains("their-server"), "seeded mcp server was clobbered:\n{c}");
     assert!(c.contains("\"theme\"") && c.contains("dark"), "seeded top-level key was clobbered:\n{c}");
 
+    // remote mcp: both arms land under the flat `amp.mcpServers` key, exact shape.
+    let parsed: serde_json::Value = serde_json::from_str(&c).unwrap();
+    assert_eq!(
+        parsed["amp.mcpServers"]["ez-fixture-http"],
+        serde_json::json!({"type": "http", "url": "http://127.0.0.1:39621/mcp", "headers": {}}),
+        "http remote arm mismatch:\n{c}"
+    );
+    assert_eq!(
+        parsed["amp.mcpServers"]["ez-fixture-sse"],
+        serde_json::json!({"type": "sse", "url": "http://127.0.0.1:39622/sse", "headers": {}}),
+        "sse remote arm mismatch:\n{c}"
+    );
+
     // safety: everything we wrote is under the throwaway temp root.
     assert!(settings.starts_with(&env.root), "backend wrote outside the temp root: {}", settings.display());
 
