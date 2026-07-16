@@ -117,6 +117,17 @@ fn antigravity_full_lifecycle() {
     assert!(s.contains("theirs") && s.contains("their-server"), "seeded mcp server was clobbered:\n{s}");
     assert!(s.contains("someGlobalSetting"), "seeded top-level key was clobbered:\n{s}");
 
+    // remote mcp: antigravity's schema is `additionalProperties:false` — the only
+    // remote form is `{serverUrl}` (SSE), and any `type`/`url` key voids the whole
+    // file. http has no landing at all and must be skipped, not written.
+    let parsed: serde_json::Value = serde_json::from_str(&s).unwrap();
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-sse"],
+        serde_json::json!({"serverUrl": "http://127.0.0.1:39622/sse"}),
+        "sse remote arm mismatch:\n{s}"
+    );
+    assert!(parsed["mcpServers"].get("ez-fixture-http").is_none(), "http remote must be skipped (no antigravity landing):\n{s}");
+
     // safety: everything we wrote is under the throwaway temp root.
     assert!(env.mcp.starts_with(&env.root), "backend wrote outside the temp root: {}", env.mcp.display());
 

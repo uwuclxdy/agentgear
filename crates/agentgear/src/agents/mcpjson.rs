@@ -31,6 +31,11 @@ pub(crate) enum RemoteShape {
     /// — cline's literal-match schema, where a `type:"http"` entry voids the whole
     /// `mcpServers` object (user servers included).
     StreamableHttpValue,
+    /// The antigravity family: the only remote form is `{serverUrl}` (SSE; a
+    /// `headers` key may ride along once the IR carries any). The schema is
+    /// `additionalProperties:false` and refuses `type`/`url` outright — one bad
+    /// entry voids the whole file — and http has no landing at all (skipped).
+    ServerUrlSseOnly,
 }
 
 #[derive(Clone, Copy)]
@@ -52,29 +57,20 @@ impl ServerShape {
         self.remote = remote;
         self
     }
-
-    /// Whether this dialect has a faithful landing for `kind`. An unsupported kind
-    /// is skipped exactly like a non-portable server: never written, never owned,
-    /// never removed.
-    pub(crate) fn supports(&self, kind: &McpKind) -> bool {
-        match self.remote {
-            RemoteShape::TypeUrlHeaders | RemoteShape::StreamableHttpValue => {
-                let _ = kind;
-                true
-            }
-        }
-    }
 }
 
-/// The servers this shape actually writes: portable AND supported. reconcile,
+/// The servers this shape actually writes: portable AND renderable. reconcile,
 /// probe, and remove all key off this one filter so ownership can never drift
 /// between them (§chokepoint).
 fn writable(servers: &[McpServer], shape: ServerShape) -> Vec<&McpServer> {
-    servers.iter().filter(|s| s.is_portable() && shape.supports(&s.kind)).collect()
+    servers.iter().filter(|s| s.is_portable() && render_server(s, shape).is_some()).collect()
 }
 
-/// Render one server body per `shape`.
-pub(crate) fn render_server(server: &McpServer, shape: ServerShape) -> Value {
+/// Render one server body per `shape`; `None` when the dialect has no faithful
+/// landing for the server's kind. A `None` server is skipped exactly like a
+/// non-portable one — never written, never owned, never removed — so rendering is
+/// the single source of truth for what a dialect supports.
+pub(crate) fn render_server(server: &McpServer, shape: ServerShape) -> Option<Value> {
     match &server.kind {
         McpKind::Stdio => {
             let mut obj = Map::new();
@@ -84,27 +80,33 @@ pub(crate) fn render_server(server: &McpServer, shape: ServerShape) -> Value {
             obj.insert("command".into(), Value::from(server.command.clone()));
             obj.insert("args".into(), Value::from(server.args.clone()));
             obj.insert("env".into(), env_value(server));
-            Value::Object(obj)
+            Some(Value::Object(obj))
         }
         McpKind::Http { url } => remote(shape.remote, "http", url),
         McpKind::Sse { url } => remote(shape.remote, "sse", url),
     }
 }
 
-fn remote(shape: RemoteShape, kind: &str, url: &str) -> Value {
+fn remote(shape: RemoteShape, kind: &str, url: &str) -> Option<Value> {
+    let mut obj = Map::new();
     match shape {
         RemoteShape::TypeUrlHeaders | RemoteShape::StreamableHttpValue => {
             let type_value = match shape {
                 RemoteShape::StreamableHttpValue if kind == "http" => "streamableHttp",
                 _ => kind,
             };
-            let mut obj = Map::new();
             obj.insert("type".into(), Value::from(type_value));
             obj.insert("url".into(), Value::from(url));
             obj.insert("headers".into(), Value::Object(Map::new()));
-            Value::Object(obj)
+        }
+        RemoteShape::ServerUrlSseOnly => {
+            if kind != "sse" {
+                return None;
+            }
+            obj.insert("serverUrl".into(), Value::from(url));
         }
     }
+    Some(Value::Object(obj))
 }
 
 fn env_value(server: &McpServer) -> Value {
@@ -117,10 +119,12 @@ fn env_value(server: &McpServer) -> Value {
 pub(crate) fn reconcile(path: &Path, key_path: &[&str], servers: &[McpServer], shape: ServerShape) -> Result<Outcome> {
     let changed = json_edit(path, |root| {
         let obj = json_obj_at(root, key_path);
-        // Skip non-portable/unsupported servers here so no json backend can forget
+        // Skip non-portable/unrenderable servers here so no json backend can forget
         // to (§chokepoint).
         for server in writable(servers, shape) {
-            obj.insert(server.name.clone(), render_server(server, shape));
+            if let Some(body) = render_server(server, shape) {
+                obj.insert(server.name.clone(), body);
+            }
         }
         Ok(())
     })?;
@@ -152,7 +156,7 @@ pub(crate) fn probe(path: &Path, key_path: &[&str], servers: &[McpServer], shape
     for server in &ours {
         if let Some(existing) = obj.and_then(|o| o.get(&server.name)) {
             present += 1;
-            if *existing == render_server(server, shape) {
+            if render_server(server, shape).is_some_and(|r| r == *existing) {
                 matching += 1;
             }
         }

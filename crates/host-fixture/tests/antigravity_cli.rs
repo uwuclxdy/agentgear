@@ -120,6 +120,16 @@ fn antigravity_cli_full_lifecycle() {
     assert!(m.contains("host_fixture"), "our mcp command missing:\n{m}");
     // the seeded user config survived our merge.
     assert!(m.contains("theirs") && m.contains("their-server"), "seeded mcp server was clobbered:\n{m}");
+
+    // remote mcp: `agy` accepts only stdio (`command`) or SSE (`serverUrl`); the
+    // shared `{type,url,headers}` shape is refused and voids the whole file.
+    let parsed: serde_json::Value = serde_json::from_str(&m).unwrap();
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture-sse"],
+        serde_json::json!({"serverUrl": "http://127.0.0.1:39622/sse"}),
+        "sse remote arm mismatch:\n{m}"
+    );
+    assert!(parsed["mcpServers"].get("ez-fixture-http").is_none(), "http remote must be skipped (no agy landing):\n{m}");
     assert!(m.contains("\"theme\"") && m.contains("dark"), "seeded top-level key was clobbered:\n{m}");
 
     // hooks: our plugin-keyed tree, SessionStart identity + UserPromptSubmit -> BeforeAgent.

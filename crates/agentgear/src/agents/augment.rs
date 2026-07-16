@@ -200,7 +200,9 @@ fn reconcile_settings(settings: &Path, servers: &[McpServer], hooks: &[HookBindi
         if !portable_servers.is_empty() {
             let mcp = json_obj_at(root, &["mcpServers"]);
             for server in &portable_servers {
-                mcp.insert(server.name.clone(), mcpjson::render_server(server, ServerShape::plain()));
+                if let Some(body) = mcpjson::render_server(server, ServerShape::plain()) {
+                    mcp.insert(server.name.clone(), body);
+                }
             }
         }
         if !writable_hooks.is_empty() {

@@ -18,7 +18,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use super::mcpjson::{self, ServerShape};
+use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::{AgentBackend, BackendState};
 use crate::components::{McpKind, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -26,6 +26,11 @@ use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 pub(crate) struct AntigravityBackend;
+
+/// The shared antigravity mcp schema (`additionalProperties:false`) admits only
+/// stdio (`command`) or SSE (`{serverUrl}`); a `type`/`url` key — or any http
+/// server — voids the whole file, so http is skipped outright.
+const SHAPE: ServerShape = ServerShape::plain().with_remote(RemoteShape::ServerUrlSseOnly);
 
 impl AgentBackend for AntigravityBackend {
     fn id(&self) -> &'static str {
@@ -56,19 +61,19 @@ impl AgentBackend for AntigravityBackend {
         // install-only), mirroring the gemini/claude probe keying on compile-time metadata.
         let comp = plugin.components(&Source::Embedded)?;
         let mcp = mcp_config(scope)?;
-        mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
+        mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, SHAPE)
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?;
         let mcp = mcp_config(scope)?;
-        mcpjson::reconcile(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
+        mcpjson::reconcile(&mcp, &["mcpServers"], &comp.mcp_servers, SHAPE)
     }
 
     fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&Source::Embedded)?;
         let mcp = mcp_config(scope)?;
-        mcpjson::remove(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
+        mcpjson::remove(&mcp, &["mcpServers"], &comp.mcp_servers, SHAPE)
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {

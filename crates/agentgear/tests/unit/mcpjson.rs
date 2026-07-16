@@ -30,8 +30,8 @@ fn scratch(name: &str) -> PathBuf {
 #[test]
 fn renders_plain_and_typed() {
     let s = server();
-    assert_eq!(render_server(&s, ServerShape::plain()), json!({"command":"host","args":["mcp"],"env":{"K":"V"}}));
-    assert_eq!(render_server(&s, ServerShape::typed()), json!({"type":"stdio","command":"host","args":["mcp"],"env":{"K":"V"}}));
+    assert_eq!(render_server(&s, ServerShape::plain()).unwrap(), json!({"command":"host","args":["mcp"],"env":{"K":"V"}}));
+    assert_eq!(render_server(&s, ServerShape::typed()).unwrap(), json!({"type":"stdio","command":"host","args":["mcp"],"env":{"K":"V"}}));
 }
 
 #[test]
@@ -40,8 +40,8 @@ fn renders_remote_type_url_headers() {
     let sse = remote_server("s", McpKind::Sse { url: "https://x/sse".into() });
     // The remote dialect is independent of the stdio one: plain and typed agree.
     for shape in [ServerShape::plain(), ServerShape::typed()] {
-        assert_eq!(render_server(&http, shape), json!({"type":"http","url":"https://x/mcp","headers":{}}));
-        assert_eq!(render_server(&sse, shape), json!({"type":"sse","url":"https://x/sse","headers":{}}));
+        assert_eq!(render_server(&http, shape).unwrap(), json!({"type":"http","url":"https://x/mcp","headers":{}}));
+        assert_eq!(render_server(&sse, shape).unwrap(), json!({"type":"sse","url":"https://x/sse","headers":{}}));
     }
 }
 
@@ -52,8 +52,19 @@ fn renders_remote_streamable_http_value() {
     let http = remote_server("h", McpKind::Http { url: "https://x/mcp".into() });
     let sse = remote_server("s", McpKind::Sse { url: "https://x/sse".into() });
     // Only the streamable-HTTP discriminator value differs from the majority dialect.
-    assert_eq!(render_server(&http, shape), json!({"type":"streamableHttp","url":"https://x/mcp","headers":{}}));
-    assert_eq!(render_server(&sse, shape), json!({"type":"sse","url":"https://x/sse","headers":{}}));
+    assert_eq!(render_server(&http, shape).unwrap(), json!({"type":"streamableHttp","url":"https://x/mcp","headers":{}}));
+    assert_eq!(render_server(&sse, shape).unwrap(), json!({"type":"sse","url":"https://x/sse","headers":{}}));
+}
+
+#[test]
+fn renders_remote_server_url_sse_only() {
+    use super::RemoteShape;
+    let shape = ServerShape::plain().with_remote(RemoteShape::ServerUrlSseOnly);
+    let http = remote_server("h", McpKind::Http { url: "https://x/mcp".into() });
+    let sse = remote_server("s", McpKind::Sse { url: "https://x/sse".into() });
+    // The only remote landing is `{serverUrl}` (SSE); http renders nothing at all.
+    assert_eq!(render_server(&sse, shape).unwrap(), json!({"serverUrl":"https://x/sse"}));
+    assert!(render_server(&http, shape).is_none(), "http has no antigravity landing and must be skipped");
 }
 
 #[test]
