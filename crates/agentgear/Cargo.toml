@@ -29,7 +29,9 @@ jetbrains-copilot = []
 kimi = ["dep:toml_edit"]
 kiro = []
 zed = []
-omp = []
+# omp reads its own `config.yml` (`disabledProviders`) to gate the agent-retire on its
+# `claude-plugins` provider being enabled, so it pulls the serde yaml codec.
+omp = ["dep:serde_norway"]
 openclaw = []
 kilo = []
 antigravity = []

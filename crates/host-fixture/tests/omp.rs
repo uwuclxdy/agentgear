@@ -103,6 +103,116 @@ fn fixture_dir() -> OsString {
     Path::new(BIN).parent().map(|d| d.as_os_str().to_os_string()).unwrap_or_default()
 }
 
+/// Seed Claude Code's on-disk plugin registry under `claude_dir` (a `.../.claude`): the
+/// `installed_plugins.json` omp's `claude-plugins` provider reads (numeric `version` key
+/// mandatory). This is the sole CC-side signal the retire gate consults — CC's own
+/// `enabledPlugins` is irrelevant, because omp surfaces the agent off this file regardless
+/// of CC's enable state. The plugin id matches the fixture: `<name>@<marketplace>`, both
+/// `ez-fixture-plugin`.
+fn seed_cc_registry(claude_dir: &Path) {
+    const ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+    let plugins = claude_dir.join("plugins");
+    fs::create_dir_all(&plugins).unwrap();
+    let install = claude_dir.join("cache").join("ez-fixture-plugin");
+    let registry = serde_json::json!({
+        "version": 1,
+        "plugins": { ID: [{ "scope": "user", "installPath": install.to_string_lossy() }] },
+    });
+    fs::write(plugins.join("installed_plugins.json"), serde_json::to_vec(&registry).unwrap()).unwrap();
+}
+
+/// Write omp's global config (`~/.omp/agent/config.yml`) disabling the `claude-plugins`
+/// provider, so `isProviderEnabled("claude-plugins")` reads false — omp then does NOT
+/// surface CC agents and our translation must run. `env.base` is `~/.omp/agent`.
+fn disable_omp_claude_plugins_provider(env: &Env) {
+    fs::write(env.base.join("config.yml"), "disabledProviders:\n  - claude-plugins\n").unwrap();
+}
+
+/// The user-scope agent file the fixture's `ez-helper` agent def translates to.
+fn agent_file(env: &Env) -> PathBuf {
+    env.base.join("agents").join("ez-fixture-plugin-ez-helper.md")
+}
+
+#[test]
+fn omp_retires_agents_when_cc_registry_covers() {
+    // CC's registry lists the plugin and omp's `claude-plugins` provider is on (default,
+    // no omp config disabling it), so omp already surfaces the agents off
+    // `$HOME/.claude/plugins/installed_plugins.json` — translating them ourselves would
+    // double-register. The retire skips only the agent write; mcp + commands still land.
+    let env = Env::new("retire");
+    seed_cc_registry(&env.root.join(".claude"));
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "omp"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "retired install still writes mcp + commands, so it installs; got {out}");
+
+    // agents retired: no agent file written despite the plugin having an agent def.
+    assert!(!agent_file(&env).exists(), "agent file written despite CC-registry coverage: {}", agent_file(&env).display());
+    // mcp + commands still translate.
+    assert!(env.mcp().contains("ez-fixture"), "mcp not written on the retired path:\n{}", env.mcp());
+    assert!(env.base.join("commands").join("ez-fixture-plugin-hello.md").exists(), "command file not written on the retired path");
+
+    // self_heal is a true NoOp: the retired agents surface contributes `None` (nothing
+    // owned), not `Absent`, so a healthy mcp+commands backend never churns to NeedsRepair.
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "self-heal on a retired install should no-op (no churn), got {out}");
+
+    // uninstall still cleans mcp + commands (and no-ops the never-written agents).
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall on a retired install failed: {out}");
+    assert!(!env.mcp().contains("ez-fixture"), "our mcp server survived uninstall on the retired path");
+}
+
+#[test]
+fn omp_translates_agents_when_cc_registry_relocated() {
+    // A relocated `CLAUDE_CONFIG_DIR` moves CC's real registry off omp's HOME-based read
+    // path (`$HOME/.claude`, `src/discovery/helpers.ts:895`). omp — and our gate — read
+    // `$HOME/.claude`, which is empty here, so the agents MUST translate: an omp-only or
+    // relocated-config install must never lose its agents. The registry seeded at the
+    // relocated dir is the negative control proving the gate ignores `CLAUDE_CONFIG_DIR`.
+    let env = Env::new("relocated");
+    let alt = env.root.join("altcfg").join(".claude");
+    seed_cc_registry(&alt);
+    assert!(!env.root.join(".claude").exists(), "test setup error: HOME-based .claude must be absent");
+
+    let mut cmd = Command::new(BIN);
+    cmd.args(["setup", "--agent", "omp"]);
+    env.apply(&mut cmd);
+    cmd.env("CLAUDE_CONFIG_DIR", env.root.join("altcfg"));
+    let out = cmd.output().unwrap();
+    assert!(out.status.success(), "setup failed: {}", String::from_utf8_lossy(&out.stdout));
+
+    // Agents translated: the HOME-based gate never consulted the relocated registry.
+    assert!(agent_file(&env).exists(), "agent file not written under a relocated CLAUDE_CONFIG_DIR: {}", agent_file(&env).display());
+    let a = fs::read_to_string(agent_file(&env)).unwrap();
+    assert!(a.contains("name: ez-fixture-plugin-ez-helper"), "translated agent missing its namespaced name:\n{a}");
+}
+
+#[test]
+fn omp_translates_agents_when_provider_disabled_even_though_installed() {
+    // The plugin IS listed in CC's registry, but omp's `claude-plugins` provider is
+    // disabled in omp's own config (`disabledProviders: [claude-plugins]`). omp then does
+    // NOT surface CC agents (`isProviderEnabled` false), so retiring would lose them — we
+    // must translate. This is the branch CC's `enabledPlugins` could never capture.
+    let env = Env::new("provider-off");
+    seed_cc_registry(&env.root.join(".claude"));
+    disable_omp_claude_plugins_provider(&env);
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "omp"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "install should still land, got {out}");
+
+    assert!(
+        agent_file(&env).exists(),
+        "agent file not written despite the omp claude-plugins provider being disabled: {}",
+        agent_file(&env).display()
+    );
+
+    // A fresh install with agents translated must still self-heal to a true NoOp.
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "self-heal after a provider-disabled install should no-op, got {out}");
+}
+
 #[test]
 fn omp_full_lifecycle() {
     let env = Env::new("lifecycle");

@@ -10,6 +10,25 @@
 //! agent already has. Every file is plugin-name-prefixed and every mcp key is our
 //! own server name, so `remove` is exact and a second reconcile is a true `NoOp`.
 //!
+//! **Agent translation is retired when omp already surfaces the agents itself.** omp's
+//! default-on `claude-plugins` provider walks CC's own on-disk registry (`$HOME/.claude/
+//! plugins/installed_plugins.json`, HOME-based per `src/discovery/helpers.ts:895`) and
+//! loads each listed plugin's agents straight off its `installPath` — so once the `claude`
+//! backend has us registered there, our own agent files would register the same agents
+//! twice (our `<plugin>-<stem>` namespacing guarantees distinct names that defeat omp's
+//! exact-name dedup). `cc_registry_covers_agents` gates the agent write/probe on that,
+//! retiring iff BOTH the plugin is listed in CC's `installed_plugins.json` AND omp's own
+//! `claude-plugins` provider is enabled. The registry read is HOME-based (omp ignores
+//! `CLAUDE_CONFIG_DIR`, so a relocated config dir moves the registry off this path and we
+//! translate). Provider-enabled is omp's `isProviderEnabled` =
+//! `!disabledProviders.has("claude-plugins")` (`src/capability/index.ts:289`),
+//! `disabledProviders` loaded from omp's global `config.yml`, default empty = on. CC's own
+//! enabled/disabled state is NOT consulted: omp surfaces a CC agent from
+//! `installed_plugins.json` regardless of CC's `enabledPlugins` (verify-omp #2/#3), so the
+//! provider toggle is the real signal. mcp + commands always translate. Either condition
+//! false -> translate, so an omp-only install, a relocated `CLAUDE_CONFIG_DIR`, or a
+//! user-disabled provider never loses its agents.
+//!
 //! Skipped surfaces (see `docs/harness/omp.md`): hooks (omp's only hook surface is
 //! an in-process TS plugin API registering `pi.on(...)` — there is no config-writable
 //! shell-hook file, same shape of gap as opencode), skills, and the CC `model` alias
@@ -19,6 +38,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
@@ -64,10 +84,19 @@ impl AgentBackend for OmpBackend {
             &expected_docs(&base.join("commands"), plugin.name, "commands/", &comp.commands, |doc| doc.raw.clone()),
             |_, _| true,
         )?;
-        let agents = report::probe_files(
-            &expected_docs(&base.join("agents"), plugin.name, "agents/", &comp.agents, |doc| render_agent(plugin.name, doc).into_bytes()),
-            |_, _| true,
-        )?;
+        // Retired agents own nothing on disk, so the surface contributes `None` (not
+        // `Absent`). Probing the never-written files would read `Absent` and, folded
+        // behind a healthy mcp, churn the backend to `NeedsRepair` on every self_heal.
+        let agents = if cc_registry_covers_agents(plugin) {
+            None
+        } else {
+            report::probe_files(
+                &expected_docs(&base.join("agents"), plugin.name, "agents/", &comp.agents, |doc| {
+                    render_agent(plugin.name, doc).into_bytes()
+                }),
+                |_, _| true,
+            )?
+        };
         Ok(report::compose([mcp, commands, agents].into_iter().flatten()))
     }
 
@@ -85,10 +114,16 @@ impl AgentBackend for OmpBackend {
         for doc in &comp.commands {
             changed |= write_file_idem(&cmd_root.join(doc_file(plugin.name, &doc.rel, "commands/")), &doc.raw)?;
         }
-        let agent_root = base.join("agents");
-        for doc in &comp.agents {
-            changed |=
-                write_file_idem(&agent_root.join(doc_file(plugin.name, &doc.rel, "agents/")), render_agent(plugin.name, doc).as_bytes())?;
+        // Retire the agent translation when CC's own registry already surfaces these
+        // agents to omp (the `claude` backend installed us); mcp + commands still land.
+        if !cc_registry_covers_agents(plugin) {
+            let agent_root = base.join("agents");
+            for doc in &comp.agents {
+                changed |= write_file_idem(
+                    &agent_root.join(doc_file(plugin.name, &doc.rel, "agents/")),
+                    render_agent(plugin.name, doc).as_bytes(),
+                )?;
+            }
         }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
@@ -201,6 +236,79 @@ fn render_agent(plugin: &str, doc: &MarkdownDoc) -> String {
     out
 }
 
+// --- cc-registry retire gate -------------------------------------------------
+
+/// omp's `claude-plugins` provider id — the one whose enabled state gates the retire.
+const CLAUDE_PLUGINS_PROVIDER: &str = "claude-plugins";
+
+/// True when omp's `claude-plugins` provider already surfaces this plugin's agents off
+/// Claude Code's on-disk registry, so translating them ourselves would double-register.
+/// Retires iff the plugin is listed in CC's registry AND omp's provider is enabled — see
+/// the module doc for why CC's own enabled state is deliberately not part of the signal.
+fn cc_registry_covers_agents(plugin: &Plugin) -> bool {
+    let Some(cc) = dirs::home_dir().map(|h| h.join(".claude")) else {
+        return false;
+    };
+    registry_lists_plugin(&cc.join("plugins").join("installed_plugins.json"), &plugin.id()) && omp_claude_plugins_provider_enabled()
+}
+
+/// True when CC's `installed_plugins.json` lists `id` with at least one install entry.
+/// Mirrors omp's `parseClaudePluginsRegistry`: a numeric top-level `version` key is
+/// mandatory — without it omp treats the whole registry as absent, so we do too. The read
+/// is HOME-based (omp's own path), so a relocated `CLAUDE_CONFIG_DIR` reads as not-listed.
+fn registry_lists_plugin(path: &Path, id: &str) -> bool {
+    let Some(root) = fs::read(path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else {
+        return false;
+    };
+    root.get("version").is_some_and(Value::is_number)
+        && root
+            .get("plugins")
+            .and_then(Value::as_object)
+            .and_then(|m| m.get(id))
+            .and_then(Value::as_array)
+            .is_some_and(|entries| !entries.is_empty())
+}
+
+/// omp's `isProviderEnabled("claude-plugins")` (`src/capability/index.ts:289`) resolved
+/// from disk: `!disabledProviders.has("claude-plugins")`, where `disabledProviders` comes
+/// from omp's global config `~/.omp/agent/config.{yml,yaml}` (default empty = enabled).
+/// `omp_root` honors `PI_CONFIG_DIR` like the rest of the backend. An absent/unreadable
+/// config reads as enabled (the provider is on by default, PRIORITY 70).
+fn omp_claude_plugins_provider_enabled() -> bool {
+    let Some(agent) = omp_root().map(|r| r.join("agent")) else {
+        return true;
+    };
+    // MAIN_CONFIG_FILENAMES: `config.yml` is primary, `config.yaml` the alternate.
+    !["config.yml", "config.yaml"].iter().any(|name| config_disables_claude_plugins(&agent.join(name)))
+}
+
+/// True when omp's config at `path` disables the `claude-plugins` provider.
+/// `disabledProviders` is a YAML sequence of either plain provider-id strings or
+/// path-scoped `{path…, providers/values/items: […]}` objects (settings.ts
+/// `resolvePathScopedStringArray`). We match the id against every string leaf under the
+/// key — covering both forms — and ignore the path scope, so ANY disable directive
+/// naming the provider reads as disabled. That is the conservative side (translate rather
+/// than retire), so a disabled provider never loses its agents. Absent file/key -> false.
+fn config_disables_claude_plugins(path: &Path) -> bool {
+    let Some(root) = fs::read(path).ok().and_then(|b| serde_norway::from_slice::<serde_norway::Value>(&b).ok()) else {
+        return false;
+    };
+    root.get("disabledProviders").is_some_and(|v| yaml_has_string_leaf(v, CLAUDE_PLUGINS_PROVIDER))
+}
+
+/// Recursively true when any string leaf in `value` (sequences + mapping values walked)
+/// equals `needle` — matches a plain `disabledProviders` string and a path-scoped entry's
+/// nested `providers`/`values`/`items` list without modeling the object shape.
+fn yaml_has_string_leaf(value: &serde_norway::Value, needle: &str) -> bool {
+    use serde_norway::Value as Yaml;
+    match value {
+        Yaml::String(s) => s == needle,
+        Yaml::Sequence(seq) => seq.iter().any(|v| yaml_has_string_leaf(v, needle)),
+        Yaml::Mapping(map) => map.iter().any(|(_, v)| yaml_has_string_leaf(v, needle)),
+        _ => false,
+    }
+}
+
 // --- report ------------------------------------------------------------------
 
 fn report_checks(backend: &OmpBackend, plugin: &Plugin, source: &Source) -> Vec<DoctorCheck> {
@@ -242,7 +350,16 @@ fn report_checks(backend: &OmpBackend, plugin: &Plugin, source: &Source) -> Vec<
     ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_docs_present("translated commands present", &comp.commands, &base.join("commands"), plugin.name, "commands/"));
-    checks.push(check_docs_present("translated agents present", &comp.agents, &base.join("agents"), plugin.name, "agents/"));
+    // When CC's registry covers the agents, we deliberately write none, so file-existence
+    // is not a health signal — report the retire rather than a spurious "missing" Fail.
+    checks.push(if cc_registry_covers_agents(plugin) {
+        DoctorCheck {
+            name: "translated agents present",
+            status: CheckStatus::Ok("covered by Claude Code's plugin registry; not translated".into()),
+        }
+    } else {
+        check_docs_present("translated agents present", &comp.agents, &base.join("agents"), plugin.name, "agents/")
+    });
 
     checks
 }
