@@ -81,6 +81,9 @@ impl AgentBackend for ClineBackend {
         let settings = mcp_settings_path()?;
         changed |= mcpjson::reconcile(&settings, &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= reconcile_hooks(&hooks_dir(scope)?, plugin.name, &comp.hooks)?;
+        if let Some(retired) = retired_hooks_dir(scope)? {
+            changed |= remove_hooks(&retired, plugin.name, &comp.hooks)?;
+        }
 
         let wf_root = workflows_dir(scope)?;
         for doc in &comp.commands {
@@ -198,6 +201,20 @@ fn hooks_dir(scope: &Scope) -> Result<PathBuf> {
     match scope {
         Scope::User => global_store().map(|s| s.join("Hooks")),
         Scope::Project { path } => Ok(path.join(".clinerules").join("hooks")),
+    }
+}
+
+/// The dead `~/Documents/Cline/Rules/Hooks` dir this backend wrote user-scope hook
+/// scripts to until 2026-07-17 (gotcha 1): cline's resolver never scanned it, so
+/// every hook written there was silently inert. `None` at project scope, which
+/// always used the correct `.clinerules/hooks` path. Swept on every `reconcile`
+/// (the retired-path policy never sweeps on `remove`) so a stray script an old
+/// binary left behind eventually clears; `remove_hooks` already deletes only files
+/// carrying our ownership tag, so a same-named foreign hook is left alone.
+fn retired_hooks_dir(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(global_store()?.join("Rules").join("Hooks"))),
+        Scope::Project { .. } => Ok(None),
     }
 }
 

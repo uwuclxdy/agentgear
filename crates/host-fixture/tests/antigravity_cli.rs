@@ -33,6 +33,10 @@ struct Env {
     root: PathBuf,
     mcp: PathBuf,
     hooks: PathBuf,
+    /// `~/.gemini/antigravity-cli/hooks.json` — the retired user-scope hooks path
+    /// this backend wrote to until 2026-07-17 (gotcha 1). `agy` never scanned it;
+    /// `reconcile` now sweeps a stray file left there by an old binary.
+    retired_hooks: PathBuf,
     config: PathBuf,
     data: PathBuf,
     run: PathBuf,
@@ -54,6 +58,7 @@ impl Env {
             // files; `~/.gemini/antigravity-cli/` (the detect marker below) is the
             // CLI's own settings dir, scanned for neither.
             hooks: gemini.join("config").join("hooks.json"),
+            retired_hooks: gemini.join("antigravity-cli").join("hooks.json"),
             config: root.join("config"),
             data: root.join("data"),
             run: root.join("run"),
@@ -181,4 +186,66 @@ fn antigravity_cli_full_lifecycle() {
     let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.mcp().contains("ez-fixture"), "re-install did not re-add our server");
+}
+
+/// Retired-path sweep (gotcha 1): `reconcile` clears a stray hooks.json an old
+/// binary left at `~/.gemini/antigravity-cli/hooks.json` — but only the exact
+/// `<plugin>` key it owns there, matching `remove_hooks`'s existing semantics.
+#[test]
+fn reconcile_sweeps_our_own_key_at_the_retired_hooks_path() {
+    let env = Env::new("retired-sweep-tagged");
+    fs::write(&env.retired_hooks, r#"{"ez-fixture-plugin":{"Stop":[{"type":"command","command":"stale"}]}}"#).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
+    assert!(ok, "setup failed: {out}");
+
+    let retired: serde_json::Value = serde_json::from_str(&fs::read_to_string(&env.retired_hooks).unwrap()).unwrap();
+    assert!(retired.get("ez-fixture-plugin").is_none(), "our key at the retired path survived reconcile:\n{retired}");
+}
+
+/// The retired-path sweep never touches a same-named file it does not own: a
+/// foreign plugin's key at that exact dead path must survive byte-for-byte.
+#[test]
+fn reconcile_leaves_a_foreign_key_at_the_retired_hooks_path_untouched() {
+    let env = Env::new("retired-sweep-foreign");
+    const FOREIGN: &str = r#"{"someone-elses-plugin":{"Stop":[{"type":"command","command":"their-hook"}]}}"#;
+    fs::write(&env.retired_hooks, FOREIGN).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
+    assert!(ok, "setup failed: {out}");
+
+    assert_eq!(fs::read_to_string(&env.retired_hooks).unwrap(), FOREIGN, "a foreign key at the retired path was touched by the sweep");
+}
+
+/// §6: `enabled:false` carry-through. self_heal must never re-enable a hook
+/// subtree the user disabled by hand, and the composite probe must read it as
+/// `Disabled` (a true no-op, never reaching `reconcile`) even while the marker is
+/// present; an explicit `setup` still honors the user's request to re-enable.
+#[test]
+fn self_heal_preserves_a_disabled_hook_subtree_but_explicit_setup_reenables() {
+    let env = Env::new("enabled-false-carry-through");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    // The user disables our plugin's hooks by hand.
+    let mut doc: serde_json::Value = serde_json::from_str(&env.hooks()).unwrap();
+    doc["ez-fixture-plugin"]["enabled"] = serde_json::json!(false);
+    fs::write(&env.hooks, serde_json::to_vec(&doc).unwrap()).unwrap();
+    let before = env.hooks();
+
+    // self_heal (marker present, probe -> Disabled) must be a true no-op: it must
+    // never even reach `reconcile` for this backend, let alone flip the flag.
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal failed: {out}");
+    assert_eq!(out, "NoOp", "self_heal must not touch a deliberately disabled hook subtree, got {out}");
+    assert_eq!(env.hooks(), before, "self_heal rewrote the disabled hook subtree");
+
+    // An explicit setup (install/update) still honors the user's request to
+    // re-enable, exactly like every other backend's `enabled:false` invariant.
+    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
+    assert!(ok, "re-setup failed: {out}");
+    assert_ne!(out, "NoOp", "explicit setup must re-enable a disabled hook subtree, got {out}");
+    let after: serde_json::Value = serde_json::from_str(&env.hooks()).unwrap();
+    assert_ne!(after["ez-fixture-plugin"]["enabled"], serde_json::json!(false), "explicit setup did not re-enable:\n{after}");
 }

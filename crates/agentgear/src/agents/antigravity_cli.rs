@@ -60,8 +60,7 @@ impl AgentBackend for AntigravityCliBackend {
         // so probe and reconcile render identical bytes.
         let comp = plugin.components(source)?;
         let mcp = mcpjson::probe_surface(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, SHAPE)?;
-        // phase 3 (§6): enabled:false -> Disabled here
-        let hooks = report::probe_json_subtree(&hooks_path(scope)?, &[plugin.name], render_hook_tree(&comp.hooks))?;
+        let hooks = probe_hooks(&hooks_path(scope)?, plugin.name, render_hook_tree(&comp.hooks))?;
         Ok(report::compose([mcp, hooks].into_iter().flatten()))
     }
 
@@ -70,7 +69,10 @@ impl AgentBackend for AntigravityCliBackend {
 
         let mut changed = false;
         changed |= mcpjson::reconcile(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
-        changed |= reconcile_hooks(&hooks_path(scope)?, plugin.name, &comp.hooks)?;
+        changed |= reconcile_hooks(&hooks_path(scope)?, plugin.name, &comp.hooks, desired.reenable)?;
+        if let Some(retired) = retired_hooks_path(scope)? {
+            changed |= remove_hooks(&retired, plugin.name)?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -117,6 +119,20 @@ fn hooks_path(scope: &Scope) -> Result<PathBuf> {
     match scope {
         Scope::User => Ok(gemini_home()?.join("config").join("hooks.json")),
         Scope::Project { path } => Ok(path.join(".agents").join("hooks.json")),
+    }
+}
+
+/// The dead `~/.gemini/antigravity-cli/hooks.json` this backend wrote user-scope
+/// hooks to until 2026-07-17 (gotcha 1): never a customization root, so `agy` never
+/// scanned it and every hook there was silently inert. `None` at project scope,
+/// which never used this path. Swept on every `reconcile` (the retired-path policy
+/// never sweeps on `remove`) so a stray file an old binary left behind eventually
+/// clears; `remove_hooks` already deletes only our own `<plugin>` key, so an
+/// untagged file there is left alone.
+fn retired_hooks_path(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(gemini_home()?.join("antigravity-cli").join("hooks.json"))),
+        Scope::Project { .. } => Ok(None),
     }
 }
 
@@ -208,17 +224,62 @@ fn render_hook_tree(hooks: &[HookBinding]) -> Option<Value> {
     Some(Value::Object(events))
 }
 
+/// Whether the on-disk `<plugin>` hook subtree carries an explicit `enabled:false`
+/// (§6). `enabled` sits as a sibling of the per-event arrays inside that subtree,
+/// not nested under one, so this is a narrow targeted read distinct from the
+/// whole-subtree comparison `report::probe_json_subtree` does. Missing file or
+/// missing key both read as "not disabled" — `probe_hooks` below only calls this
+/// once it already knows we own a subtree here.
+fn subtree_disabled(path: &Path, plugin: &str) -> Result<bool> {
+    let bytes = match fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => return Err(Error::Io { context: format!("reading {}", path.display()), source }),
+    };
+    let root: Value =
+        serde_json::from_slice(&bytes).map_err(|e| Error::Config { path: path.display().to_string(), detail: e.to_string() })?;
+    Ok(root.get(plugin).and_then(|v| v.get("enabled")).and_then(Value::as_bool) == Some(false))
+}
+
+/// Classify the hook subtree for `probe`, folding in the `enabled:false` carry-
+/// through (§6): a subtree we own that carries an explicit disable reads `Disabled`
+/// regardless of drift elsewhere in it, so self_heal's (present, Disabled) no-op
+/// preserves the user's deliberate disable even before `reconcile` runs. `None`
+/// when we own nothing here (mirrors `report::probe_json_subtree`); otherwise falls
+/// through to the normal Absent/Healthy/NeedsRepair classification.
+fn probe_hooks(path: &Path, plugin: &str, tree: Option<Value>) -> Result<Option<BackendState>> {
+    if tree.is_none() {
+        return Ok(None);
+    }
+    if subtree_disabled(path, plugin)? {
+        return Ok(Some(BackendState::Disabled));
+    }
+    report::probe_json_subtree(path, &[plugin], tree)
+}
+
 /// Write our whole hook subtree under the top-level `<plugin>` key
-/// (`{"<plugin>":{"<Event>":[entry,...]}}`). We own that key, so a wholesale set
-/// is exact and idempotent: `json_edit` skips the write when the rebuilt subtree
-/// deep-equals the existing one. When nothing survives, `json_edit` is not entered
+/// (`{"<plugin>":{"enabled"?:false,"<Event>":[entry,...]}}`). We own that key, so a
+/// wholesale set is exact and idempotent: `json_edit` skips the write when the
+/// rebuilt subtree deep-equals the existing one. `reenable=false` (self_heal/adopt)
+/// preserves an existing explicit `enabled:false` a user set by hand instead of
+/// forcing it back on — antigravity's `enabled` is a real per-plugin hook disable,
+/// same never-re-enable invariant as CC's own plugin disable (§6). `reenable=true`
+/// (an explicit install/update) always re-enables by omitting the key, whose
+/// documented default is `true`. When nothing survives, `json_edit` is not entered
 /// so no empty `hooks.json` is created.
-fn reconcile_hooks(path: &Path, plugin: &str, hooks: &[HookBinding]) -> Result<bool> {
-    let Some(tree) = render_hook_tree(hooks) else {
+fn reconcile_hooks(path: &Path, plugin: &str, hooks: &[HookBinding], reenable: bool) -> Result<bool> {
+    let Some(mut tree) = render_hook_tree(hooks) else {
         return Ok(false);
     };
     json_edit(path, |root| {
         if let Value::Object(map) = root {
+            let currently_disabled = map.get(plugin).and_then(|v| v.get("enabled")).and_then(Value::as_bool) == Some(false);
+            if !reenable
+                && currently_disabled
+                && let Value::Object(events) = &mut tree
+            {
+                events.insert("enabled".to_string(), Value::Bool(false));
+            }
             map.insert(plugin.to_string(), tree);
         }
         Ok(())
