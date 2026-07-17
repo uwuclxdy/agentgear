@@ -65,13 +65,14 @@ host running under it writes where the tool never reads.
 | kiro | `KIRO_HOME` (points at the `.kiro`-equivalent dir) | — |
 | qwen-code | `QWEN_HOME` (used directly, no `.qwen` join) | — |
 | crush | `CRUSH_GLOBAL_CONFIG` (dir) | — |
-| openclaw | `OPENCLAW_CONFIG_PATH` → `OPENCLAW_STATE_DIR` → `OPENCLAW_HOME` | layout one level too shallow: writes `<override>/`, tool reads `<override>/.openclaw/` |
+| openclaw | `OPENCLAW_CONFIG_PATH` → `OPENCLAW_STATE_DIR` (flat) → `OPENCLAW_HOME` (reads `<override>/.openclaw/`) | — |
 | pi | `PI_CODING_AGENT_DIR` (replaces wholesale) | — |
-| omp | `PI_CONFIG_DIR` (renames the dir under HOME) | absolute value appends rather than replaces |
+| omp | `PI_CONFIG_DIR` (renames the dir under HOME; an absolute value still lands under HOME, matching the tool) | — |
 | cline | `CLINE_DIR` → `CLINE_DATA_DIR` → `CLINE_MCP_SETTINGS_PATH` (full path) | — |
-| amp | — | `XDG_CONFIG_HOME` (amp honors it; backend rides HOME) |
-| goose | `XDG_CONFIG_HOME` (via `config_dir`) | `GOOSE_PATH_ROOT` (relocates config + the plugins/hooks dir) |
-| zed | `XDG_CONFIG_HOME` (Linux) | honors XDG on macOS where zed hardcodes `~/.config/zed` |
+| amp | `XDG_CONFIG_HOME`, else `$HOME/.config` | — |
+| goose | `GOOSE_PATH_ROOT` (first, unconditional; relocates config + the plugins/hooks dir) → `XDG_CONFIG_HOME` | — |
+| zed | `XDG_CONFIG_HOME` (Linux/FreeBSD; macOS matches zed's hardcoded `~/.config/zed`) | — |
+| jetbrains-copilot | `XDG_CONFIG_HOME` (that branch drops the `intellij` segment, matching the plugin's own resolver) | — |
 | kilo, devin | `XDG_CONFIG_HOME` | — |
 | gemini, cursor, droid, augment | HOME-based, no env override | — |
 
@@ -102,8 +103,9 @@ Per-backend hook notes:
 - **cline**: project-scope hooks (`.clinerules/hooks/<Event>`) are correct. User-scope hooks land
   under `~/Documents/Cline/Rules/Hooks/`, which the CLI never scans (it reads `~/Documents/Cline/
   Hooks/` and `~/.cline/hooks/`), so user-scope cline hooks are silently inert (known limitation).
-- **kiro**: hooks target `agents/default.json`, which is not kiro's run-default-agent mechanism, so
-  the hooks are a practical no-op (known limitation).
+- **kiro**: hooks are declared unsupported. kiro hosts hooks only inside user-owned per-agent
+  config files, and its run-default agent is a setting rather than a file, so there is no target
+  agentgear can own without editing the user's agent definitions.
 - **antigravity-cli**: the user-scope file lands outside the tool's only customization root, and
   `agentSpawn`/`BeforeAgent` are not legal event names there. User-scope antigravity-cli hooks do
   not fire (known limitation).

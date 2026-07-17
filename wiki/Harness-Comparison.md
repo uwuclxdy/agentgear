@@ -33,7 +33,7 @@ backend on any tool yet.
 | copilot-cli | ✓ | ✓ | — (only surface is project-scoped) | ✓ |
 | vscode-copilot | ✓ | ✓ | — (out of scope) | ✓ |
 | kimi | ✓ | ✓ | — (slash-command analog is a skill) | — (built-in sub-agents only) |
-| kiro | ✓ | ✓ (target file the tool never reads, known limitation) | — | — |
+| kiro | ✓ | — (kiro hosts hooks only inside user-owned agent configs; no target agentgear can own) | — | — |
 | antigravity-cli | ✓ | ✓ (user-scope path + events wrong, known limitation) | — | — |
 | goose | ✓ | ✓ | — | — |
 | crush | ✓ | ✓ | — (TUI-only, not loaded by `crush run`) | — |
