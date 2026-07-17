@@ -44,6 +44,10 @@ struct Env {
     /// A `Rules/` segment here would be silently inert.
     our_hook: PathBuf,
     foreign_hook: PathBuf,
+    /// `~/Documents/Cline/Rules/Hooks/<Event>` — the retired dir this backend wrote
+    /// user-scope hook scripts to until 2026-07-17 (gotcha 1). cline's resolver
+    /// never scanned it; `reconcile` now sweeps a stray tagged file left there.
+    retired_hook: PathBuf,
     config: PathBuf,
     data: PathBuf,
     run: PathBuf,
@@ -69,6 +73,7 @@ impl Env {
             workflow: global.join("Workflows").join("ez-fixture-plugin-hello.md"),
             our_hook: global.join("Hooks").join("UserPromptSubmit"),
             foreign_hook: global.join("Hooks").join("TaskStart"),
+            retired_hook: global.join("Rules").join("Hooks").join("UserPromptSubmit"),
             config: root.join("config"),
             data: root.join("data"),
             run: root.join("run"),
@@ -364,4 +369,35 @@ fn cline_self_heal_repairs_a_missing_hook_behind_healthy_mcp() {
     // dropped marker would instead re-adopt (a non-NoOp).
     let (ok, out) = env.fixture(&["self-heal"]);
     assert!(ok && out == "NoOp", "post-repair self-heal should no-op (marker kept), got {out}");
+}
+
+/// Retired-path sweep (gotcha 1): `reconcile` clears a tagged hook script an old
+/// binary left at the dead `Rules/Hooks` dir cline's resolver never scanned.
+#[test]
+fn reconcile_sweeps_our_own_tagged_script_at_the_retired_hooks_dir() {
+    let env = Env::new("retired-sweep-tagged");
+    let stale = "#!/usr/bin/env bash\n# agentgear-managed:ez-fixture-plugin\necho old\n";
+    fs::create_dir_all(env.retired_hook.parent().unwrap()).unwrap();
+    fs::write(&env.retired_hook, stale).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "cline"]);
+    assert!(ok, "setup failed: {out}");
+
+    assert!(!env.retired_hook.exists(), "our tagged script at the retired path survived reconcile");
+}
+
+/// The retired-path sweep never touches a same-named file it does not own: a
+/// foreign, untagged script at that exact dead path must survive byte-for-byte —
+/// the same ownership-tag invariant `remove_hooks` already enforces at the live path.
+#[test]
+fn reconcile_leaves_a_foreign_script_at_the_retired_hooks_dir_untouched() {
+    let env = Env::new("retired-sweep-foreign");
+    let foreign = "#!/usr/bin/env bash\n# user's own script, no agentgear tag\necho mine\n";
+    fs::create_dir_all(env.retired_hook.parent().unwrap()).unwrap();
+    fs::write(&env.retired_hook, foreign).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "cline"]);
+    assert!(ok, "setup failed: {out}");
+
+    assert_eq!(fs::read_to_string(&env.retired_hook).unwrap(), foreign, "a foreign script at the retired path was touched by the sweep");
 }
