@@ -58,6 +58,16 @@ pub struct HookBinding {
     pub command: String,
 }
 
+impl HookBinding {
+    /// A `${CLAUDE_PLUGIN_ROOT}` reference only expands inside Claude Code's hook
+    /// runner, so a command carrying it would spawn the literal, unexpanded token
+    /// under another harness. Every non-CC backend skips a non-portable hook.
+    /// Mirrors [`McpServer::is_portable`].
+    pub fn is_portable(&self) -> bool {
+        !self.command.contains("${CLAUDE_PLUGIN_ROOT}")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MarkdownDoc {
     /// File stem.
