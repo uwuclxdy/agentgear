@@ -125,6 +125,13 @@ fn goose_full_lifecycle() {
     assert!(ok, "setup failed: {out}");
     assert_eq!(out, "Installed", "first setup should install, got {out}");
 
+    // A fresh, healthy install must self-heal to a true NoOp: probe reads every surface
+    // reconcile just wrote and finds no drift. Guards against a probe/reconcile desync
+    // (widened surface probe, or probe rendering from the wrong source) that would churn.
+    // (Separate from the disable test below, where Disabled masks a spurious drift.)
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "self-heal after a fresh install should no-op, got {out}");
+
     // mcp: our server landed under `extensions` with goose's own field names.
     let c = env.config_yaml();
     assert!(c.contains("ez-fixture"), "our extension key missing:\n{c}");

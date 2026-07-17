@@ -144,6 +144,12 @@ fn codex_full_lifecycle() {
     assert!(ok, "setup failed: {out}");
     assert_eq!(out, "Installed", "first setup should install, got {out}");
 
+    // A fresh, healthy install must self-heal to a true NoOp: probe reads every surface
+    // reconcile just wrote and finds no drift. Guards against a probe/reconcile desync
+    // (widened surface probe, or probe rendering from the wrong source) that would churn.
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "self-heal after a fresh install should no-op, got {out}");
+
     // mcp: our server landed as a `[mcp_servers.ez-fixture]` table.
     let c = env.config_toml();
     assert!(c.contains("[mcp_servers.ez-fixture]"), "our mcp table missing:\n{c}");

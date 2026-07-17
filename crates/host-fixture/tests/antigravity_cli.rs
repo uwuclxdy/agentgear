@@ -117,6 +117,12 @@ fn antigravity_cli_full_lifecycle() {
     assert!(ok, "setup failed: {out}");
     assert_eq!(out, "Installed", "first setup should install, got {out}");
 
+    // A fresh, healthy install must self-heal to a true NoOp: probe reads every surface
+    // reconcile just wrote and finds no drift. Guards against a probe/reconcile desync
+    // (widened surface probe, or probe rendering from the wrong source) that would churn.
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "self-heal after a fresh install should no-op, got {out}");
+
     let m = env.mcp();
     // our mcp server landed under `mcpServers`, Plain shape.
     assert!(m.contains("ez-fixture"), "our mcp server key missing:\n{m}");
