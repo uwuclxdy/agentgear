@@ -1,9 +1,10 @@
 //! The zed backend — mcp-only. Zed reads MCP servers from a `context_servers`
 //! object in its `settings.json` (`~/.config/zed/settings.json`, XDG-based on both
-//! Linux and macOS; `%APPDATA%\Zed` on Windows), a flat `{command,args,env}` body
-//! identical to the shared json-mcp family's Plain shape. We write only stdio
-//! servers, keyed by our plugin's server names, so `remove` is exact and a second
-//! reconcile is a true `NoOp`. Zed ships no general hook/command/subagent
+//! Linux and macOS; `%APPDATA%\Zed` on Windows): stdio is the shared Plain
+//! `{command,args,env}` body, remote http is `{url,headers}` (zed's one remote
+//! transport; sse is skipped — no faithful landing). Entries are keyed by our
+//! plugin's server names, so `remove` is exact and a second reconcile is a true
+//! `NoOp`. Zed ships no general hook/command/subagent
 //! config-file surface (its `tasks.json` "hooks" fire on a single `create_worktree`
 //! event, not a CC lifecycle), so those components are skipped — full mapping and
 //! why-skipped detail in `docs/harness/zed.md`.
@@ -13,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::mcpjson::{self, ServerShape};
+use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::{AgentBackend, BackendState};
 use crate::components::{McpKind, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -105,36 +106,32 @@ fn settings_path(scope: &Scope) -> Result<PathBuf> {
 const CONTEXT_SERVERS: &str = "context_servers";
 const MCP_KEY: &[&str] = &[CONTEXT_SERVERS];
 
-/// The servers zed can host: stdio only. Zed's remote-server shape is `{url,headers}`
-/// (no `type`/`transport` field), which the shared Plain renderer cannot emit — it
-/// would write a stray `type` key — so http/sse servers are skipped rather than
-/// written in a shape zed may reject (`docs/harness/zed.md`).
-fn stdio_servers(servers: &[McpServer]) -> Vec<McpServer> {
-    servers.iter().filter(|s| matches!(s.kind, McpKind::Stdio)).cloned().collect()
-}
+/// Zed's one remote transport is streamable HTTP, modeled as `{url, headers}` with
+/// no discriminator key; sse has no faithful landing (zed would dial the URL as
+/// streamable HTTP against an SSE endpoint) and is skipped by the dialect.
+const SHAPE: ServerShape = ServerShape::plain().with_remote(RemoteShape::UrlHeadersHttpOnly);
 
-/// Server keys `reconcile` actually writes (stdio AND portable). `remove` keys off
-/// the same set so an unfiltered name can never delete a user server that happens to
-/// share a name with one we declared but never wrote (a non-stdio or
-/// `${CLAUDE_PLUGIN_ROOT}`-bearing entry).
+/// Server keys `reconcile` actually writes (portable AND renderable under `SHAPE`).
+/// Doctor keys off the same set so a server we declared but never wrote (sse, or a
+/// `${CLAUDE_PLUGIN_ROOT}`-bearing entry) is never flagged as missing.
 fn writable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| matches!(s.kind, McpKind::Stdio) && s.is_portable()).map(|s| s.name.as_str()).collect()
+    servers.iter().filter(|s| s.is_portable() && mcpjson::render_server(s, SHAPE).is_some()).map(|s| s.name.as_str()).collect()
 }
 
-/// Insert/update our stdio servers under `context_servers`, leaving the user's own.
+/// Insert/update our servers under `context_servers`, leaving the user's own.
 /// `NoOp` when the file already matches.
 fn reconcile_mcp(settings: &Path, servers: &[McpServer]) -> Result<Outcome> {
-    mcpjson::reconcile(settings, MCP_KEY, &stdio_servers(servers), ServerShape::plain())
+    mcpjson::reconcile(settings, MCP_KEY, servers, SHAPE)
 }
 
-/// Classify `context_servers` for our stdio servers (Absent/Healthy/NeedsRepair).
+/// Classify `context_servers` for our servers (Absent/Healthy/NeedsRepair).
 fn probe_mcp(settings: &Path, servers: &[McpServer]) -> Result<BackendState> {
-    mcpjson::probe(settings, MCP_KEY, &stdio_servers(servers), ServerShape::plain())
+    mcpjson::probe(settings, MCP_KEY, servers, SHAPE)
 }
 
-/// Strip exactly our stdio server keys from `context_servers`, leaving the user's.
+/// Strip exactly our server keys from `context_servers`, leaving the user's.
 fn remove_mcp(settings: &Path, servers: &[McpServer]) -> Result<Outcome> {
-    mcpjson::remove(settings, MCP_KEY, &stdio_servers(servers), ServerShape::plain())
+    mcpjson::remove(settings, MCP_KEY, servers, SHAPE)
 }
 
 // --- report ------------------------------------------------------------------

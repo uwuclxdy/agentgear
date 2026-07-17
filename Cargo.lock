@@ -230,6 +230,7 @@ name = "host-fixture"
 version = "0.1.0"
 dependencies = [
  "agentgear",
+ "serde",
  "serde_json",
 ]
 

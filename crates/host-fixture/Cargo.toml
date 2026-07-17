@@ -21,6 +21,8 @@ agentgear = { path = "../agentgear", features = ["all-agents"] }
 [build-dependencies]
 agentgear = { path = "../agentgear" }
 
-# The hermetic harness tests parse the config files the backends write.
+# The hermetic harness tests parse the config files the backends write; serde
+# derive backs the zed test's transcription of zed's untagged settings enum.
 [dev-dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"

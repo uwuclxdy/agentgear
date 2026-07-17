@@ -98,35 +98,54 @@ fn remove_deletes_only_ours_and_preserves_a_user_entry() {
 }
 
 #[test]
-fn writable_names_excludes_non_portable_and_non_stdio() {
+fn writable_names_includes_http_and_excludes_non_portable_and_sse() {
     let http = McpServer {
-        name: "remote".into(),
-        kind: McpKind::Http { url: "https://example.test".into() },
+        name: "remote-http".into(),
+        kind: McpKind::Http { url: "https://example.test/mcp".into() },
         command: String::new(),
         args: Vec::new(),
         env: BTreeMap::new(),
     };
-    let servers = [stdio("ez-fixture", "host_fixture", &["mcp"]), stdio("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky", &[]), http];
-    assert_eq!(writable_names(&servers), vec!["ez-fixture"]);
+    let sse = McpServer {
+        name: "remote-sse".into(),
+        kind: McpKind::Sse { url: "https://example.test/sse".into() },
+        command: String::new(),
+        args: Vec::new(),
+        env: BTreeMap::new(),
+    };
+    let servers = [stdio("ez-fixture", "host_fixture", &["mcp"]), stdio("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky", &[]), http, sse];
+    assert_eq!(writable_names(&servers), vec!["ez-fixture", "remote-http"]);
 }
 
 #[test]
-fn reconcile_skips_non_portable_and_non_stdio_servers() {
+fn reconcile_skips_non_portable_and_sse_servers_but_writes_http() {
     let path = scratch("settings.json");
     let http = McpServer {
-        name: "remote".into(),
-        kind: McpKind::Sse { url: "https://example.test".into() },
+        name: "remote-http".into(),
+        kind: McpKind::Http { url: "https://example.test/mcp".into() },
         command: String::new(),
         args: Vec::new(),
         env: BTreeMap::new(),
     };
-    let servers = [stdio("ez-fixture", "host_fixture", &["mcp"]), stdio("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky", &[]), http];
+    let sse = McpServer {
+        name: "remote-sse".into(),
+        kind: McpKind::Sse { url: "https://example.test/sse".into() },
+        command: String::new(),
+        args: Vec::new(),
+        env: BTreeMap::new(),
+    };
+    let servers = [stdio("ez-fixture", "host_fixture", &["mcp"]), stdio("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky", &[]), http, sse];
 
     reconcile_mcp(&path, &servers).unwrap();
     let root = read(&path);
     assert!(root["context_servers"]["ez-fixture"].is_object(), "the portable stdio server must be written");
+    assert_eq!(
+        root["context_servers"]["remote-http"],
+        serde_json::json!({"url": "https://example.test/mcp", "headers": {}}),
+        "http must land in zed's {{url,headers}} form"
+    );
     assert!(root["context_servers"].get("rooted").is_none(), "a CLAUDE_PLUGIN_ROOT-bearing server must be skipped");
-    assert!(root["context_servers"].get("remote").is_none(), "a non-stdio (remote) server must be skipped");
+    assert!(root["context_servers"].get("remote-sse").is_none(), "an sse server must be skipped (no zed landing)");
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }

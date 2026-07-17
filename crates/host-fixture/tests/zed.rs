@@ -18,6 +18,19 @@ use std::process::Command;
 
 const BIN: &str = env!("CARGO_BIN_EXE_host_fixture");
 
+/// Minimal transcription of zed's `#[serde(untagged)]` `ContextServerSettingsContent`
+/// (`crates/settings_content/src/project.rs`, v1.11.3): variant order and required
+/// fields as shipped, optional/defaulted fields elided. Enough to prove our written
+/// entries land in the intended variant under untagged matching (unknown keys are
+/// ignored — zed has no `deny_unknown_fields` here).
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+#[allow(dead_code)] // fields exist to drive untagged matching, not to be read
+enum ZedContextServer {
+    Stdio { command: String },
+    Http { url: String },
+}
+
 /// A foreign context server + an unrelated top-level key that MUST outlive our
 /// install and uninstall untouched.
 const SEED_SETTINGS: &str = r#"{
@@ -106,6 +119,26 @@ fn zed_full_lifecycle() {
     // the seeded user config survived our merge.
     assert!(s.contains("theirs") && s.contains("their-server"), "seeded context server was clobbered:\n{s}");
     assert!(s.contains("\"theme\"") && s.contains("One Dark"), "seeded top-level key was clobbered:\n{s}");
+
+    // remote mcp: zed's one remote transport is streamable HTTP, modeled as
+    // `{url, headers}` with no `type` key; sse has no faithful landing (zed would
+    // dial the URL as streamable HTTP) and must be skipped.
+    let parsed: serde_json::Value = serde_json::from_str(&s).unwrap();
+    assert_eq!(
+        parsed["context_servers"]["ez-fixture-http"],
+        serde_json::json!({"url": "http://127.0.0.1:39621/mcp", "headers": {}}),
+        "http remote arm mismatch:\n{s}"
+    );
+    assert!(parsed["context_servers"].get("ez-fixture-sse").is_none(), "sse remote must be skipped (zed has no sse transport):\n{s}");
+    // serde round-trip against zed's settings type: both written entries must
+    // deserialize into the intended variant of the untagged enum.
+    for (name, want_stdio) in [("ez-fixture", true), ("ez-fixture-http", false)] {
+        let entry = parsed["context_servers"][name].clone();
+        match serde_json::from_value::<ZedContextServer>(entry).unwrap() {
+            ZedContextServer::Stdio { .. } => assert!(want_stdio, "{name} deserialized as stdio, expected remote"),
+            ZedContextServer::Http { .. } => assert!(!want_stdio, "{name} deserialized as remote, expected stdio"),
+        }
+    }
 
     // safety: everything we wrote is under the throwaway temp root.
     assert!(env.zed.join("settings.json").starts_with(&env.root), "backend wrote outside the temp root");

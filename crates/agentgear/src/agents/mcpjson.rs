@@ -44,6 +44,10 @@ pub(crate) enum RemoteShape {
     /// qwen-code (`type` is never read, so a `url`-keyed http server would
     /// silently load over SSE).
     HttpUrlKeyed,
+    /// `{url, headers:{}}` with no discriminator at all — zed, whose one remote
+    /// transport is streamable HTTP. SSE has no faithful landing (zed would dial
+    /// the URL as streamable HTTP against an SSE endpoint), so it is skipped.
+    UrlHeadersHttpOnly,
 }
 
 #[derive(Clone, Copy)]
@@ -120,6 +124,13 @@ fn remote(shape: RemoteShape, kind: &str, url: &str) -> Option<Value> {
         RemoteShape::HttpUrlKeyed => {
             let key = if kind == "http" { "httpUrl" } else { "url" };
             obj.insert(key.into(), Value::from(url));
+        }
+        RemoteShape::UrlHeadersHttpOnly => {
+            if kind != "http" {
+                return None;
+            }
+            obj.insert("url".into(), Value::from(url));
+            obj.insert("headers".into(), Value::Object(Map::new()));
         }
     }
     Some(Value::Object(obj))
