@@ -110,6 +110,53 @@ fn remove_deletes_only_ours_and_preserves_a_seeded_user_entry() {
 }
 
 #[test]
+fn openclaw_home_reads_one_level_deeper() {
+    // OPENCLAW_HOME is a HOME-equivalent: openclaw itself reads `<dir>/.openclaw/openclaw.json`.
+    let dir = std::path::PathBuf::from("/scratch/oc-home");
+    let got = super::config_path_from(None, None, Some(dir.clone()), None);
+    assert_eq!(got, Some(dir.join(".openclaw").join("openclaw.json")), "OPENCLAW_HOME must resolve one level deeper");
+}
+
+#[test]
+fn openclaw_state_dir_is_flat() {
+    // OPENCLAW_STATE_DIR already points at the state dir itself: no extra `.openclaw` level.
+    let dir = std::path::PathBuf::from("/scratch/oc-state");
+    let got = super::config_path_from(None, Some(dir.clone()), None, None);
+    assert_eq!(got, Some(dir.join("openclaw.json")), "OPENCLAW_STATE_DIR must resolve flat");
+}
+
+#[test]
+fn config_path_precedence_config_beats_state_beats_home_beats_default() {
+    let config = std::path::PathBuf::from("/scratch/explicit.json");
+    let state = std::path::PathBuf::from("/scratch/state");
+    let home_override = std::path::PathBuf::from("/scratch/home-override");
+    let default_home = std::path::PathBuf::from("/scratch/default-home");
+
+    // OPENCLAW_CONFIG_PATH wins over everything else.
+    assert_eq!(
+        super::config_path_from(Some(config.clone()), Some(state.clone()), Some(home_override.clone()), Some(default_home.clone())),
+        Some(config)
+    );
+    // OPENCLAW_STATE_DIR beats OPENCLAW_HOME and the default.
+    assert_eq!(
+        super::config_path_from(None, Some(state.clone()), Some(home_override.clone()), Some(default_home.clone())),
+        Some(state.join("openclaw.json"))
+    );
+    // OPENCLAW_HOME beats the default.
+    assert_eq!(
+        super::config_path_from(None, None, Some(home_override.clone()), Some(default_home.clone())),
+        Some(home_override.join(".openclaw").join("openclaw.json"))
+    );
+    // nothing overridden -> the default home, same HOME-equivalent join.
+    assert_eq!(
+        super::config_path_from(None, None, None, Some(default_home.clone())),
+        Some(default_home.join(".openclaw").join("openclaw.json"))
+    );
+    // no home at all -> None (matches `config_path()`'s error path).
+    assert_eq!(super::config_path_from(None, None, None, None), None);
+}
+
+#[test]
 fn portable_filter_skips_claude_plugin_root_servers() {
     let servers = [server("ez-fixture", "host_fixture"), rooted("rooted")];
 

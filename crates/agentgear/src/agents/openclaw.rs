@@ -78,24 +78,35 @@ impl AgentBackend for OpenclawBackend {
 
 /// openclaw's single user-level config file, honoring its documented env overrides
 /// so a test (or a relocated install) redirects both detection and writes.
-/// Precedence: `OPENCLAW_CONFIG_PATH` (the file itself) → `OPENCLAW_STATE_DIR`/
-/// `OPENCLAW_HOME` (the state dir, joined with `openclaw.json`) → `~/.openclaw`.
+/// Precedence: `OPENCLAW_CONFIG_PATH` (the file itself) → `OPENCLAW_STATE_DIR` (flat:
+/// `<dir>/openclaw.json`) → `OPENCLAW_HOME` (a HOME-equivalent: openclaw reads
+/// `<dir>/.openclaw/openclaw.json`, one level below it) → `~/.openclaw/openclaw.json`.
 /// `_opt` never errors so `detect` can call it. Scope is not consulted: the brief
 /// documents no project-level config, so every scope maps to this one file.
 fn config_path_opt() -> Option<PathBuf> {
-    if let Some(p) = env_nonempty("OPENCLAW_CONFIG_PATH") {
-        return Some(PathBuf::from(p));
-    }
-    state_dir_opt().map(|d| d.join("openclaw.json"))
+    config_path_from(
+        env_nonempty("OPENCLAW_CONFIG_PATH").map(PathBuf::from),
+        env_nonempty("OPENCLAW_STATE_DIR").map(PathBuf::from),
+        env_nonempty("OPENCLAW_HOME").map(PathBuf::from),
+        dirs::home_dir(),
+    )
 }
 
-fn state_dir_opt() -> Option<PathBuf> {
-    for var in ["OPENCLAW_STATE_DIR", "OPENCLAW_HOME"] {
-        if let Some(v) = env_nonempty(var) {
-            return Some(PathBuf::from(v));
-        }
-    }
-    dirs::home_dir().map(|h| h.join(".openclaw"))
+/// Pure precedence resolver (no env reads), so the layout rules are unit-testable
+/// without mutating process env: `config_path` wins outright; `state_dir` is flat;
+/// `home_override` and the final `home` fallback both need the extra `.openclaw`
+/// level openclaw itself reads.
+fn config_path_from(
+    config_path: Option<PathBuf>, state_dir: Option<PathBuf>, home_override: Option<PathBuf>, home: Option<PathBuf>,
+) -> Option<PathBuf> {
+    config_path
+        .or_else(|| state_dir.map(|d| d.join("openclaw.json")))
+        .or_else(|| home_override.map(home_config))
+        .or_else(|| home.map(home_config))
+}
+
+fn home_config(home: PathBuf) -> PathBuf {
+    home.join(".openclaw").join("openclaw.json")
 }
 
 fn config_path() -> Result<PathBuf> {
