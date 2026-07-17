@@ -103,4 +103,10 @@ pub(crate) struct MarketplaceEntry {
     /// (moved/deleted) marketplace path.
     #[serde(default)]
     pub path: Option<String>,
+    /// The pinned git ref of a `source: "github"` entry (`known_marketplaces.json`
+    /// stores it first-class; absent for a bare/non-github entry). Lets reconcile
+    /// spot a drifted pin and re-point it, since `marketplace update` never moves a
+    /// pin (design §ref-pinning ground truth).
+    #[serde(default, rename = "ref")]
+    pub ref_: Option<String>,
 }

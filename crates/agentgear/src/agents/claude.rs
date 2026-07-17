@@ -123,7 +123,7 @@ pub(crate) fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Re
     let Some(entry) = entry else {
         // Absent: full install.
         cli.ensure_min_version()?;
-        ensure_marketplace(&cli, plugin, &desired.source, scope, marketplace.is_some())?;
+        ensure_marketplace(&cli, plugin, &desired.source, scope, marketplace.as_ref())?;
         plugin_install(&cli, &id, scope)?;
         verify_present(&cli, scope, plugin)?;
         return Ok(Outcome::Installed);
@@ -157,7 +157,7 @@ pub(crate) fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Re
     }
 
     cli.ensure_min_version()?;
-    ensure_marketplace(&cli, plugin, &desired.source, scope, marketplace.is_some())?;
+    ensure_marketplace(&cli, plugin, &desired.source, scope, marketplace.as_ref())?;
 
     if stale && structural_ok {
         plugin_update(&cli, &id, scope)?;
@@ -172,27 +172,47 @@ pub(crate) fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Re
     }
 }
 
-/// For embedded, (re)materialize so `current` is fresh, then add-if-absent or
-/// update-if-present. For github, add-or-update the `owner/repo` marketplace.
-fn ensure_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: &Source, scope: &Scope, present: bool) -> Result<()> {
+/// Embedded/path: (re)materialize so `current` is fresh, then add-if-absent /
+/// update-if-present. GitHub: send `owner/repo@ref` to pin the ref; when already
+/// present, `update` if the stored ref still matches, else re-`add` to re-point the
+/// pin (`update` never moves one — design §ref-pinning ground truth).
+fn ensure_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: &Source, scope: &Scope, present: Option<&MarketplaceEntry>) -> Result<()> {
     let source_str = match source {
         Source::Embedded => materialize(plugin, TreeSource::Blob(plugin.blob()))?.display().to_string(),
         // A path source materializes its on-disk tree the same way embedded does.
         Source::Path(p) => materialize(plugin, TreeSource::Dir(p))?.display().to_string(),
-        // v1 limitation: `ref_` is not passed, so a github marketplace tracks its
-        // default branch and its plugin version is whatever the repo's plugin.json
-        // carries. `owner/repo@ref` would pin it (probed 2.1.209), but pinning alone
-        // freezes the host at its first-installed ref — `marketplace update` will not
-        // move a pin, so it needs the re-add-on-ref-drift path to land with it.
-        // See docs/design.md §ref-pinning ground truth. Embedded is the tested source.
-        Source::GitHub { repo, .. } => repo.to_string(),
+        Source::GitHub { repo, ref_ } => github_source(repo, ref_),
     };
-    if present {
-        marketplace_update(cli, plugin.marketplace, scope)?;
-    } else {
-        marketplace_add(cli, &source_str, scope)?;
+    match marketplace_op(source, present) {
+        MarketplaceOp::Update => marketplace_update(cli, plugin.marketplace, scope)?,
+        MarketplaceOp::Add => marketplace_add(cli, &source_str, scope)?,
     }
     Ok(())
+}
+
+/// The `marketplace add` source string a github pin sends: `owner/repo@ref`, which
+/// the CLI resolves by checking `ref` out (design §ref-pinning ground truth). A bare
+/// `owner/repo` silently tracks the default branch instead.
+fn github_source(repo: &str, ref_: &str) -> String {
+    format!("{repo}@{ref_}")
+}
+
+/// Present-branch decision. `Add` re-registers the marketplace: install-if-absent,
+/// or re-point a github pin whose stored ref drifted from the desired one (`update`
+/// never moves a pin). `Update` refreshes an already-present marketplace sitting on
+/// its desired ref, and every non-github source.
+#[derive(Debug, PartialEq, Eq)]
+enum MarketplaceOp {
+    Add,
+    Update,
+}
+
+fn marketplace_op(source: &Source, present: Option<&MarketplaceEntry>) -> MarketplaceOp {
+    match (source, present) {
+        (_, None) => MarketplaceOp::Add,
+        (Source::GitHub { ref_, .. }, Some(entry)) if entry.ref_.as_deref() != Some(*ref_) => MarketplaceOp::Add,
+        (_, Some(_)) => MarketplaceOp::Update,
+    }
 }
 
 fn structural_ok(entry: &PluginEntry, marketplace: Option<&MarketplaceEntry>, source: &Source) -> bool {
@@ -229,3 +249,7 @@ pub(crate) fn remove(plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
     }
     Ok(Outcome::Removed)
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/claude.rs"]
+mod claude_tests;
