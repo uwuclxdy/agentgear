@@ -128,11 +128,13 @@ fn augment_full_lifecycle() {
         serde_json::json!({"type": "sse", "url": "http://127.0.0.1:39622/sse", "headers": {}}),
         "sse remote arm mismatch:\n{s}"
     );
-    // hooks: SessionStart identity maps; UserPromptSubmit has no augment analog -> skipped.
+    // hooks: SessionStart identity maps; UserPromptSubmit takes augment's own
+    // `PromptSubmit` spelling. CC's name would be rejected as an invalid event type.
     assert!(s.contains("SessionStart"), "SessionStart hook missing:\n{s}");
     assert!(s.contains("self-heal"), "SessionStart hook command missing:\n{s}");
-    assert!(!s.contains("check-restart"), "UserPromptSubmit hook must be skipped (no augment analog):\n{s}");
-    assert!(!s.contains("UserPromptSubmit"), "UserPromptSubmit event must not be written:\n{s}");
+    assert!(s.contains("\"PromptSubmit\""), "UserPromptSubmit was not mapped to PromptSubmit:\n{s}");
+    assert!(s.contains("check-restart"), "PromptSubmit hook command missing:\n{s}");
+    assert!(!s.contains("UserPromptSubmit"), "CC's own event name must never be written:\n{s}");
     // the seeded user config survived our merge (server, top-level key, and same-event hook).
     assert!(s.contains("theirs") && s.contains("their-server"), "seeded mcp server was clobbered:\n{s}");
     assert!(s.contains("\"theme\"") && s.contains("dark"), "seeded top-level key was clobbered:\n{s}");

@@ -1,6 +1,6 @@
 //! augment backend unit tests: the combined settings.json edit (one file holds
-//! mcpServers + hooks in CC's nested shape), event mapping (augment drops
-//! `UserPromptSubmit`), exact merge-safe removal, and the portability filter for
+//! mcpServers + hooks in CC's nested shape), event mapping (`UserPromptSubmit`
+//! renames to `PromptSubmit`), exact merge-safe removal, and the portability filter for
 //! both mcp servers and hooks — a `${CLAUDE_PLUGIN_ROOT}`-bearing entry is never
 //! written and so must never be a removal candidate either. The mcp probe rides the
 //! shared `mcpjson` renderer (Plain shape), so it is exercised the same way the
@@ -50,17 +50,40 @@ fn hook_portability_matches_mcp_server_rule() {
 }
 
 #[test]
-fn map_event_passes_augment_events_and_drops_user_prompt_submit() {
-    // Augment hosts the CC overlap set 1:1.
+fn map_event_covers_every_event_augment_hosts() {
+    // Augment's validator is `.strict()` over exactly seven events, five of which
+    // carry CC's own name.
     assert_eq!(map_event("SessionStart"), Some("SessionStart"));
     assert_eq!(map_event("SessionEnd"), Some("SessionEnd"));
     assert_eq!(map_event("PreToolUse"), Some("PreToolUse"));
     assert_eq!(map_event("PostToolUse"), Some("PostToolUse"));
     assert_eq!(map_event("Stop"), Some("Stop"));
-    // Augment has no UserPromptSubmit / PreCompact / Notification analog: skipped, not guessed.
-    assert_eq!(map_event("UserPromptSubmit"), None);
+    assert_eq!(map_event("Notification"), Some("Notification"));
+    // The sixth is a straight rename: augment receives the prompt text on it, and
+    // CC's own name is rejected outright (0 occurrences in the bundle).
+    assert_eq!(map_event("UserPromptSubmit"), Some("PromptSubmit"));
+    // Genuinely absent from the seven: skipped, not guessed.
     assert_eq!(map_event("PreCompact"), None);
-    assert_eq!(map_event("Notification"), None);
+    assert_eq!(map_event("SubagentStop"), None);
+
+    // Nothing outside the accepted set may ever be emitted: augment rejects an
+    // unlisted key as "Invalid event type".
+    const ACCEPTED: [&str; 7] = ["PreToolUse", "PostToolUse", "Stop", "SessionStart", "SessionEnd", "Notification", "PromptSubmit"];
+    for cc in [
+        "SessionStart",
+        "SessionEnd",
+        "PreToolUse",
+        "PostToolUse",
+        "Stop",
+        "Notification",
+        "UserPromptSubmit",
+        "PreCompact",
+        "SubagentStop",
+    ] {
+        if let Some(mapped) = map_event(cc) {
+            assert!(ACCEPTED.contains(&mapped), "{cc} maps to `{mapped}`, which augment's validator rejects");
+        }
+    }
 }
 
 #[test]
@@ -68,8 +91,14 @@ fn reconcile_settings_writes_mcp_and_hooks_in_one_file_and_second_reconcile_noop
     let path = scratch("settings.json");
     let servers = [server("ez-fixture", "host_fixture")];
     let matched = HookBinding { event: "PreToolUse".into(), matcher: Some("Bash".into()), command: "host_fixture guard".into() };
-    // A mapped hook, a matched hook, and one augment does not host (must be dropped).
-    let hooks = [hook("SessionStart", "host_fixture self-heal"), matched, hook("UserPromptSubmit", "host_fixture check-restart")];
+    // An identity-mapped hook, a matched hook, a renamed one, and one augment does
+    // not host (which must be dropped).
+    let hooks = [
+        hook("SessionStart", "host_fixture self-heal"),
+        matched,
+        hook("UserPromptSubmit", "host_fixture check-restart"),
+        hook("PreCompact", "host_fixture squeeze"),
+    ];
 
     let changed = reconcile_settings(&path, &servers, &hooks).unwrap();
     assert!(changed, "first reconcile must write");
@@ -87,9 +116,15 @@ fn reconcile_settings_writes_mcp_and_hooks_in_one_file_and_second_reconcile_noop
     let pretool = root["hooks"]["PreToolUse"].as_array().unwrap();
     assert_eq!(pretool[0]["matcher"], Value::from("Bash"), "matcher missing for the matched hook:\n{root:#}");
 
-    // UserPromptSubmit has no augment analog: neither the event key nor its command lands.
-    assert!(root["hooks"].get("UserPromptSubmit").is_none(), "UserPromptSubmit must not be written:\n{root:#}");
-    assert!(!std::fs::read_to_string(&path).unwrap().contains("check-restart"), "the unmapped hook's command leaked in");
+    // UserPromptSubmit lands under augment's own spelling, never CC's (which the
+    // validator rejects outright, taking the whole hooks object with it).
+    let prompt = root["hooks"]["PromptSubmit"].as_array().unwrap();
+    assert_eq!(prompt[0]["hooks"][0]["command"], Value::from("host_fixture check-restart"), "PromptSubmit command missing:\n{root:#}");
+    assert!(root["hooks"].get("UserPromptSubmit").is_none(), "CC's own event name must never be written:\n{root:#}");
+
+    // PreCompact is genuinely absent from augment: neither key nor command lands.
+    assert!(root["hooks"].get("PreCompact").is_none(), "PreCompact must not be written:\n{root:#}");
+    assert!(!std::fs::read_to_string(&path).unwrap().contains("squeeze"), "the unmapped hook's command leaked in");
 
     // Idempotent: a converged reconcile touches no bytes.
     let bytes = std::fs::read(&path).unwrap();

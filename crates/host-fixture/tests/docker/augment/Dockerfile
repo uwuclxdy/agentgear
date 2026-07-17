@@ -37,7 +37,9 @@ host_fixture setup --agent augment
 
 if ! grep -q 'ez-fixture'  "$SETTINGS"; then echo "FAIL: our mcp server not registered"; cat "$SETTINGS"; exit 1; fi
 if ! grep -q 'SessionStart' "$SETTINGS"; then echo "FAIL: SessionStart hook not written"; cat "$SETTINGS"; exit 1; fi
-if   grep -q 'check-restart' "$SETTINGS"; then echo "FAIL: UserPromptSubmit hook leaked (no augment analog)"; exit 1; fi
+if ! grep -q 'PromptSubmit'  "$SETTINGS"; then echo "FAIL: UserPromptSubmit did not land on PromptSubmit"; cat "$SETTINGS"; exit 1; fi
+# augment's hook validator is strict: an unlisted event key is refused outright.
+if   grep -q 'UserPromptSubmit' "$SETTINGS"; then echo "FAIL: CC's own event name written"; cat "$SETTINGS"; exit 1; fi
 if ! grep -q 'theirs'      "$SETTINGS"; then echo "FAIL: seeded server clobbered on install"; exit 1; fi
 if ! grep -q '"theme"'     "$SETTINGS"; then echo "FAIL: seeded key clobbered on install"; exit 1; fi
 if [ ! -f "$CMD_FILE" ];              then echo "FAIL: translated command markdown missing"; exit 1; fi

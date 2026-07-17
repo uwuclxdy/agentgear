@@ -9,8 +9,9 @@
 //!
 //! Ownership: mcp servers are keyed by our server names; command/agent files are
 //! plugin-prefixed, so `remove` is exact and a second reconcile is a true `NoOp`.
-//! `UserPromptSubmit` has no augment analog and is skipped (never guessed); skills
-//! are skipped. See `docs/harness/augment.md` for the full mapping + skipped surfaces.
+//! `PreCompact`/`SubagentStop` are absent from augment's event set and skipped
+//! (never guessed); skills are skipped. See `docs/harness/augment.md` for the full
+//! mapping + skipped surfaces.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -147,11 +148,12 @@ fn flat_stem(rel: &str, prefix: &str) -> String {
 
 // --- settings (mcp + hooks, one file) ----------------------------------------
 
-/// Map a CC hook event to augment's. Augment reuses CC's event names for the events
-/// it hosts (`SessionStart`/`SessionEnd`/`PreToolUse`/`PostToolUse`/`Stop`), so the
-/// map is identity over that set; every other CC event (`UserPromptSubmit`,
-/// `PreCompact`, `Notification`, `SubagentStop`) has no augment analog and is skipped
-/// rather than written under a guessed name.
+/// Map a CC hook event to augment's. Augment's hook validator is `.strict()` over
+/// exactly seven events and reuses CC's own name for six of them; `UserPromptSubmit`
+/// is a straight rename to `PromptSubmit` (augment receives the prompt text on it,
+/// and CC's spelling is rejected as an invalid event type). `PreCompact` and
+/// `SubagentStop` are genuinely absent, so they are skipped rather than written
+/// under a guessed name the validator would refuse.
 fn map_event(cc_event: &str) -> Option<&'static str> {
     match cc_event {
         "SessionStart" => Some("SessionStart"),
@@ -159,6 +161,8 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
         "PreToolUse" => Some("PreToolUse"),
         "PostToolUse" => Some("PostToolUse"),
         "Stop" => Some("Stop"),
+        "Notification" => Some("Notification"),
+        "UserPromptSubmit" => Some("PromptSubmit"),
         _ => None,
     }
 }
