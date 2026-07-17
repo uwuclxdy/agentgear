@@ -109,18 +109,18 @@ mod spawned {
         assert!(stderr.contains("embed"), "error should point at the embed feature:\n{stderr}");
     }
 
-    /// Documents the intended GitHub flow against a real `claude`. It fails today:
-    /// `ensure_marketplace` drops `ref_`, so the marketplace tracks the repo's default
-    /// branch instead of the `v0.1.0` tag (docs/todo.md §2). The assertion is kept as
-    /// the regression pin for that fix.
+    /// The GitHub flow against a real `claude`: `setup` uses DEFAULT_SOURCE (the
+    /// `v{version}` tag), so `ensure_marketplace` sends `{repo}@{ref_}` and the
+    /// marketplace tracks the pinned tag. Proven green against the pushed `v0.1.0`
+    /// tag (+ its root `.claude-plugin/marketplace.json`) 2026-07-17.
     ///
     /// Env-gated, not merely `#[ignore]`d: the e2e CI job runs `-- --ignored`, so
-    /// `#[ignore]` *selects* this test. Gating on `AGENTGEAR_E2E_GITHUB` keeps it opt-in
-    /// (it needs a repo with a real `v{version}` tag + root `.claude-plugin/marketplace.json`,
-    /// neither of which exists until §2 lands) so a known-red pin cannot abort the run
-    /// before the golden lifecycle suite.
+    /// `#[ignore]` *selects* this test. It stays behind `AGENTGEAR_E2E_GITHUB` so the
+    /// default CI run does not couple to a mutable remote tag — the assertion pins
+    /// `v0.1.0`, so a workspace version bump without a matching pushed tag would red it.
+    /// Run it with `AGENTGEAR_E2E_GITHUB=1` once the tag for the current version exists.
     #[test]
-    #[ignore = "needs AGENTGEAR_E2E_GITHUB + network + a tagged repo; pending docs/todo.md §2"]
+    #[ignore = "needs AGENTGEAR_E2E_GITHUB + network + the matching version tag pushed"]
     fn github_install_pins_the_version_tag() {
         if std::env::var_os("AGENTGEAR_E2E_GITHUB").is_none() {
             eprintln!("skipping github pin: set AGENTGEAR_E2E_GITHUB=1 (needs a tagged repo, docs/todo.md §2)");
