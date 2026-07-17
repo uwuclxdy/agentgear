@@ -32,9 +32,6 @@ pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
     // stable session context to key on in v1.
     let scope = Scope::User;
     let _lock = lock::acquire()?;
-    // `source` here is the caller's `DEFAULT_SOURCE`; a prior `--path` install left
-    // a marker recording the real runtime path, which `resolve_source` prefers.
-    let source = stamp::resolve_source(plugin, &scope, source);
 
     let mut merged = Outcome::NoOp;
     for id in plugin.agents {
@@ -56,9 +53,13 @@ pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
 fn heal_agent(backend: &dyn AgentBackend, plugin: &Plugin, source: &Source, scope: &Scope, is_claude: bool) -> Result<Outcome> {
     let marker = stamp::read(plugin, scope, backend.id())?;
     let state = backend.probe(plugin, scope)?;
+    // This agent's OWN marker settles its source (never a sibling's — the
+    // per-agent-marker invariant); `source` is the caller's `DEFAULT_SOURCE`,
+    // used only absent a persisted `--path` for this specific agent.
+    let resolved_source = stamp::source_from_marker(marker.as_ref(), source.clone());
     // self_heal never re-enables a deliberate disable (the design's install-only
     // enable flip); adopt/repair both converge without touching enable state.
-    let desired = Desired { source: source.clone(), reenable: false };
+    let desired = Desired { source: resolved_source, reenable: false };
 
     match (marker.is_some(), state) {
         (false, BackendState::Absent) => Ok(Outcome::NoOp),

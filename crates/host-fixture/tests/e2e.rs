@@ -303,6 +303,44 @@ fn self_heal_repairs_a_path_install_from_the_persisted_path() {
 
 #[test]
 #[ignore = "spawns the real `claude` CLI; run with --ignored"]
+fn update_repairs_a_path_install_from_the_persisted_path() {
+    // Mirrors `self_heal_repairs_a_path_install_from_the_persisted_path` but
+    // through `update`, which has its own separate resolve site
+    // (`install.rs::reconcile_all`) — self_heal reaching the marker correctly
+    // proves nothing about update's.
+    if !claude_available() {
+        eprintln!("skipping: `claude` not on PATH");
+        return;
+    }
+    let env = Env::new("path-update");
+
+    let src_plugin = env.root.join("src-plugin");
+    copy_dir_all(&Path::new(env!("CARGO_MANIFEST_DIR")).join("plugin"), &src_plugin);
+
+    let (ok, out) = env.fixture_args(&["setup", "--path", src_plugin.to_str().unwrap()]);
+    assert!(ok, "path setup failed: {out}");
+    assert_eq!(out, "Installed", "path install did not register");
+
+    let hello = src_plugin.join("commands/hello.md");
+    let original = std::fs::read_to_string(&hello).unwrap();
+    std::fs::write(&hello, format!("{original}\n<!-- path-source-marker -->\n")).unwrap();
+
+    env.break_cache();
+    env.break_materialized_cache();
+
+    let (ok, out) = env.fixture("update");
+    assert!(ok, "update errored on a broken path install: {out}");
+    assert_eq!(out, "Repaired", "expected repair of a files-missing path install, got {out}");
+
+    let materialized = env.data.join("ez-fixture-plugin/current/commands/hello.md");
+    let content = std::fs::read_to_string(&materialized).unwrap_or_default();
+    assert!(content.contains("path-source-marker"), "update did not re-materialize from the persisted --path source:\n{content}");
+
+    env.fixture("uninstall");
+}
+
+#[test]
+#[ignore = "spawns the real `claude` CLI; run with --ignored"]
 fn self_heal_repairs_a_broken_install() {
     if !claude_available() {
         eprintln!("skipping: `claude` not on PATH");

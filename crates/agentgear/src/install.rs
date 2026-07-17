@@ -18,17 +18,18 @@ pub(crate) fn install_filtered(plugin: &Plugin, scope: Scope, source: Source, fi
     let _lock = lock::acquire()?;
     let desired = Desired { source, reenable: true };
     // A first install never sets restart-pending: it precedes any session that
-    // relies on the plugin, so there is nothing stale to reload.
-    Ok(reconcile_all(plugin, &desired, &scope, filter)?.merged)
+    // relies on the plugin, so there is nothing stale to reload. Never rehydrates:
+    // an explicit install's source is the caller's, not a prior marker's.
+    Ok(reconcile_all(plugin, &desired, &scope, filter, false)?.merged)
 }
 
 pub(crate) fn update(plugin: &Plugin, scope: Scope, source: Source) -> Result<Outcome> {
     let _lock = lock::acquire()?;
-    // `source` here is the caller's `DEFAULT_SOURCE`; a prior `--path` install left
-    // a marker recording the real runtime path, which `resolve_source` prefers.
-    let source = stamp::resolve_source(plugin, &scope, source);
+    // `source` is the caller's `DEFAULT_SOURCE`; `reconcile_all` rehydrates each
+    // agent's OWN persisted `--path` source from its OWN marker (never one agent's
+    // marker broadcast onto the rest — the per-agent-marker invariant).
     let desired = Desired { source, reenable: true };
-    let fan = reconcile_all(plugin, &desired, &scope, &[])?;
+    let fan = reconcile_all(plugin, &desired, &scope, &[], true)?;
     // Only a CC change strands the running session: Claude Code loads plugin
     // contents at session start with no hot-reload, whereas config-family
     // harnesses re-read their config each session. Best-effort so a flag-write
@@ -62,7 +63,12 @@ struct FanOut {
     claude: Outcome,
 }
 
-fn reconcile_all(plugin: &Plugin, desired: &Desired, scope: &Scope, filter: &[&str]) -> Result<FanOut> {
+/// `rehydrate`: when true (`update`), each agent's source is first resolved
+/// against ITS OWN stamp marker (`stamp::resolve_source`), falling back to
+/// `desired.source` only absent a persisted `--path`. When false (`install`),
+/// every agent converges on `desired.source` exactly as given — an explicit
+/// install/`install_into` source is the caller's, never a prior marker's.
+fn reconcile_all(plugin: &Plugin, desired: &Desired, scope: &Scope, filter: &[&str], rehydrate: bool) -> Result<FanOut> {
     let mut merged = Outcome::NoOp;
     let mut claude = Outcome::NoOp;
     for id in plugin.agents {
@@ -79,8 +85,10 @@ fn reconcile_all(plugin: &Plugin, desired: &Desired, scope: &Scope, filter: &[&s
         if !backend.capabilities().scopes.contains(&scope.as_cli()) {
             continue;
         }
-        let outcome = backend.reconcile(plugin, desired, scope)?;
-        stamp::write(plugin, scope, &desired.source, id)?;
+        let source = if rehydrate { stamp::resolve_source(plugin, scope, id, desired.source.clone()) } else { desired.source.clone() };
+        let per_agent = Desired { source, reenable: desired.reenable };
+        let outcome = backend.reconcile(plugin, &per_agent, scope)?;
+        stamp::write(plugin, scope, &per_agent.source, id)?;
         if *id == "claude" {
             claude = outcome.clone();
         }
