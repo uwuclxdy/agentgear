@@ -68,7 +68,7 @@ host running under it writes where the tool never reads.
 | openclaw | `OPENCLAW_CONFIG_PATH` → `OPENCLAW_STATE_DIR` (flat) → `OPENCLAW_HOME` (reads `<override>/.openclaw/`) | — |
 | pi | `PI_CODING_AGENT_DIR` (replaces wholesale) | — |
 | omp | `PI_CONFIG_DIR` (renames the dir under HOME; an absolute value still lands under HOME, matching the tool) | — |
-| cline | `CLINE_DIR` → `CLINE_DATA_DIR` → `CLINE_MCP_SETTINGS_PATH` (full path) | — |
+| cline | `CLINE_MCP_SETTINGS_PATH` (full path) → `CLINE_DATA_DIR` → `CLINE_DIR` (the store root) | — |
 | amp | `XDG_CONFIG_HOME`, else `$HOME/.config` | — |
 | goose | `GOOSE_PATH_ROOT` (first, unconditional; relocates config + the plugins/hooks dir) → `XDG_CONFIG_HOME` | — |
 | zed | `XDG_CONFIG_HOME` (Linux/FreeBSD; macOS matches zed's hardcoded `~/.config/zed`) | — |
