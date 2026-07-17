@@ -112,9 +112,11 @@ jobs:
       - name: install claude code
         run: npm install -g @anthropic-ai/claude-code
       # The ignored suite drives the real `claude plugin` CLI in an isolated
-      # CLAUDE_CONFIG_DIR; it is the golden drift gate (design §11).
+      # CLAUDE_CONFIG_DIR; it is the golden drift gate (design §11). `--no-fail-fast`
+      # so one red ignored test (e.g. a §2 GitHub pin) can never abort the run before
+      # a later test binary and mask the golden suite the way it did 2026-07-16.
       - name: end-to-end lifecycle
-        run: cargo test --all-features -- --ignored
+        run: cargo test --all-features --no-fail-fast -- --ignored
 
   # One leg per non-Claude harness: build host_fixture, install the real CLI in a
   # container, and prove the tool ingests the config agentgear writes (native `mcp
