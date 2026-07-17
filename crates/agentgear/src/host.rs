@@ -140,10 +140,12 @@ impl Plugin {
         self.blob
     }
 
-    /// The harness-agnostic components IR for this plugin's tree. `allow(dead_code)`:
-    /// wired by the per-harness backends + doctor in pass B.
-    #[allow(dead_code)]
-    pub(crate) fn components(&self, source: &Source) -> Result<crate::components::PluginComponents> {
+    /// The harness-agnostic components IR for this plugin's tree. Public so an
+    /// external [`AgentBackend`](crate::AgentBackend) can render from the same parsed
+    /// IR the in-crate backends use instead of re-parsing the tree by hand.
+    /// `Source::GitHub` has no local tree and errors out (non-CC backends cannot
+    /// serve a github-source host).
+    pub fn components(&self, source: &Source) -> Result<crate::components::PluginComponents> {
         crate::components::PluginComponents::parse(&crate::materialize::entries_for(self, source)?)
     }
 }
