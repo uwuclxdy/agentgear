@@ -5,11 +5,12 @@
 //! filtering, plugin-prefixed flat file names, the agent re-emit).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use super::{doc_file, flat_stem, render_agent};
+use super::{doc_file, flat_stem, render_agent, resolve_omp_root};
 use crate::agents::BackendState;
 use crate::agents::mcpjson::{self, ServerShape};
 use crate::components::{MarkdownDoc, McpKind, McpServer};
@@ -40,6 +41,23 @@ fn agent_doc(name: &str, rel: &str, extra: &[(&str, &str)], body: &str) -> Markd
         frontmatter.insert((*k).into(), Value::from(*v));
     }
     MarkdownDoc { name: name.into(), rel: rel.into(), frontmatter, body: body.into(), raw: body.as_bytes().to_vec() }
+}
+
+#[test]
+fn resolve_omp_root_keeps_an_absolute_pi_config_dir_under_home() {
+    // omp resolves this with node's `path.join(os.homedir(), name)`, which appends
+    // even an absolute `name`; Rust's `Path::join` would instead replace the base.
+    let home = Path::new("/home/user");
+    assert_eq!(resolve_omp_root(OsStr::new("/abs/dir"), Some(home)), Some(home.join("abs/dir")));
+}
+
+#[test]
+fn resolve_omp_root_keeps_a_relative_pi_config_dir_and_the_default() {
+    let home = Path::new("/home/user");
+    assert_eq!(resolve_omp_root(OsStr::new("custom"), Some(home)), Some(home.join("custom")));
+    assert_eq!(resolve_omp_root(OsStr::new(".omp"), Some(home)), Some(home.join(".omp")));
+    // No home means no resolvable root.
+    assert_eq!(resolve_omp_root(OsStr::new(".omp"), None), None);
 }
 
 #[test]

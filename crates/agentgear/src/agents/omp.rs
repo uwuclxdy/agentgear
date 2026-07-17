@@ -17,10 +17,10 @@
 //! omp deliberately ignores cross-harness `.claude/.codex/.gemini` agent dirs
 //! (`TASK_AGENT_CONFIG_SOURCE=".omp"`), so translation must land in omp's *own* dirs.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 
@@ -120,7 +120,19 @@ fn config_dir_name() -> OsString {
 
 /// The omp config root `~/.omp` (or `~/<PI_CONFIG_DIR>`). `None` when HOME is unset.
 fn omp_root() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(config_dir_name()))
+    resolve_omp_root(config_dir_name().as_os_str(), dirs::home_dir().as_deref())
+}
+
+/// Join a config-dir name onto `home` the way omp does: node's
+/// `path.join(os.homedir(), name)` *appends* even an absolute `name`, where Rust's
+/// `Path::join` would instead *replace* the base (verified live,
+/// `docs/harness/omp.md` gotcha 1). Any root component (`/`, a Windows drive
+/// prefix, `\\`) is stripped from `name` first so the join always appends, matching
+/// node. Split from the env/home lookup so a unit test can exercise it without
+/// mutating process-global env.
+fn resolve_omp_root(name: &OsStr, home: Option<&Path>) -> Option<PathBuf> {
+    let relative: PathBuf = Path::new(name).components().filter(|c| !matches!(c, Component::RootDir | Component::Prefix(_))).collect();
+    home.map(|h| h.join(relative))
 }
 
 /// The surface base holding `mcp.json` + `commands/` + `agents/` for a scope:
