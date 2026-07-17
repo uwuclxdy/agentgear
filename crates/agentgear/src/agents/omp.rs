@@ -24,7 +24,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 
-use super::confedit::{remove_file_idem, write_file_idem};
+use super::confedit::{remove_file_idem, write_file_idem, yaml_scalar};
 use super::mcpjson::{self, ServerShape};
 use super::{AgentBackend, BackendState};
 use crate::components::{MarkdownDoc, McpKind, McpServer};
@@ -185,34 +185,6 @@ fn render_agent(plugin: &str, doc: &MarkdownDoc) -> String {
     out.push_str("---\n\n");
     out.push_str(doc.body.trim());
     out.push('\n');
-    out
-}
-
-/// A YAML scalar: bare when it cannot be misparsed as a flow/indicator token, else a
-/// double-quoted string with the minimal escapes, so an arbitrary name/description
-/// stays a single safe scalar regardless of colons or quotes.
-fn yaml_scalar(s: &str) -> String {
-    let needs_quote = s.is_empty()
-        || s.starts_with(|c: char| c.is_ascii_whitespace())
-        || s.ends_with(|c: char| c.is_ascii_whitespace())
-        || s.contains(['"', '\\', '\n', '\r', '\t', ':', '#', '[', ']', '{', '}', ',', '&', '*', '!', '|', '>', '\'', '%', '@', '`'])
-        || matches!(s.to_ascii_lowercase().as_str(), "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "~");
-    if !needs_quote {
-        return s.to_string();
-    }
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
     out
 }
 

@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem};
+use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem, yaml_quote};
 use super::{AgentBackend, BackendState};
 use crate::components::{MarkdownDoc, McpKind, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -274,22 +274,6 @@ fn render_agent_md(doc: &MarkdownDoc) -> String {
     if !out.ends_with('\n') {
         out.push('\n');
     }
-    out
-}
-
-/// Double-quote a single-line scalar for a YAML frontmatter value, escaping `"`
-/// and `\`, so an arbitrary description stays safe regardless of colons or quotes.
-fn yaml_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
     out
 }
 

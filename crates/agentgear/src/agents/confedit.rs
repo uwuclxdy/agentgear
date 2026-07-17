@@ -150,6 +150,50 @@ pub(crate) fn remove_file_idem(path: &Path) -> Result<bool> {
     }
 }
 
+/// A YAML scalar for a frontmatter value: bare when it cannot be misparsed as a
+/// flow/indicator token, else a double-quoted string with the minimal escapes.
+pub(crate) fn yaml_scalar(s: &str) -> String {
+    let needs_quote = s.is_empty()
+        || s.starts_with(|c: char| c.is_ascii_whitespace())
+        || s.ends_with(|c: char| c.is_ascii_whitespace())
+        || s.contains(['"', '\\', '\n', '\r', '\t', ':', '#', '[', ']', '{', '}', ',', '&', '*', '!', '|', '>', '\'', '%', '@', '`'])
+        || matches!(s.to_ascii_lowercase().as_str(), "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "~");
+    if !needs_quote {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Unconditionally double-quote a single-line scalar for a YAML frontmatter value,
+/// escaping `"` and `\` so an arbitrary value stays safe regardless of colons or
+/// quotes. Unlike [`yaml_scalar`], never emits a bare form.
+pub(crate) fn yaml_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// Write to a temp sibling then rename onto `path`, so a reader never sees a
 /// half-written config and a crash leaves the prior file intact.
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {

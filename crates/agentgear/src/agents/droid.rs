@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::cchooks::{hook_is_portable, render_hook_group};
-use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem};
+use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem, yaml_scalar};
 use super::mcpjson::{self, ServerShape};
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer};
@@ -242,33 +242,6 @@ fn yaml_value(value: &Value) -> String {
         // can never break the document.
         other => yaml_scalar(&other.to_string()),
     }
-}
-
-/// A YAML scalar: bare when it cannot be misparsed as a flow/indicator token, else a
-/// double-quoted string with the minimal escapes.
-fn yaml_scalar(s: &str) -> String {
-    let needs_quote = s.is_empty()
-        || s.starts_with(|c: char| c.is_ascii_whitespace())
-        || s.ends_with(|c: char| c.is_ascii_whitespace())
-        || s.contains(['"', '\\', '\n', '\r', '\t', ':', '#', '[', ']', '{', '}', ',', '&', '*', '!', '|', '>', '\'', '%', '@', '`'])
-        || matches!(s.to_ascii_lowercase().as_str(), "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "~");
-    if !needs_quote {
-        return s.to_string();
-    }
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 // --- report ------------------------------------------------------------------
