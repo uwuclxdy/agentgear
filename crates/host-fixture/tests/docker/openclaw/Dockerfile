@@ -33,6 +33,8 @@ export HOME=/tmp/openclaw-home
 # /usr/local/bin, or the state dir) so the native second opinion can run.
 export PATH="/root/.local/bin:/root/.openclaw/bin:$HOME/.openclaw/bin:/usr/local/bin:$PATH"
 CONFIG="$HOME/.openclaw/openclaw.json"
+SKILL_DIR="$HOME/.openclaw/skills/ez-skill"
+SKILL="$SKILL_DIR/SKILL.md"
 mkdir -p "$HOME/.openclaw"
 
 # Seed a foreign mcp server + an unrelated top-level key that must survive
@@ -52,6 +54,8 @@ host_fixture setup --agent openclaw
 if ! grep -q 'ez-fixture'     "$CONFIG"; then echo "FAIL: our mcp server not registered"; cat "$CONFIG"; exit 1; fi
 if ! grep -q 'theirs'         "$CONFIG"; then echo "FAIL: seeded server clobbered on install"; exit 1; fi
 if ! grep -q 'AGENTGEAR_KEEP' "$CONFIG"; then echo "FAIL: seeded key clobbered on install"; exit 1; fi
+if [ ! -f "$SKILL" ];                    then echo "FAIL: translated skill SKILL.md missing"; exit 1; fi
+if ! grep -q 'x-agentgear'    "$SKILL";  then echo "FAIL: skill ownership tag missing"; exit 1; fi
 
 # Native second opinion (best-effort; auth-free config parse above is authoritative).
 if command -v openclaw >/dev/null 2>&1 && out=$(openclaw mcp list 2>&1); then
@@ -69,6 +73,7 @@ host_fixture uninstall
 if grep -q 'ez-fixture'       "$CONFIG"; then echo "FAIL: our server survived uninstall"; exit 1; fi
 if ! grep -q 'theirs'         "$CONFIG"; then echo "FAIL: uninstall removed the seeded server"; exit 1; fi
 if ! grep -q 'AGENTGEAR_KEEP' "$CONFIG"; then echo "FAIL: uninstall removed the seeded key"; exit 1; fi
+if [ -d "$SKILL_DIR" ]; then echo "FAIL: skill dir survived uninstall"; exit 1; fi
 
 echo "openclaw docker leg: OK"
 TEST

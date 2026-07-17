@@ -29,6 +29,8 @@ MCP="$COPILOT_HOME/mcp-config.json"
 HOOKS="$COPILOT_HOME/hooks/ez-fixture-plugin.json"
 USER_HOOKS="$COPILOT_HOME/hooks/user-own.json"
 AGENT="$COPILOT_HOME/agents/ez-fixture-plugin-ez-helper.agent.md"
+SKILL_DIR="$COPILOT_HOME/skills/ez-skill"
+SKILL="$SKILL_DIR/SKILL.md"
 mkdir -p "$COPILOT_HOME/hooks" "$COPILOT_HOME/agents"
 
 # Seed a foreign mcp server + an unrelated key that must survive install/uninstall,
@@ -52,6 +54,8 @@ if ! grep -q 'userPromptSubmitted' "$HOOKS"; then echo "FAIL: UserPromptSubmit n
 if ! grep -q '"bash"'          "$HOOKS"; then echo "FAIL: hook shell string not under bash";   cat "$HOOKS"; exit 1; fi
 if ! grep -q 'their-hook'      "$USER_HOOKS"; then echo "FAIL: seeded user hook file touched"; exit 1; fi
 if [ ! -f "$AGENT" ];                    then echo "FAIL: translated agent file missing";      exit 1; fi
+if [ ! -f "$SKILL" ];                    then echo "FAIL: translated skill SKILL.md missing";  exit 1; fi
+if ! grep -q 'x-agentgear'     "$SKILL"; then echo "FAIL: skill ownership tag missing";        exit 1; fi
 
 # A second setup must be a true NoOp — which also proves the written config
 # re-parses cleanly (json_edit errors on an unparseable mcp-config.json).
@@ -72,6 +76,7 @@ if ! grep -q 'editorHint'   "$MCP"; then echo "FAIL: uninstall removed the seede
 if [ -f "$HOOKS" ];             then echo "FAIL: our hooks file survived uninstall";        exit 1; fi
 if ! grep -q 'their-hook' "$USER_HOOKS"; then echo "FAIL: uninstall removed the seeded user hook file"; exit 1; fi
 if [ -f "$AGENT" ];            then echo "FAIL: agent file survived uninstall";             exit 1; fi
+if [ -d "$SKILL_DIR" ];        then echo "FAIL: skill dir survived uninstall";              exit 1; fi
 
 echo "copilot-cli docker leg: OK"
 TEST

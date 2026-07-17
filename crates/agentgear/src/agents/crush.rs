@@ -11,8 +11,9 @@
 //! Skipped surfaces (see `docs/harness/crush.md`):
 //! - **commands** and **agents**: crush has no file-writable surface for either yet
 //!   (issues #2219 / #1807 open), so `commands`/`agents` are dropped, not guessed.
-//! - **skills**: out of scope for v1 (crush does directory-load skills, a real
-//!   future surface).
+//! - **skills**: bare `~/.config/crush/skills/<name>/SKILL.md` (user) /
+//!   `<project>/.crush/skills/<name>/SKILL.md` (project), tagged for ownership. crush
+//!   requires `name`+`description`, which the shared renderer ensures.
 //! - **hook events other than `PreToolUse`**: crush defines only that one event
 //!   today; every other CC event has no analog and is skipped.
 //!
@@ -28,6 +29,7 @@ use super::cchooks::hook_is_portable;
 use super::confedit::{json_edit, json_obj_at};
 use super::mcpjson::{self, ServerShape};
 use super::report;
+use super::skillsdir;
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, McpServer};
 // The unit test builds server fixtures with `super::McpKind`; production no longer
@@ -67,18 +69,21 @@ impl AgentBackend for CrushBackend {
         let config = config_file(scope)?;
         let mcp = mcpjson::probe_surface(&config, &["mcp"], &comp.mcp_servers, ServerShape::typed())?;
         let hooks = report::probe_json_entries(&config, &hook_entries(&comp.hooks))?;
-        Ok(report::compose([mcp, hooks].into_iter().flatten()))
+        let skills = skillsdir::probe(&skills_root(scope)?, plugin, &comp.skills)?;
+        Ok(report::compose([mcp, hooks, skills].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?;
-        let changed = reconcile_config(&config_file(scope)?, &comp.mcp_servers, &comp.hooks)?;
+        let mut changed = reconcile_config(&config_file(scope)?, &comp.mcp_servers, &comp.hooks)?;
+        changed |= skillsdir::reconcile(&skills_root(scope)?, plugin, &comp.skills)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
     fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&Source::Embedded)?;
-        let changed = remove_config(&config_file(scope)?, &portable_names(&comp.mcp_servers), &comp.hooks)?;
+        let mut changed = remove_config(&config_file(scope)?, &portable_names(&comp.mcp_servers), &comp.hooks)?;
+        changed |= skillsdir::remove(&skills_root(scope)?, plugin, &comp.skills)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
@@ -115,6 +120,17 @@ fn config_file(scope: &Scope) -> Result<PathBuf> {
     match scope {
         Scope::User => Ok(crush_config_dir()?.join("crush.json")),
         Scope::Project { path } => Ok(path.join("crush.json")),
+    }
+}
+
+/// The skills root for a scope: the global `~/.config/crush/skills` (a crush-managed
+/// skill dir) or `<project>/.crush/skills`. crush directory-loads a bare
+/// `<name>/SKILL.md` under either. `$CRUSH_SKILLS_DIR`, if set, makes crush read ONLY
+/// that dir — an accepted v1 edge we don't consult here.
+fn skills_root(scope: &Scope) -> Result<PathBuf> {
+    match scope {
+        Scope::User => Ok(crush_config_dir()?.join("skills")),
+        Scope::Project { path } => Ok(path.join(".crush").join("skills")),
     }
 }
 

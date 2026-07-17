@@ -111,6 +111,8 @@ fn qwen_code_full_lifecycle() {
     let cmd_dir = env.qwen.join("commands").join("ez-fixture-plugin");
     let cmd_file = cmd_dir.join("hello.md");
     let agent_file = env.qwen.join("agents").join("ez-fixture-plugin-ez-helper.md");
+    let skill_dir = env.qwen.join("skills").join("ez-skill");
+    let skill = skill_dir.join("SKILL.md");
 
     // install: translates mcp + hooks + commands + agents into qwen's config tree.
     let (ok, out) = env.fixture(&["setup", "--agent", "qwen-code"]);
@@ -164,8 +166,15 @@ fn qwen_code_full_lifecycle() {
     assert!(!a.contains("sonnet"), "the CC model alias must be dropped:\n{a}");
     assert!(a.contains("fixture helper agent"), "agent body not translated:\n{a}");
 
+    // skills: bare `<name>/SKILL.md` under ~/.qwen/skills, ownership-tagged, support file copied.
+    assert!(skill.exists(), "skill SKILL.md not written: {}", skill.display());
+    let sk = fs::read_to_string(&skill).unwrap();
+    assert!(sk.contains("name: ez-skill") && sk.contains("description:"), "skill frontmatter missing:\n{sk}");
+    assert!(sk.contains("x-agentgear") && sk.contains("ez-fixture-plugin"), "ownership tag missing:\n{sk}");
+    assert!(skill_dir.join("reference.md").exists(), "skill support file not copied through");
+
     // safety: everything we wrote is under the throwaway temp root.
-    for p in [env.qwen.join("settings.json"), cmd_file.clone(), agent_file.clone()] {
+    for p in [env.qwen.join("settings.json"), cmd_file.clone(), agent_file.clone(), skill.clone()] {
         assert!(p.starts_with(&env.root), "backend wrote outside the temp root: {}", p.display());
     }
 
@@ -185,6 +194,7 @@ fn qwen_code_full_lifecycle() {
     assert!(s.contains("their-startup-hook.sh"), "uninstall removed the seeded user SessionStart hook:\n{s}");
     assert!(!cmd_dir.exists(), "our command dir survived uninstall: {}", cmd_dir.display());
     assert!(!agent_file.exists(), "our agent file survived uninstall: {}", agent_file.display());
+    assert!(!skill_dir.exists(), "our skill dir survived uninstall: {}", skill_dir.display());
 
     // the post-uninstall config still parses: a clean re-install lands again
     // (json_edit would error on an unparseable settings.json).

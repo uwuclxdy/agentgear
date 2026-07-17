@@ -126,6 +126,8 @@ fn cursor_full_lifecycle() {
     let cmd_file = env.cursor.join("commands").join("ez-fixture-plugin-hello.md");
     let agent_file = env.cursor.join("agents").join("ez-fixture-plugin-ez-helper.md");
     let hooks_file = env.cursor.join("hooks.json");
+    let skill_dir = env.cursor.join("skills").join("ez-skill");
+    let skill = skill_dir.join("SKILL.md");
 
     // install: translates mcp + hooks + commands + agents into cursor's config.
     let (ok, out) = env.fixture(&["setup", "--agent", "cursor"]);
@@ -185,14 +187,30 @@ fn cursor_full_lifecycle() {
     assert!(a.contains("model: inherit"), "agent model not coerced to inherit:\n{a}");
     assert!(a.contains("fixture helper agent"), "agent body not translated:\n{a}");
 
+    // skills: bare `<name>/SKILL.md` under ~/.cursor/skills, ownership-tagged, support file copied.
+    assert!(skill.exists(), "skill SKILL.md not written: {}", skill.display());
+    let sk = fs::read_to_string(&skill).unwrap();
+    assert!(sk.contains("name: ez-skill"), "skill name frontmatter missing:\n{sk}");
+    assert!(sk.contains("description:"), "skill description frontmatter missing:\n{sk}");
+    assert!(sk.contains("x-agentgear") && sk.contains("ez-fixture-plugin"), "ownership tag missing:\n{sk}");
+    assert!(skill_dir.join("reference.md").exists(), "skill support file not copied through");
+
     // safety: everything we wrote is under the throwaway temp root.
-    for p in [env.cursor.join("mcp.json"), hooks_file.clone(), cmd_file.clone(), agent_file.clone()] {
+    for p in [env.cursor.join("mcp.json"), hooks_file.clone(), cmd_file.clone(), agent_file.clone(), skill.clone()] {
         assert!(p.starts_with(&env.root), "backend wrote outside the temp root: {}", p.display());
     }
 
     // idempotent: a second identical reconcile is a true NoOp (no write).
     let (ok, out) = env.fixture(&["setup", "--agent", "cursor"]);
     assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+
+    // mutation guard: delete our SKILL.md so the skills probe reads Absent; self-heal must
+    // compose that into NeedsRepair and rewrite it. A no-op skills probe would leave it gone.
+    fs::remove_file(&skill).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted skill: {out}");
+    assert!(skill.exists(), "self-heal did not restore the deleted skill");
+    assert!(fs::read_to_string(&skill).unwrap().contains("x-agentgear"), "restored skill lost its ownership tag");
 
     // uninstall: our entries/files gone, the user's kept.
     let (ok, out) = env.fixture(&["uninstall"]);
@@ -208,6 +226,7 @@ fn cursor_full_lifecycle() {
     assert!(h.contains("their-stop-hook"), "uninstall removed the seeded stop hook:\n{h}");
     assert!(!cmd_file.exists(), "command file survived uninstall: {}", cmd_file.display());
     assert!(!agent_file.exists(), "agent file survived uninstall: {}", agent_file.display());
+    assert!(!skill_dir.exists(), "skill dir survived uninstall: {}", skill_dir.display());
 
     // the post-uninstall mcp.json still parses: a clean re-install lands again
     // (json_edit would error on an unparseable mcp.json).

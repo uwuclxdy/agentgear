@@ -1,13 +1,18 @@
-//! The zed backend — mcp-only. Zed reads MCP servers from a `context_servers`
+//! The zed backend — mcp + skills. Zed reads MCP servers from a `context_servers`
 //! object in its `settings.json` (`~/.config/zed/settings.json`, XDG-based on both
 //! Linux and macOS; `%APPDATA%\Zed` on Windows): stdio is the shared Plain
 //! `{command,args,env}` body, remote http is `{url,headers}` (zed's one remote
 //! transport; sse is skipped — no faithful landing). Entries are keyed by our
 //! plugin's server names, so `remove` is exact and a second reconcile is a true
-//! `NoOp`. Zed ships no general hook/command/subagent
-//! config-file surface (its `tasks.json` "hooks" fire on a single `create_worktree`
-//! event, not a CC lifecycle), so those components are skipped — full mapping and
-//! why-skipped detail in `docs/harness/zed.md`.
+//! `NoOp`. Skills land as bare `<name>/SKILL.md` under zed's ONLY skill path
+//! `~/.agents/skills` (user) / `<worktree>/.agents/skills` (project), tagged for
+//! ownership so a foreign skill in that shared root is never swept; zed requires
+//! `name`+`description`, which the shared renderer ensures. Accepted limit: zed caps
+//! the aggregate name+description catalog at ~50KB — a plugin shipping past that is
+//! the author's concern, not truncated here. Zed ships no general hook/command/
+//! subagent config-file surface (its `tasks.json` "hooks" fire on a single
+//! `create_worktree` event, not a CC lifecycle), so those components are skipped —
+//! full mapping and why-skipped detail in `docs/harness/zed.md`.
 
 use std::path::{Path, PathBuf};
 
@@ -15,6 +20,7 @@ use serde_json::Value;
 
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
+use super::skillsdir;
 use super::{AgentBackend, BackendState};
 use crate::components::McpServer;
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -48,17 +54,23 @@ impl AgentBackend for ZedBackend {
         // self_heal resolved for this agent (rehydrated `--path`, else the compile-time
         // default), so probe and reconcile render identical bytes.
         let comp = plugin.components(source)?;
-        probe_mcp(&settings_path(scope)?, &comp.mcp_servers)
+        let mcp = probe_mcp(&settings_path(scope)?, &comp.mcp_servers)?;
+        let skills = skillsdir::probe(&skillsdir::agents_skills_root(scope)?, plugin, &comp.skills)?;
+        Ok(report::compose([Some(mcp), skills].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?;
-        reconcile_mcp(&settings_path(scope)?, &comp.mcp_servers)
+        let mut changed = reconcile_mcp(&settings_path(scope)?, &comp.mcp_servers)? != Outcome::NoOp;
+        changed |= skillsdir::reconcile(&skillsdir::agents_skills_root(scope)?, plugin, &comp.skills)?;
+        Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
     fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&Source::Embedded)?;
-        remove_mcp(&settings_path(scope)?, &comp.mcp_servers)
+        let mut changed = remove_mcp(&settings_path(scope)?, &comp.mcp_servers)? != Outcome::NoOp;
+        changed |= skillsdir::remove(&skillsdir::agents_skills_root(scope)?, plugin, &comp.skills)?;
+        Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {

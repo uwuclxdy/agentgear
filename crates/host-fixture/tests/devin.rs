@@ -112,6 +112,11 @@ fn devin_full_lifecycle() {
     let skill_dir = env.base.join("skills").join("ez-fixture-plugin-hello");
     let agent = env.base.join("agents").join("ez-fixture-plugin-ez-helper").join("AGENT.md");
     let agent_dir = env.base.join("agents").join("ez-fixture-plugin-ez-helper");
+    // The plugin's own `skills/` IR is a DISTINCT surface: it lands as a bare `<name>/`
+    // dir in devin's `.agents/skills` scan root, never colliding with the CC-commands-as-
+    // skills dir (`<config_base>/skills/ez-fixture-plugin-hello`) above.
+    let plugin_skill_dir = env.root.join(".agents").join("skills").join("ez-skill");
+    let plugin_skill = plugin_skill_dir.join("SKILL.md");
 
     // install: translates mcp + hooks + commands (skills) + agents into devin config.
     let (ok, out) = env.fixture(&["setup", "--agent", "devin"]);
@@ -167,8 +172,17 @@ fn devin_full_lifecycle() {
     assert!(a.contains("model:") && a.contains("sonnet"), "agent model frontmatter not translated:\n{a}");
     assert!(a.contains("fixture helper agent"), "agent body not translated:\n{a}");
 
+    // plugin skills -> bare `<name>/SKILL.md` in the `.agents/skills` scan root, tagged,
+    // and NOT under the config base where the commands-as-skills live.
+    assert!(plugin_skill.exists(), "plugin skill SKILL.md not written: {}", plugin_skill.display());
+    assert!(!plugin_skill.starts_with(&env.base), "plugin skill collided with the commands-as-skills root");
+    let ps = fs::read_to_string(&plugin_skill).unwrap();
+    assert!(ps.contains("name: ez-skill") && ps.contains("description:"), "plugin skill frontmatter missing:\n{ps}");
+    assert!(ps.contains("x-agentgear") && ps.contains("ez-fixture-plugin"), "ownership tag missing:\n{ps}");
+    assert!(plugin_skill_dir.join("reference.md").exists(), "plugin skill support file not copied through");
+
     // safety: everything we wrote is under the throwaway temp root.
-    for p in [env.base.join("config.json"), skill.clone(), agent.clone()] {
+    for p in [env.base.join("config.json"), skill.clone(), agent.clone(), plugin_skill.clone()] {
         assert!(p.starts_with(&env.root), "backend wrote outside the temp root: {}", p.display());
     }
 
@@ -188,6 +202,7 @@ fn devin_full_lifecycle() {
     assert!(c.contains("their-startup-hook.sh"), "uninstall removed the seeded user SessionStart hook:\n{c}");
     assert!(!skill_dir.exists(), "our skill dir survived uninstall: {}", skill_dir.display());
     assert!(!agent_dir.exists(), "our agent dir survived uninstall: {}", agent_dir.display());
+    assert!(!plugin_skill_dir.exists(), "our plugin skill dir survived uninstall: {}", plugin_skill_dir.display());
 
     // the post-uninstall config still parses: a clean re-install lands again
     // (json_edit would error on an unparseable config.json).

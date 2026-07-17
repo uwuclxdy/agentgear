@@ -35,6 +35,7 @@ export HOME=/tmp/goose-home
 CONFIG="$HOME/.config/goose/config.yaml"
 HOOKS="$HOME/.agents/plugins/ez-fixture-plugin/hooks/hooks.json"
 PLUGIN_DIR="$HOME/.agents/plugins/ez-fixture-plugin"
+SKILL="$PLUGIN_DIR/skills/ez-skill/SKILL.md"
 mkdir -p "$(dirname "$CONFIG")"
 
 # Seed a foreign extension + an unrelated top-level key that must survive
@@ -55,6 +56,8 @@ if ! grep -q 'their-server'  "$CONFIG"; then echo "FAIL: seeded extension clobbe
 if ! grep -q 'GOOSE_MODEL'   "$CONFIG"; then echo "FAIL: seeded key clobbered on install"; exit 1; fi
 if [ ! -f "$HOOKS" ];        then echo "FAIL: plugin-owned hooks.json missing"; exit 1; fi
 if ! grep -q 'host_fixture self-heal' "$HOOKS"; then echo "FAIL: SessionStart hook not translated"; exit 1; fi
+if [ ! -f "$SKILL" ];        then echo "FAIL: plugin skill SKILL.md missing"; exit 1; fi
+if ! grep -q 'x-agentgear' "$SKILL"; then echo "FAIL: skill ownership tag missing"; exit 1; fi
 
 # Native second opinion (best-effort; the auth-free config parse above is authoritative).
 # `goose info` runs without a provider and re-parses config.yaml, so a clean exit means

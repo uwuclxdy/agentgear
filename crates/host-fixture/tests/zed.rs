@@ -106,6 +106,8 @@ fn fixture_dir() -> OsString {
 #[test]
 fn zed_full_lifecycle() {
     let env = Env::new("lifecycle");
+    let skill_dir = env.root.join(".agents").join("skills").join("ez-skill");
+    let skill = skill_dir.join("SKILL.md");
 
     // install: translates our stdio mcp server into zed's `context_servers`.
     let (ok, out) = env.fixture(&["setup", "--agent", "zed"]);
@@ -140,12 +142,31 @@ fn zed_full_lifecycle() {
         }
     }
 
+    // skills: bare `<name>/SKILL.md` under zed's only skill path ~/.agents/skills, tagged.
+    assert!(skill.exists(), "skill SKILL.md not written: {}", skill.display());
+    let sk = fs::read_to_string(&skill).unwrap();
+    assert!(sk.contains("name: ez-skill") && sk.contains("description:"), "skill frontmatter missing name/description:\n{sk}");
+    assert!(sk.contains("x-agentgear") && sk.contains("ez-fixture-plugin"), "ownership tag missing:\n{sk}");
+    assert!(skill_dir.join("reference.md").exists(), "skill support file not copied through");
+
+    // a fresh, healthy install self-heals to NoOp: the skills probe reads what reconcile wrote.
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "self-heal after a fresh install should no-op, got {out}");
+
     // safety: everything we wrote is under the throwaway temp root.
     assert!(env.zed.join("settings.json").starts_with(&env.root), "backend wrote outside the temp root");
+    assert!(skill.starts_with(&env.root), "skill written outside the temp root");
 
     // idempotent: a second identical reconcile is a true NoOp (no write).
     let (ok, out) = env.fixture(&["setup", "--agent", "zed"]);
     assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+
+    // mutation guard: delete our SKILL.md; self-heal must repair (skills Absent -> NeedsRepair),
+    // not NoOp. A no-op skills probe would leave the skill missing.
+    fs::remove_file(&skill).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted skill: {out}");
+    assert!(skill.exists() && fs::read_to_string(&skill).unwrap().contains("x-agentgear"), "self-heal did not restore the tagged skill");
 
     // uninstall: our entry gone, the user's kept.
     let (ok, out) = env.fixture(&["uninstall"]);
@@ -155,10 +176,45 @@ fn zed_full_lifecycle() {
     assert!(!s.contains("ez-fixture"), "our mcp server survived uninstall:\n{s}");
     assert!(s.contains("theirs") && s.contains("their-server"), "uninstall removed the seeded context server:\n{s}");
     assert!(s.contains("\"theme\"") && s.contains("One Dark"), "uninstall removed the seeded top-level key:\n{s}");
+    assert!(!skill_dir.exists(), "skill dir survived uninstall: {}", skill_dir.display());
 
     // the post-uninstall config still parses: a clean re-install lands again
     // (json_edit would error on an unparseable settings.json).
     let (ok, out) = env.fixture(&["setup", "--agent", "zed"]);
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.settings().contains("ez-fixture"), "re-install did not re-add our server");
+}
+
+/// A user's own (or a rival agentgear host's) skill sharing our plugin skill's name in
+/// the shared `~/.agents/skills` root — zed's ONLY skill path — must survive our install
+/// AND uninstall untouched: reconcile skips a foreign-occupied slot, remove deletes only
+/// dirs carrying OUR frontmatter tag. Covers both an untagged (user's own) and a
+/// rival-plugin-tagged occupant of our skill's exact name.
+#[test]
+fn zed_never_clobbers_a_foreign_skill() {
+    for (label, seed) in [
+        ("untagged", "---\nname: ez-skill\ndescription: the user's own\n---\nkeep me, i am the user's\n"),
+        ("rival-tagged", "---\nname: ez-skill\ndescription: rival\nx-agentgear: \"rival-plugin@rival-mkt\"\n---\nrival body\n"),
+    ] {
+        let env = Env::new(&format!("foreign-{label}"));
+        let dir = env.root.join(".agents").join("skills").join("ez-skill");
+        let skill = dir.join("SKILL.md");
+        let support = dir.join("user-note.txt");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&skill, seed).unwrap();
+        fs::write(&support, "user support bytes").unwrap();
+
+        // install writes our other surfaces but must SKIP the foreign-occupied ez-skill slot.
+        let (ok, out) = env.fixture(&["setup", "--agent", "zed"]);
+        assert!(ok, "setup failed ({label}): {out}");
+        assert_eq!(fs::read_to_string(&skill).unwrap(), seed, "install clobbered the foreign skill ({label})");
+        assert_eq!(fs::read_to_string(&support).unwrap(), "user support bytes", "install touched the foreign support file ({label})");
+
+        // uninstall must not delete a dir that is not ours.
+        let (ok, out) = env.fixture(&["uninstall"]);
+        assert!(ok, "uninstall failed ({label}): {out}");
+        assert!(skill.exists(), "uninstall deleted the foreign skill dir ({label})");
+        assert_eq!(fs::read_to_string(&skill).unwrap(), seed, "uninstall altered the foreign skill ({label})");
+        assert!(support.exists(), "uninstall removed the foreign support file ({label})");
+    }
 }

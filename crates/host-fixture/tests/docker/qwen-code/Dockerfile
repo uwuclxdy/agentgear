@@ -29,6 +29,8 @@ export QWEN_HOME="$HOME/.qwen"
 SETTINGS="$QWEN_HOME/settings.json"
 CMD_DIR="$QWEN_HOME/commands/ez-fixture-plugin"
 AGENT="$QWEN_HOME/agents/ez-fixture-plugin-ez-helper.md"
+SKILL_DIR="$QWEN_HOME/skills/ez-skill"
+SKILL="$SKILL_DIR/SKILL.md"
 mkdir -p "$QWEN_HOME"
 
 # Seed a foreign mcp server + an unrelated key that must survive install/uninstall.
@@ -44,6 +46,8 @@ if ! grep -q 'theirs'     "$SETTINGS"; then echo "FAIL: seeded server clobbered 
 if ! grep -q '"theme"'    "$SETTINGS"; then echo "FAIL: seeded key clobbered on install"; exit 1; fi
 if [ ! -f "$CMD_DIR/hello.md" ];       then echo "FAIL: copied command markdown missing"; exit 1; fi
 if [ ! -f "$AGENT" ];                  then echo "FAIL: rendered agent markdown missing"; exit 1; fi
+if [ ! -f "$SKILL" ];                  then echo "FAIL: translated skill SKILL.md missing"; exit 1; fi
+if ! grep -q 'x-agentgear' "$SKILL";   then echo "FAIL: skill ownership tag missing"; exit 1; fi
 
 # Native sanity: the pinned CLI runs. No headless mcp-list exists, so the config
 # parse above is authoritative; this only proves the package installed + launches.
@@ -59,6 +63,7 @@ if grep -q 'ez-fixture' "$SETTINGS"; then echo "FAIL: our server survived uninst
 if ! grep -q 'theirs'   "$SETTINGS"; then echo "FAIL: uninstall removed the seeded server"; exit 1; fi
 if [ -d "$CMD_DIR" ];                then echo "FAIL: command dir survived uninstall"; exit 1; fi
 if [ -f "$AGENT" ];                  then echo "FAIL: agent file survived uninstall"; exit 1; fi
+if [ -d "$SKILL_DIR" ];              then echo "FAIL: skill dir survived uninstall"; exit 1; fi
 
 echo "qwen-code docker leg: OK"
 TEST

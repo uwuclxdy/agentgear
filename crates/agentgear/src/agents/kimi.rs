@@ -4,8 +4,10 @@
 //! `{command,args,env}`); hooks land in `config.toml` as a `[[hooks]]`
 //! array-of-tables under CC's exact event names (kimi mirrors them 1:1). Every mcp
 //! key is our own server name and every hook is matched by its command string, so
-//! `remove` is exact and a second reconcile is a true `NoOp`. Commands/agents/skills
-//! have no user-level file surface here and are skipped (see `docs/harness/kimi.md`).
+//! `remove` is exact and a second reconcile is a true `NoOp`. Commands/agents have no
+//! user-level file surface here and are skipped; skills land as bare
+//! `~/.kimi-code/skills/<name>/SKILL.md`, tagged for ownership (see
+//! `docs/harness/kimi.md`).
 //!
 //! Two products share the `kimi` binary — the legacy python `kimi-cli` (`~/.kimi`)
 //! and the current TypeScript `kimi-code` (`~/.kimi-code`). This backend targets the
@@ -22,6 +24,7 @@ use super::cchooks::hook_is_portable;
 use super::confedit;
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
+use super::skillsdir;
 use super::{AgentBackend, BackendState};
 use crate::components::HookBinding;
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -63,7 +66,8 @@ impl AgentBackend for KimiBackend {
         let base = kimi_base(scope)?;
         let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let hooks = probe_hooks(&base.join("config.toml"), &comp.hooks)?;
-        Ok(report::compose([mcp, hooks].into_iter().flatten()))
+        let skills = skillsdir::probe(&base.join("skills"), plugin, &comp.skills)?;
+        Ok(report::compose([mcp, hooks, skills].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -73,6 +77,7 @@ impl AgentBackend for KimiBackend {
         let mut changed = false;
         changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= reconcile_hooks(&base.join("config.toml"), &comp.hooks)?;
+        changed |= skillsdir::reconcile(&base.join("skills"), plugin, &comp.skills)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -83,6 +88,7 @@ impl AgentBackend for KimiBackend {
         let mut changed = false;
         changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= remove_hooks(&base.join("config.toml"), &comp.hooks)?;
+        changed |= skillsdir::remove(&base.join("skills"), plugin, &comp.skills)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 

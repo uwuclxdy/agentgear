@@ -14,6 +14,9 @@
 //! - copilot's CLI has no custom-slash-command file surface (a VS Code-only feature,
 //!   open upstream FRs), so CC commands are skipped rather than written where the CLI
 //!   would never read them.
+//!
+//! Skills land as bare `~/.copilot/skills/<name>/SKILL.md` (copilot requires
+//! `name`+`description`, which the shared renderer ensures), tagged for ownership.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,6 +26,7 @@ use serde_json::{Map, Value};
 use super::cchooks::hook_is_portable;
 use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem};
 use super::report;
+use super::skillsdir;
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -68,7 +72,8 @@ impl AgentBackend for CopilotCliBackend {
         };
         let hooks = probe_hooks(&hooks_file(&home, plugin.name), &comp.hooks)?;
         let agents = report::probe_files(&expected_agents(&home.join("agents"), plugin.name, &comp.agents), |_, _| true)?;
-        Ok(report::compose([mcp, hooks, agents].into_iter().flatten()))
+        let skills = skillsdir::probe(&home.join("skills"), plugin, &comp.skills)?;
+        Ok(report::compose([mcp, hooks, agents, skills].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, _scope: &Scope) -> Result<Outcome> {
@@ -83,6 +88,7 @@ impl AgentBackend for CopilotCliBackend {
         for doc in &comp.agents {
             changed |= write_file_idem(&agents.join(agent_file(plugin.name, doc)), render_agent(plugin.name, doc).as_bytes())?;
         }
+        changed |= skillsdir::reconcile(&home.join("skills"), plugin, &comp.skills)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -100,6 +106,7 @@ impl AgentBackend for CopilotCliBackend {
         for doc in &comp.agents {
             changed |= remove_file_idem(&agents.join(agent_file(plugin.name, doc)))?;
         }
+        changed |= skillsdir::remove(&home.join("skills"), plugin, &comp.skills)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 

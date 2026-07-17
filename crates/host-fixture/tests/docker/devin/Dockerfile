@@ -37,6 +37,10 @@ BASE="$HOME/.config/devin"
 CONFIG="$BASE/config.json"
 SKILL="$BASE/skills/ez-fixture-plugin-hello/SKILL.md"
 AGENT="$BASE/agents/ez-fixture-plugin-ez-helper/AGENT.md"
+# The plugin's own skills/ IR is a distinct surface: bare `<name>/` in the .agents/skills
+# scan root, never colliding with the commands-as-skills dir under $BASE/skills.
+PLUGIN_SKILL_DIR="$HOME/.agents/skills/ez-skill"
+PLUGIN_SKILL="$PLUGIN_SKILL_DIR/SKILL.md"
 mkdir -p "$BASE"
 
 # Seed a foreign mcp server + an unrelated key that must survive install/uninstall,
@@ -53,6 +57,8 @@ if ! grep -q '"theme"'    "$CONFIG"; then echo "FAIL: seeded key clobbered on in
 if ! grep -q 'SessionStart' "$CONFIG"; then echo "FAIL: hooks not translated"; exit 1; fi
 if [ ! -f "$SKILL" ];     then echo "FAIL: translated skill SKILL.md missing"; exit 1; fi
 if [ ! -f "$AGENT" ];     then echo "FAIL: translated subagent AGENT.md missing"; exit 1; fi
+if [ ! -f "$PLUGIN_SKILL" ]; then echo "FAIL: plugin skill SKILL.md missing"; exit 1; fi
+if ! grep -q 'x-agentgear' "$PLUGIN_SKILL"; then echo "FAIL: plugin skill ownership tag missing"; exit 1; fi
 
 # Native second opinion (best-effort; the auth-free config parse above is authoritative).
 if command -v devin >/dev/null 2>&1; then
@@ -75,6 +81,7 @@ if grep -q 'ez-fixture' "$CONFIG"; then echo "FAIL: our server survived uninstal
 if ! grep -q 'theirs'   "$CONFIG"; then echo "FAIL: uninstall removed the seeded server"; exit 1; fi
 if [ -d "$BASE/skills/ez-fixture-plugin-hello" ]; then echo "FAIL: skill dir survived uninstall"; exit 1; fi
 if [ -d "$BASE/agents/ez-fixture-plugin-ez-helper" ]; then echo "FAIL: agent dir survived uninstall"; exit 1; fi
+if [ -d "$PLUGIN_SKILL_DIR" ]; then echo "FAIL: plugin skill dir survived uninstall"; exit 1; fi
 
 echo "devin docker leg: OK"
 TEST

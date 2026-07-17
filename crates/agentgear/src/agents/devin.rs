@@ -12,8 +12,10 @@
 //! plugin-namespaced dirs (`<plugin>-<stem>/`) that we own whole, so `remove` is
 //! exact and a second reconcile is a true `NoOp`. A skill/agent name is prefixed
 //! with the plugin so it can never collide with a devin built-in profile
-//! (`subagent_explore`/`subagent_general`) or a user's own. See
-//! `docs/harness/devin.md` for the full mapping + skipped surfaces (rules/skills).
+//! (`subagent_explore`/`subagent_general`) or a user's own. The plugin's own
+//! `skills/` IR is a DISTINCT surface: it lands as bare `<name>/SKILL.md` in devin's
+//! `.agents/skills` scan root (tagged for ownership), never colliding with the
+//! commands-as-skills dirs above. See `docs/harness/devin.md` for the full mapping.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -26,6 +28,7 @@ use super::cchooks::{hook_is_portable, render_hook_group};
 use super::confedit::{json_edit, json_obj_at, write_file_idem, yaml_scalar};
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
+use super::skillsdir;
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, MarkdownDoc};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -68,7 +71,11 @@ impl AgentBackend for DevinBackend {
         let commands =
             report::probe_files(&expected_docs(&base, "skills", "SKILL.md", "commands/", plugin.name, &comp.commands), |_, _| true)?;
         let agents = report::probe_files(&expected_docs(&base, "agents", "AGENT.md", "agents/", plugin.name, &comp.agents), |_, _| true)?;
-        Ok(report::compose([mcp, hooks, commands, agents].into_iter().flatten()))
+        // Plugin `skills/` (the SkillDir IR) is a distinct surface from CC-commands-as-
+        // devin-skills above: it lands in devin's `.agents/skills` scan root, not the
+        // `<config_base>/skills` dir the commands own.
+        let skills = skillsdir::probe(&skillsdir::agents_skills_root(scope)?, plugin, &comp.skills)?;
+        Ok(report::compose([mcp, hooks, commands, agents, skills].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -90,6 +97,9 @@ impl AgentBackend for DevinBackend {
             let path = base.join("agents").join(namespaced(plugin.name, &doc.rel, "agents/")).join("AGENT.md");
             changed |= write_file_idem(&path, render_doc(plugin.name, &doc.rel, "agents/", doc).as_bytes())?;
         }
+        // Plugin skills land in the `.agents/skills` scan root (bare `<name>/`), kept
+        // distinct from the `skills/<plugin>-<stem>/` dirs the CC commands own above.
+        changed |= skillsdir::reconcile(&skillsdir::agents_skills_root(scope)?, plugin, &comp.skills)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -113,6 +123,7 @@ impl AgentBackend for DevinBackend {
                 }
             }
         }
+        changed |= skillsdir::remove(&skillsdir::agents_skills_root(scope)?, plugin, &comp.skills)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
