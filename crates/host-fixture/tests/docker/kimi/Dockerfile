@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
 # kimi docker leg: the real kimi-code CLI ingesting our written config. Built + run
 # by tests/docker/run.sh kimi (context = repo root). The config-file parse is the
-# auth-free source of truth; `kimi doctor` (validates config without auth) and
-# `kimi mcp list` are best-effort native second opinions — running kimi needs an
-# interactive /login, so the live `mcp` listing may be unavailable (see
-# docs/harness/kimi.md).
+# auth-free source of truth; `kimi doctor` (validates config.toml without auth) is a
+# best-effort native second opinion. `kimi mcp list` does not exist as a subcommand
+# (confirmed at both 0.23.5 and 0.26.0, see docs/harness/kimi.md gotcha 6), so there
+# is no native second opinion for mcp — the config-file parse above is authoritative.
 
 # Stage 1: build the fixture host (all backends) from the workspace.
 FROM rust:1-slim-bookworm AS build
@@ -13,11 +13,13 @@ COPY . .
 RUN cargo build -p host-fixture --release
 
 # Stage 2: real kimi-code CLI + the fixture binary; assert the lifecycle end-to-end.
-FROM node:20-slim
+# kimi-code's declared engine floor is >=22.19.0 (npm `engines.node`); node:20 sits
+# below it, so bump to a current LTS that clears the floor.
+FROM node:22-slim
 # Pin the CLI for reproducibility; bump alongside docs/harness/kimi.md. The scoped
 # `@moonshot-ai/kimi-code` is the official package (bin `kimi`); the unscoped
 # `kimi-code` on npm is NOT it.
-RUN npm install -g @moonshot-ai/kimi-code@0.23.5
+RUN npm install -g @moonshot-ai/kimi-code@0.26.0
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 
 RUN <<'SH'
@@ -69,20 +71,14 @@ if ! grep -q 'their-stop-hook'    "$CONFIG"; then echo "FAIL: seeded untouched h
 if ! grep -q 'kimi-k2'            "$CONFIG"; then echo "FAIL: seeded config key clobbered on install"; exit 1; fi
 if ! grep -q "user's own kimi config" "$CONFIG"; then echo "FAIL: seeded comment dropped on install"; exit 1; fi
 
-# Native second opinions (best-effort; the auth-free config parse above is authoritative).
+# Native second opinion (best-effort; the auth-free config parse above is authoritative).
+# No native `kimi mcp list` exists to cross-check the mcp write; `kimi doctor` never
+# reads mcp.json either (validates config.toml/tui.toml only), so mcp correctness
+# rests solely on the config-file asserts above.
 if out=$(kimi doctor 2>&1); then
   echo "native kimi doctor ran (config validated without auth)"
 else
   echo "note: kimi doctor unavailable; relied on config-file assert"
-fi
-if out=$(kimi mcp list 2>&1); then
-  if echo "$out" | grep -q 'ez-fixture'; then
-    echo "native kimi mcp list confirmed ez-fixture"
-  else
-    echo "note: kimi mcp list ran but did not surface ez-fixture (likely needs a session); relied on config-file assert"
-  fi
-else
-  echo "note: kimi mcp list unavailable (likely needs interactive /login); relied on config-file assert"
 fi
 
 host_fixture uninstall
