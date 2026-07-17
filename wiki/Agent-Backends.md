@@ -154,14 +154,16 @@ use agentgear::{AgentBackend, Desired, PluginHost, Scope, Source};
 
 let plugin = MyHost::descriptor();
 MyHost::install(Scope::User, Source::Embedded)?; // the built-in agents
+let components = plugin.components(&Source::Embedded)?; // the parsed plugin IR
 MyToolBackend.reconcile(
     &plugin,
     &Desired { source: Source::Embedded, reenable: true },
     &Scope::User,
-)?; // yours
+)?; // yours, rendering from `components`
 ```
 
-Two limits today: the id registry is closed, so the derive's `agents = [...]` cannot name an
-external backend (it never joins `install`/`self_heal`'s locked, stamped fan-out), and the
-plugin-tree → components parser is crate-private, so an external backend reads the plugin tree
-itself.
+One limit today: the id registry is closed, so the derive's `agents = [...]` cannot name an
+external backend. It never joins the locked, stamped `install`/`self_heal` fan-out, so it
+reconciles beside that loop rather than inside it. Parsing is no longer a barrier:
+`Plugin::components(&source)` is public, so an external backend renders from the same IR the
+built-in backends do instead of walking the plugin tree itself.
