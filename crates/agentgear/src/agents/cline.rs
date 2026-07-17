@@ -8,7 +8,7 @@
 //! CC commands become cline **workflows** (markdown slash-commands) and CC hooks
 //! become cline's file-based **hooks** (a script named exactly after the event).
 //! These are scope-aware: user scope writes cline's global store under
-//! `~/Documents/Cline/{Workflows,Rules/Hooks}`; project scope writes the repo's
+//! `~/Documents/Cline/{Workflows,Hooks}`; project scope writes the repo's
 //! `.clinerules/{workflows,hooks}`. Only `UserPromptSubmit`/`PreToolUse`/
 //! `PostToolUse` have a 1:1 cline event; CC's `SessionStart` has no session-level
 //! analog (cline hooks are task-level) and is skipped. Subagents have no cline file
@@ -152,11 +152,16 @@ fn mcp_settings_path() -> Result<PathBuf> {
         .ok_or_else(|| Error::Tree("no home or config directory; cannot locate cline_mcp_settings.json".into()))
 }
 
-/// Where hook scripts go for a scope: cline's global `~/Documents/Cline/Rules/Hooks`
+/// Where hook scripts go for a scope: cline's global `~/Documents/Cline/Hooks`
 /// (user) or the repo's `.clinerules/hooks` (project). User scope needs HOME.
+///
+/// `Hooks` is a sibling of `Rules`, not a child: cline's own resolver scans
+/// `[~/Documents/Cline/Hooks, <CLINE_DIR|~/.cline>/hooks]` globally, so the
+/// `Rules/Hooks` this once wrote was never read. Of the two, the `Documents` root
+/// is the one no env var relocates, and it already holds our workflows.
 fn hooks_dir(scope: &Scope) -> Result<PathBuf> {
     match scope {
-        Scope::User => global_store().map(|s| s.join("Rules").join("Hooks")),
+        Scope::User => global_store().map(|s| s.join("Hooks")),
         Scope::Project { path } => Ok(path.join(".clinerules").join("hooks")),
     }
 }

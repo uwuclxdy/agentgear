@@ -39,6 +39,9 @@ struct Env {
     /// the backend picks when it already exists (it wins the migration merge).
     settings: PathBuf,
     workflow: PathBuf,
+    /// `~/Documents/Cline/Hooks/<Event>`: one of the two global dirs cline's own
+    /// `resolveHooksConfigSearchPaths` scans (`docs/research/verify-cline.md` #3).
+    /// A `Rules/` segment here would be silently inert.
     our_hook: PathBuf,
     foreign_hook: PathBuf,
     config: PathBuf,
@@ -61,8 +64,8 @@ impl Env {
         let env = Env {
             settings: root.join(".cline").join("data").join("settings").join("cline_mcp_settings.json"),
             workflow: global.join("Workflows").join("ez-fixture-plugin-hello.md"),
-            our_hook: global.join("Rules").join("Hooks").join("UserPromptSubmit"),
-            foreign_hook: global.join("Rules").join("Hooks").join("TaskStart"),
+            our_hook: global.join("Hooks").join("UserPromptSubmit"),
+            foreign_hook: global.join("Hooks").join("TaskStart"),
             config: root.join("config"),
             data: root.join("data"),
             run: root.join("run"),
@@ -163,6 +166,9 @@ fn cline_full_lifecycle() {
     // SessionStart has no cline analog: it must be skipped, not guessed onto an event.
     let hooks_dir = env.our_hook.parent().unwrap();
     assert!(!hooks_dir.join("SessionStart").exists(), "SessionStart was written despite having no cline analog");
+    // `Rules/Hooks` is a dir cline never scans: a hook written there is inert.
+    let unscanned = env.root.join("Documents").join("Cline").join("Rules").join("Hooks");
+    assert!(!unscanned.exists(), "hook written to a dir cline never scans: {}", unscanned.display());
     // the user's own TaskStart hook is untouched.
     assert_eq!(fs::read_to_string(&env.foreign_hook).unwrap(), SEED_FOREIGN_HOOK, "user's TaskStart hook was clobbered");
 
