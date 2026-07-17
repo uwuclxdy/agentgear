@@ -1,8 +1,9 @@
 //! Hermetic gemini-backend lifecycle, fully isolated from the real `~/.gemini`.
 //! No docker, no auth, no `gemini` binary: the backend only ever writes gemini's
 //! config files, so we drive `host_fixture setup --agent gemini` against a temp
-//! `HOME` (+ XDG dirs) and assert the written `settings.json` / command TOML by
-//! parsing them back. `detect()` passes off the pre-created `~/.gemini` dir alone.
+//! `HOME` (+ XDG dirs) and assert the written `settings.json` / command TOML /
+//! agent markdown by parsing them back. `detect()` passes off the pre-created
+//! `~/.gemini` dir alone.
 //!
 //! Every path the backend touches derives from `HOME`, which we point at a throwaway
 //! temp root — so proving our files land under that root (and the seeded user
@@ -100,8 +101,9 @@ fn gemini_full_lifecycle() {
     let env = Env::new("lifecycle");
     let cmd_dir = env.gemini.join("commands").join("ez-fixture-plugin");
     let cmd_file = cmd_dir.join("hello.toml");
+    let agent_file = env.gemini.join("agents").join("ez-fixture-plugin-ez-helper.md");
 
-    // install: translates mcp + hooks + commands into gemini's config.
+    // install: translates mcp + hooks + commands + agents into gemini's config.
     let (ok, out) = env.fixture(&["setup", "--agent", "gemini"]);
     assert!(ok, "setup failed: {out}");
     assert_eq!(out, "Installed", "first setup should install, got {out}");
@@ -145,8 +147,15 @@ fn gemini_full_lifecycle() {
     assert!(c.contains("Say hello"), "command body not translated to prompt:\n{c}");
     assert!(c.contains("fixture command"), "command description not translated:\n{c}");
 
+    // agents: rendered plugin-prefixed markdown with a namespaced name, no CC model alias.
+    assert!(agent_file.exists(), "agent markdown not written: {}", agent_file.display());
+    let a = fs::read_to_string(&agent_file).unwrap();
+    assert!(a.contains("name: ez-fixture-plugin-ez-helper"), "agent name not namespaced:\n{a}");
+    assert!(!a.contains("sonnet"), "the CC model alias must be dropped:\n{a}");
+    assert!(a.contains("fixture helper agent"), "agent body not translated:\n{a}");
+
     // safety: everything we wrote is under the throwaway temp root.
-    for p in [env.gemini.join("settings.json"), cmd_file.clone()] {
+    for p in [env.gemini.join("settings.json"), cmd_file.clone(), agent_file.clone()] {
         assert!(p.starts_with(&env.root), "backend wrote outside the temp root: {}", p.display());
     }
 
@@ -164,6 +173,7 @@ fn gemini_full_lifecycle() {
     assert!(s.contains("theirs") && s.contains("their-server"), "uninstall removed the seeded mcp server:\n{s}");
     assert!(s.contains("\"theme\"") && s.contains("dark"), "uninstall removed the seeded top-level key:\n{s}");
     assert!(!cmd_dir.exists(), "our command dir survived uninstall: {}", cmd_dir.display());
+    assert!(!agent_file.exists(), "our agent file survived uninstall: {}", agent_file.display());
 
     // the post-uninstall config still parses: a clean re-install lands again
     // (json_edit would error on an unparseable settings.json).

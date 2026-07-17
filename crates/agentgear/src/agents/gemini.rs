@@ -2,10 +2,13 @@
 //! through the shared json renderer (`~/.gemini/settings.json` `mcpServers`, Plain
 //! shape); hooks land in the same settings file under `hooks` with CC event names
 //! mapped to gemini's; commands become one TOML file each under a plugin-named
-//! subdir of `~/.gemini/commands/`. Everything we write is keyed by our plugin's
-//! server names or namespaced under `<plugin>/`, so `remove` is exact and a second
-//! reconcile is a true `NoOp`. Subagents/skills have no stable file surface here
-//! and are skipped (see `docs/harness/gemini.md`).
+//! subdir of `~/.gemini/commands/`; CC agents become plugin-prefixed
+//! `~/.gemini/agents/<plugin>-<name>.md` subagent files, gemini's stable general
+//! subagent-file schema (not the still-preview extension-bundled form — see
+//! `docs/harness/gemini.md`). Everything we write is keyed by our plugin's server
+//! names, namespaced under `<plugin>/`, or plugin-prefixed, so `remove` is exact
+//! and a second reconcile is a true `NoOp`. Skills have no stable file surface
+//! here and are skipped (see `docs/harness/gemini.md`).
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -15,7 +18,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::cchooks::{hook_is_portable, render_hook_group};
-use super::confedit::{json_edit, json_obj_at, write_file_idem};
+use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem, yaml_scalar};
 use super::mcpjson::{self, ServerShape};
 use super::report;
 use super::{AgentBackend, BackendState};
@@ -42,11 +45,11 @@ impl AgentBackend for GeminiBackend {
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
-        // Compose every surface (mcp + hooks in settings.json, command TOML files), so
-        // a missing command file or hook group behind a healthy mcp map reads
-        // NeedsRepair. `source` is the one self_heal resolved for this agent (rehydrated
-        // `--path`, else the compile-time default), so probe and reconcile render
-        // identical bytes.
+        // Compose every surface (mcp + hooks in settings.json, command + agent
+        // files), so a missing command/agent file or hook group behind a healthy
+        // mcp map reads NeedsRepair. `source` is the one self_heal resolved for
+        // this agent (rehydrated `--path`, else the compile-time default), so
+        // probe and reconcile render identical bytes.
         let comp = plugin.components(source)?;
         let base = gemini_dir(scope)?;
         let settings = base.join("settings.json");
@@ -54,7 +57,9 @@ impl AgentBackend for GeminiBackend {
         let hooks = report::probe_json_entries(&settings, &hook_entries(&comp.hooks))?;
         let cmd_root = base.join("commands").join(plugin.name);
         let commands = report::probe_files(&expected_commands(&cmd_root, &comp.commands), |_, _| true)?;
-        Ok(report::compose([mcp, hooks, commands].into_iter().flatten()))
+        let agent_root = base.join("agents");
+        let agents = report::probe_files(&expected_agents(&agent_root, plugin.name, &comp.agents), |_, _| true)?;
+        Ok(report::compose([mcp, hooks, commands, agents].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -70,6 +75,12 @@ impl AgentBackend for GeminiBackend {
         for doc in &comp.commands {
             let path = cmd_root.join(command_rel(doc));
             changed |= write_file_idem(&path, render_command_toml(doc).as_bytes())?;
+        }
+        // Agents share `agents/` with the user's own, so we write plugin-prefixed
+        // files (never a subtree we could confuse with theirs).
+        let agent_root = base.join("agents");
+        for doc in &comp.agents {
+            changed |= write_file_idem(&agent_root.join(agent_file(plugin.name, doc)), render_agent(plugin.name, doc).as_bytes())?;
         }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
@@ -89,6 +100,11 @@ impl AgentBackend for GeminiBackend {
         if cmd_root.exists() {
             fs::remove_dir_all(&cmd_root).io_ctx(|| format!("removing {}", cmd_root.display()))?;
             changed = true;
+        }
+        // Agent files are plugin-prefixed in a shared dir, so delete only ours by name.
+        let agent_root = base.join("agents");
+        for doc in &comp.agents {
+            changed |= remove_file_idem(&agent_root.join(agent_file(plugin.name, doc)))?;
         }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
@@ -152,6 +168,50 @@ fn hook_entries(hooks: &[HookBinding]) -> Vec<(Vec<String>, Value)> {
 /// keyed off the same `command_rel` + `render_command_toml` `reconcile` writes.
 fn expected_commands(cmd_root: &Path, commands: &[MarkdownDoc]) -> Vec<(PathBuf, Vec<u8>)> {
     commands.iter().map(|doc| (cmd_root.join(command_rel(doc)), render_command_toml(doc).into_bytes())).collect()
+}
+
+// --- agents --------------------------------------------------------------------
+
+/// `agents/ez-helper.md` -> `<plugin>-ez-helper.md` (a nested path flattens). The
+/// plugin prefix keeps the file identifiable as ours for an exact `remove` and
+/// clear of a user's own agent of the same stem.
+fn agent_file(plugin: &str, doc: &MarkdownDoc) -> String {
+    format!("{plugin}-{}.md", flat_stem(&doc.rel, "agents/"))
+}
+
+fn flat_stem(rel: &str, prefix: &str) -> String {
+    let stripped = rel.strip_prefix(prefix).unwrap_or(rel);
+    let stem = stripped.strip_suffix(".md").unwrap_or(stripped);
+    stem.replace(['/', '\\'], "-")
+}
+
+/// Render a CC agent def as a gemini subagent file: gemini's stable general
+/// subagent schema requires `name` (a slug) + `description` in YAML frontmatter
+/// (docs/harness/gemini.md); the optional fields (`kind`/`tools`/`mcpServers`/
+/// `model`/`temperature`/`max_turns`/`timeout_mins`) are left to gemini's own
+/// defaults since the CC IR carries none of them. `name` is plugin-prefixed so two
+/// plugins' agents never collide (gemini keys subagents by frontmatter `name`, not
+/// filename). The CC `model` alias (`sonnet`/`opus`/`haiku`) is dropped — those
+/// are not gemini model ids and gemini has no portable `inherit` sentinel, so the
+/// subagent falls back to gemini's default model. The body (the system prompt)
+/// copies through verbatim. Deterministic so a re-reconcile is byte-identical.
+fn render_agent(plugin: &str, doc: &MarkdownDoc) -> String {
+    let name = doc.frontmatter.get("name").and_then(Value::as_str).unwrap_or(doc.name.as_str());
+    let mut out = String::from("---\n");
+    let _ = writeln!(out, "name: {}", yaml_scalar(&format!("{plugin}-{name}")));
+    if let Some(desc) = doc.frontmatter.get("description").and_then(Value::as_str) {
+        let _ = writeln!(out, "description: {}", yaml_scalar(desc));
+    }
+    out.push_str("---\n\n");
+    out.push_str(doc.body.trim());
+    out.push('\n');
+    out
+}
+
+/// The `(path, rendered bytes)` agent files `probe` compares against disk, keyed
+/// off the same `agent_file` + `render_agent` `reconcile` writes.
+fn expected_agents(agent_root: &Path, plugin: &str, agents: &[MarkdownDoc]) -> Vec<(PathBuf, Vec<u8>)> {
+    agents.iter().map(|doc| (agent_root.join(agent_file(plugin, doc)), render_agent(plugin, doc).into_bytes())).collect()
 }
 
 /// Add-if-absent our hook groups under each mapped event, leaving the user's own
@@ -287,6 +347,7 @@ fn report_checks(backend: &GeminiBackend, plugin: &Plugin, source: &Source) -> V
     ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_commands_present(&comp.commands, &base.join("commands").join(plugin.name)));
+    checks.push(check_agents_present(&comp.agents, &base.join("agents"), plugin.name));
 
     checks
 }
@@ -304,6 +365,25 @@ fn check_commands_present(commands: &[MarkdownDoc], cmd_root: &Path) -> DoctorCh
             name,
             status: CheckStatus::Fail {
                 problem: format!("command file(s) missing: {}", missing.join(", ")),
+                fix: "run the host's `setup`".into(),
+            },
+        }
+    }
+}
+
+fn check_agents_present(agents: &[MarkdownDoc], agent_root: &Path, plugin: &str) -> DoctorCheck {
+    let name = "translated agents present";
+    if agents.is_empty() {
+        return DoctorCheck { name, status: CheckStatus::Ok("no agents to translate".into()) };
+    }
+    let missing: Vec<String> = agents.iter().map(|d| agent_file(plugin, d)).filter(|f| !agent_root.join(f).exists()).collect();
+    if missing.is_empty() {
+        DoctorCheck { name, status: CheckStatus::Ok(format!("{} agent file(s) present", agents.len())) }
+    } else {
+        DoctorCheck {
+            name,
+            status: CheckStatus::Fail {
+                problem: format!("agent file(s) missing: {}", missing.join(", ")),
                 fix: "run the host's `setup`".into(),
             },
         }
