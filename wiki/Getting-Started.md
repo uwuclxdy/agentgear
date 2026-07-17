@@ -87,7 +87,7 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-`install` takes any `Source`: `Source::Embedded` decompresses the baked blob, `Source::Path(dir)` materializes an on-disk tree, `Source::GitHub { repo, .. }` installs from a GitHub repo (today it tracks that repo's default branch — `ref_` is carried but not yet passed to the CLI). The recurring `self_heal`/`update`/`doctor` resolve against the `default_source` attr (which is `embedded` or `github`, never a runtime path), so `Source::Path` is a one-off install source rather than a host's steady state.
+`install` takes any `Source`: `Source::Embedded` decompresses the baked blob, `Source::Path(dir)` materializes an on-disk tree, `Source::GitHub { repo, ref_ }` installs from a GitHub marketplace pinned to `ref_` (sent to the CLI as `{repo}@{ref_}`; the default `ref_` is the `v{version}` tag). `self_heal`/`update`/`doctor` resolve `Source::Embedded`/`Source::GitHub` against the `default_source` attr and rehydrate a `Source::Path` install from its stamp marker, so a `--path` install stays path-sourced across repair instead of drifting back to the baked blob.
 
 Point the plugin's hooks at subcommands. The `SessionStart` hook calls `MyHost::self_heal()`, a no-op on a healthy install that repairs a broken one without resurrecting an uninstall. The `UserPromptSubmit` hook calls a `check-restart` subcommand wrapping `MyHost::restart_pending()`: after an out-of-band `setup update`, it prints a notice that the running session still has the old plugin loaded and needs a `/reload-plugins`. Claude Code does not hot-reload plugin hooks, so ship the `UserPromptSubmit` hook from your first release. It fires from whatever version the running session already has. Both hooks live in `hooks/hooks.json` at the plugin root:
 
