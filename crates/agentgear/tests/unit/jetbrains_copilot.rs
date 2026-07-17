@@ -27,6 +27,24 @@ fn read(path: &std::path::Path) -> serde_json::Value {
 }
 
 #[test]
+fn remote_renders_type_and_url_with_no_flat_headers_key() {
+    let http = McpServer {
+        name: "h".into(),
+        kind: McpKind::Http { url: "https://x/mcp".into() },
+        command: String::new(),
+        args: vec![],
+        env: BTreeMap::new(),
+    };
+    let sse = McpServer { name: "s".into(), kind: McpKind::Sse { url: "https://x/sse".into() }, ..http.clone() };
+    // The plugin's bundled MCP SDK reads outgoing fetch headers ONLY from
+    // `requestInit.headers`; a top-level `headers` key is silently ignored, so the
+    // render must never carry one. The IR has no headers yet — when it gains them,
+    // this dialect nests them under `requestInit.headers`, nowhere else.
+    assert_eq!(mcpjson::render_server(&http, super::SHAPE).unwrap(), serde_json::json!({"type":"http","url":"https://x/mcp"}));
+    assert_eq!(mcpjson::render_server(&sse, super::SHAPE).unwrap(), serde_json::json!({"type":"sse","url":"https://x/sse"}));
+}
+
+#[test]
 fn reconcile_writes_servers_key_with_typed_stdio_shape() {
     let path = scratch("mcp.json");
     let servers = [server("ez-fixture", "host_fixture")];

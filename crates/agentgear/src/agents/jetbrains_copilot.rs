@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use super::mcpjson::{self, ServerShape};
+use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::{AgentBackend, BackendState};
 use crate::components::{McpKind, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -28,7 +28,9 @@ pub(crate) struct JetbrainsCopilotBackend;
 /// mcp.json nests servers under a bare `servers` object (not VS Code's / CC's
 /// `mcpServers`); stdio entries carry an explicit `"type":"stdio"`.
 const MCP_KEY: &[&str] = &["servers"];
-const SHAPE: ServerShape = ServerShape::typed();
+// Remote entries are `{type, url}`: the bundled MCP SDK reads fetch headers only
+// from `requestInit.headers`, so a flat `headers` key is never written.
+const SHAPE: ServerShape = ServerShape::typed().with_remote(RemoteShape::TypeUrl);
 
 impl AgentBackend for JetbrainsCopilotBackend {
     fn id(&self) -> &'static str {

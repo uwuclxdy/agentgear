@@ -53,6 +53,11 @@ pub(crate) enum RemoteShape {
     /// writer then rewrites the stored key (permanent probe churn), so sse is
     /// skipped rather than written with a silently wrong transport.
     TypeUrlHeadersHttpOnly,
+    /// `{type, url}` with no flat `headers` key — jetbrains-copilot, whose bundled
+    /// MCP SDK reads outgoing fetch headers ONLY from `requestInit.headers` (a
+    /// top-level `headers` is silently ignored). The IR carries no headers yet;
+    /// when it does, this dialect nests them under `requestInit.headers`.
+    TypeUrl,
 }
 
 #[derive(Clone, Copy)]
@@ -137,6 +142,10 @@ fn remote(shape: RemoteShape, kind: &str, url: &str) -> Option<Value> {
             }
             obj.insert("url".into(), Value::from(url));
             obj.insert("headers".into(), Value::Object(Map::new()));
+        }
+        RemoteShape::TypeUrl => {
+            obj.insert("type".into(), Value::from(kind));
+            obj.insert("url".into(), Value::from(url));
         }
     }
     Some(Value::Object(obj))
