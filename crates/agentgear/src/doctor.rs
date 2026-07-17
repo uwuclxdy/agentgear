@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::cli::{ClaudeCli, MIN_CLAUDE_VERSION, parse_version};
 use crate::error::Result;
-use crate::host::{Plugin, Source, data_root};
+use crate::host::{Plugin, Scope, Source, data_root};
 use crate::materialize::{dir_hash, tree_hash};
 
 const FLOOR: (u64, u64, u64) = (2, 1, 196);
@@ -88,7 +88,12 @@ pub(crate) fn doctor(plugin: &Plugin, source: &Source) -> Result<DoctorReport> {
     for id in plugin.agents {
         let backend = crate::install::resolve(id)?;
         if backend.detect() {
-            checks.extend(backend.report(plugin, source).checks);
+            // This agent's OWN marker settles its source (never a sibling's — the
+            // per-agent-marker invariant); `source` is the caller's `DEFAULT_SOURCE`.
+            // `doctor` (like self_heal) has no scope of its own, so it keys on the
+            // same user-scope marker self_heal writes.
+            let resolved = crate::stamp::resolve_source(plugin, &Scope::User, id, source.clone());
+            checks.extend(backend.report(plugin, &resolved).checks);
         } else {
             // A declared harness that isn't installed here is not a failure: it is
             // simply not this host's concern, exactly as install/self_heal skip it.
