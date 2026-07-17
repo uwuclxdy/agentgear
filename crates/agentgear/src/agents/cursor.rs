@@ -47,12 +47,13 @@ impl AgentBackend for CursorBackend {
         Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user", "project"] }
     }
 
-    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
         // Compose every surface (mcp.json, hooks.json, command + agent files), so a
         // dropped hook entry or missing command/agent behind a healthy mcp.json reads
-        // NeedsRepair. Source::Embedded is the only steady-state source for a non-CC
-        // backend (github unsupported, path install-only).
-        let comp = plugin.components(&Source::Embedded)?;
+        // NeedsRepair. `source` is the one self_heal resolved for this agent (rehydrated
+        // `--path`, else the compile-time default), so probe and reconcile render
+        // identical bytes.
+        let comp = plugin.components(source)?;
         let base = cursor_dir(scope)?;
         let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::typed())?;
         let hooks = report::probe_json_entries(&base.join("hooks.json"), &hook_entries(&comp.hooks))?;

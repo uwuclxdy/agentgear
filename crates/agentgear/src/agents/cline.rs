@@ -61,13 +61,13 @@ impl AgentBackend for ClineBackend {
         Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user", "project"] }
     }
 
-    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
         // Compose every surface (global mcp, scope-aware file hooks + workflows), so a
         // deleted hook script or workflow behind a healthy mcp file reads NeedsRepair.
-        // MCP is global regardless of scope; hooks/workflows are scope-aware.
-        // Source::Embedded is the only steady-state source for a non-CC backend (github
-        // unsupported, path install-only).
-        let comp = plugin.components(&Source::Embedded)?;
+        // MCP is global regardless of scope; hooks/workflows are scope-aware. `source`
+        // is the one self_heal resolved for this agent (rehydrated `--path`, else the
+        // compile-time default), so probe and reconcile render identical bytes.
+        let comp = plugin.components(source)?;
         let mcp = mcpjson::probe_surface(&mcp_settings_path()?, &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let hooks = probe_hooks(&hooks_dir(scope)?, plugin.name, &comp.hooks)?;
         let commands = probe_workflows(&workflows_dir(scope)?, plugin.name, &comp.commands)?;

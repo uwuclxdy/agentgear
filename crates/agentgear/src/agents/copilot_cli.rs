@@ -53,13 +53,13 @@ impl AgentBackend for CopilotCliBackend {
         Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user"] }
     }
 
-    fn probe(&self, plugin: &Plugin, _scope: &Scope) -> Result<BackendState> {
+    fn probe(&self, plugin: &Plugin, _scope: &Scope, source: &Source) -> Result<BackendState> {
         // Compose every surface (bespoke mcp, the plugin-owned hooks file, agent
         // files), so a missing hooks file or agent behind a healthy mcp-config.json
-        // reads NeedsRepair. User-scope only, so scope is unused. Source::Embedded is
-        // the only steady-state source for a non-CC backend (github unsupported, path
-        // install-only).
-        let comp = plugin.components(&Source::Embedded)?;
+        // reads NeedsRepair. User-scope only, so scope is unused. `source` is the one
+        // self_heal resolved for this agent (rehydrated `--path`, else the compile-time
+        // default), so probe and reconcile render identical bytes.
+        let comp = plugin.components(source)?;
         let home = copilot_home()?;
         let mcp = if comp.mcp_servers.iter().any(|s| s.is_portable()) {
             Some(probe_mcp(&home.join("mcp-config.json"), &comp.mcp_servers)?)

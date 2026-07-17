@@ -50,12 +50,13 @@ impl AgentBackend for DroidBackend {
         Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user", "project"] }
     }
 
-    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
         // Compose every surface (mcp.json, hooks.json, command + custom-droid files), so
         // a dropped hook group or missing command/droid behind a healthy mcp.json reads
-        // NeedsRepair. Source::Embedded is the only steady-state source for a non-CC
-        // backend (github unsupported, path install-only).
-        let comp = plugin.components(&Source::Embedded)?;
+        // NeedsRepair. `source` is the one self_heal resolved for this agent (rehydrated
+        // `--path`, else the compile-time default), so probe and reconcile render
+        // identical bytes.
+        let comp = plugin.components(source)?;
         let base = factory_dir(scope)?;
         let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
         let hooks = report::probe_json_entries(&base.join("hooks.json"), &hook_entries(&comp.hooks))?;

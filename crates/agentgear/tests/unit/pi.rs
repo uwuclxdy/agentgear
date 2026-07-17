@@ -54,7 +54,7 @@ fn detection_gate_follows_the_resolved_dir() {
 fn probe_is_always_healthy() {
     // No surface can drift, so probe never returns Absent (which would drop a
     // present marker in self_heal).
-    let state = PiBackend.probe(&plugin(), &Scope::User).unwrap();
+    let state = PiBackend.probe(&plugin(), &Scope::User, &Source::Embedded).unwrap();
     assert!(matches!(state, BackendState::Healthy));
 }
 

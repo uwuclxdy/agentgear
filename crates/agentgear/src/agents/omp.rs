@@ -52,12 +52,12 @@ impl AgentBackend for OmpBackend {
         Capabilities { plugins: false, mcp: true, hooks: false, scopes: &["user", "project"] }
     }
 
-    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
         // Compose every surface (mcp + the command/agent markdown files), so a missing
-        // command or agent file behind a healthy mcp.json reads NeedsRepair.
-        // Source::Embedded is the only steady-state source for a non-CC backend (github
-        // unsupported, path install-only).
-        let comp = plugin.components(&Source::Embedded)?;
+        // command or agent file behind a healthy mcp.json reads NeedsRepair. `source`
+        // is the one self_heal resolved for this agent (rehydrated `--path`, else the
+        // compile-time default), so probe and reconcile render identical bytes.
+        let comp = plugin.components(source)?;
         let base = surface_base(scope)?;
         let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
         let commands = report::probe_files(

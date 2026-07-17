@@ -57,12 +57,13 @@ impl AgentBackend for CrushBackend {
         Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user", "project"] }
     }
 
-    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
         // Compose the two surfaces sharing crush.json (mcp + PreToolUse hooks): a
         // dropped hook entry behind a healthy mcp map now reads NeedsRepair instead of
-        // Healthy. Source::Embedded is the only steady-state source for a non-CC
-        // backend (github unsupported, path install-only).
-        let comp = plugin.components(&Source::Embedded)?;
+        // Healthy. `source` is the one self_heal resolved for this agent (rehydrated
+        // `--path`, else the compile-time default), so probe and reconcile render
+        // identical bytes.
+        let comp = plugin.components(source)?;
         let config = config_file(scope)?;
         let mcp = mcpjson::probe_surface(&config, &["mcp"], &comp.mcp_servers, ServerShape::typed())?;
         let hooks = report::probe_json_entries(&config, &hook_entries(&comp.hooks))?;

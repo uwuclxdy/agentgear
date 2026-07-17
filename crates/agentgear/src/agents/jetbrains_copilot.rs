@@ -58,12 +58,13 @@ impl AgentBackend for JetbrainsCopilotBackend {
         Capabilities { plugins: false, mcp: true, hooks: false, scopes: &["user"] }
     }
 
-    fn probe(&self, plugin: &Plugin, _scope: &Scope) -> Result<BackendState> {
-        // Ownership is our mcp server keys. Source::Embedded is the only steady-state
-        // source for a non-CC backend (github unsupported, path install-only); the shared
-        // probe returns Healthy — never Absent — for a plugin with no portable servers, so
-        // a present marker is never dropped.
-        let comp = plugin.components(&Source::Embedded)?;
+    fn probe(&self, plugin: &Plugin, _scope: &Scope, source: &Source) -> Result<BackendState> {
+        // Ownership is our mcp server keys; the shared probe returns Healthy — never
+        // Absent — for a plugin with no portable servers, so a present marker is never
+        // dropped. `source` is the one self_heal resolved for this agent (rehydrated
+        // `--path`, else the compile-time default), so probe and reconcile render
+        // identical bytes.
+        let comp = plugin.components(source)?;
         mcpjson::probe(&mcp_path()?, MCP_KEY, &comp.mcp_servers, SHAPE)
     }
 

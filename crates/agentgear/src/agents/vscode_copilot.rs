@@ -61,14 +61,14 @@ impl AgentBackend for VscodeCopilotBackend {
         Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["project"] }
     }
 
-    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
         // Compose every surface (mcp under `servers`, the plugin-owned hooks file,
         // agent files), so a deleted hook file or agent behind a healthy mcp.json reads
-        // NeedsRepair. Project-scope only (`project_root` rejects User). Source::Embedded
-        // is the only steady-state source for a non-CC backend (github unsupported, path
-        // install-only).
+        // NeedsRepair. Project-scope only (`project_root` rejects User). `source` is the
+        // one self_heal resolved for this agent (rehydrated `--path`, else the
+        // compile-time default), so probe and reconcile render identical bytes.
         let root = project_root(scope)?;
-        let comp = plugin.components(&Source::Embedded)?;
+        let comp = plugin.components(source)?;
         let mcp = mcpjson::probe_surface(&mcp_path(root), MCP_KEY, &comp.mcp_servers, SHAPE)?;
         let hooks = probe_hooks(&hooks_path(root, plugin.name), &comp.hooks)?;
         let agents = report::probe_files(&expected_agents(&agents_dir(root), plugin.name, &comp.agents), |_, _| true)?;

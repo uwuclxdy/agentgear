@@ -29,7 +29,9 @@ impl AgentBackend for ClaudeBackend {
 
     /// The classification self_heal keys on: disabled beats broken beats stale.
     /// Mirrors selfheal.rs's inline logic (moved here so pass B can delegate to it).
-    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
+    fn probe(&self, plugin: &Plugin, scope: &Scope, _source: &Source) -> Result<BackendState> {
+        // CLI-based: the `claude plugin` registry is the source of truth, so the
+        // resolved `source` (materialize's input) never enters this probe.
         let cli = ClaudeCli::locate()?;
         let Some(entry) = find_plugin(&cli, scope, plugin.name, plugin.marketplace)? else {
             return Ok(BackendState::Absent);

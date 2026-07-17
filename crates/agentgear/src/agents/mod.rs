@@ -136,7 +136,10 @@ pub trait AgentBackend {
     /// What this agent can host (plugins / mcp / hooks / scopes).
     fn capabilities(&self) -> Capabilities;
     /// Classify this plugin's current state for the agent (self_heal's input).
-    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState>;
+    /// `source` is the one self_heal already resolved for this agent (a rehydrated
+    /// `--path`, else the compile-time default), so probe renders each surface from
+    /// exactly the bytes `reconcile` would write — never a divergent embedded blob.
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState>;
     /// Idempotent converge to `desired` at `scope`.
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome>;
     /// Undo the install (does not touch the stamp marker; the caller owns that).

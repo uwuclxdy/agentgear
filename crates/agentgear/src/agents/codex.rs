@@ -46,13 +46,14 @@ impl AgentBackend for CodexBackend {
         Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user", "project"] }
     }
 
-    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
         // Compose every surface (mcp toml, hooks.json, prompt + agent files), so a
         // dropped hook group or missing prompt/agent behind a healthy `[mcp_servers]`
         // reads NeedsRepair. (A codex hook is inert until trusted via `/hooks`, but the
-        // FILE presence is still what reconcile converges.) Source::Embedded is the only
-        // steady-state source for a non-CC backend (github unsupported, path install-only).
-        let comp = plugin.components(&Source::Embedded)?;
+        // FILE presence is still what reconcile converges.) `source` is the one self_heal
+        // resolved for this agent (rehydrated `--path`, else the compile-time default),
+        // so probe and reconcile render identical bytes.
+        let comp = plugin.components(source)?;
         let base = codex_base(scope)?;
         let mcp = mcptoml::probe_surface(&base.join("config.toml"), &comp.mcp_servers)?;
         let hooks = report::probe_json_entries(&base.join("hooks.json"), &hook_entries(&comp.hooks))?;

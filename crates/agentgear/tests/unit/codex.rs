@@ -93,3 +93,53 @@ fn toml_basic_string_escapes_del() {
     let doc: toml_edit::DocumentMut = format!("x = {rendered}").parse().unwrap();
     assert_eq!(doc["x"].as_str().unwrap(), "a\u{7F}b");
 }
+
+/// Regression: `probe` must render from the SAME resolved source `reconcile` used,
+/// not a hardcoded `Source::Embedded`. self_heal rehydrates a `--path` install's
+/// source from its marker (`stamp::source_from_marker`), so a probe keying on the
+/// embedded blob would (a) misclassify a healthy `--path` install as perpetual
+/// `NeedsRepair` when the tree differs from the blob, and (b) ERROR outright on a
+/// zero-embed host (empty blob). This drives a zero-embed plugin (`blob: &[]`) so the
+/// old `plugin.components(&Source::Embedded)` fails hard, making the mutation red.
+#[test]
+fn probe_renders_from_the_resolved_source_not_the_embedded_blob() {
+    use crate::agents::{AgentBackend, BackendState};
+    use crate::host::{Desired, Plugin, Scope, Source};
+
+    // A minimal multi-surface plugin TREE on disk (the `--path` source).
+    let src = std::env::temp_dir().join(format!("ez-codex-probe-src-{:016x}", fastrand::u64(..)));
+    std::fs::create_dir_all(src.join(".claude-plugin")).unwrap();
+    std::fs::create_dir_all(src.join("hooks")).unwrap();
+    std::fs::create_dir_all(src.join("commands")).unwrap();
+    std::fs::create_dir_all(src.join("agents")).unwrap();
+    std::fs::write(
+        src.join(".claude-plugin").join("plugin.json"),
+        r#"{"name":"ez-probe-src","version":"0.1.0","mcpServers":{"srv":{"command":"echo","args":["hi"]}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("hooks").join("hooks.json"),
+        r#"{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"echo up"}]}]}}"#,
+    )
+    .unwrap();
+    std::fs::write(src.join("commands").join("hello.md"), "# Hello\n\nsay hi\n").unwrap();
+    std::fs::write(src.join("agents").join("helper.md"), "---\nname: helper\ndescription: helps\n---\n\nbody\n").unwrap();
+
+    // Zero-embed: `blob` is empty, so `Source::Embedded` errors at materialize.
+    let plugin = Plugin { name: "ez-probe-src", marketplace: "ez-mkt", version: "0.1.0", agents: &["codex"], blob: &[] };
+    let project = std::env::temp_dir().join(format!("ez-codex-probe-dst-{:016x}", fastrand::u64(..)));
+    let scope = Scope::Project { path: project.clone() };
+    let source = Source::Path(src.clone());
+
+    // Converge every surface from the path tree.
+    super::CodexBackend.reconcile(&plugin, &Desired { source: source.clone(), reenable: true }, &scope).unwrap();
+
+    // Probe against the SAME resolved source must read Healthy (no churn). The old
+    // `Source::Embedded` probe would error here (empty blob) or, with a divergent
+    // tree, spuriously read NeedsRepair.
+    let state = super::CodexBackend.probe(&plugin, &scope, &source).unwrap();
+    assert!(matches!(state, BackendState::Healthy), "a path-sourced install must probe Healthy, not churn");
+
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&project);
+}

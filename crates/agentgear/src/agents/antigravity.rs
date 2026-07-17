@@ -50,13 +50,13 @@ impl AgentBackend for AntigravityBackend {
         Capabilities { plugins: false, mcp: true, hooks: false, scopes: &["user"] }
     }
 
-    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
         // Ownership is defined by our mcp server keys (the canonical "are we here"
         // signal); the shared probe returns Healthy — never Absent — for an mcp-less
-        // plugin, so a present marker is never dropped. Source::Embedded is the only
-        // steady-state source for a non-CC backend (github unsupported, path is
-        // install-only), mirroring the gemini/claude probe keying on compile-time metadata.
-        let comp = plugin.components(&Source::Embedded)?;
+        // plugin, so a present marker is never dropped. `source` is the one self_heal
+        // resolved for this agent (rehydrated `--path`, else the compile-time default),
+        // so probe and reconcile render identical bytes.
+        let comp = plugin.components(source)?;
         let mcp = mcp_config(scope)?;
         mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, SHAPE)
     }

@@ -68,13 +68,13 @@ impl AgentBackend for GooseBackend {
         Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user"] }
     }
 
-    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
         // Compose the two surfaces (mcp extensions + the plugin-owned hooks.json), so
         // a missing hooks file behind healthy extensions reads NeedsRepair. `probe_mcp`
         // still carries the Disabled classification for a user-flipped `enabled:false`.
-        // Source::Embedded is the only steady-state source for a non-CC backend (github
-        // unsupported, path install-only).
-        let comp = plugin.components(&Source::Embedded)?;
+        // `source` is the one self_heal resolved for this agent (rehydrated `--path`,
+        // else the compile-time default), so probe and reconcile render identical bytes.
+        let comp = plugin.components(source)?;
         let mcp = if comp.mcp_servers.iter().any(is_writable) { Some(probe_mcp(&config_yaml()?, &comp.mcp_servers)?) } else { None };
         let hooks = probe_hooks(&hooks_json_path(scope, plugin.name)?, &comp.hooks)?;
         Ok(report::compose([mcp, hooks].into_iter().flatten()))

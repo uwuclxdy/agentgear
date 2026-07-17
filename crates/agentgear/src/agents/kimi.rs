@@ -54,12 +54,12 @@ impl AgentBackend for KimiBackend {
         Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user"] }
     }
 
-    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
         // Compose the two surfaces (mcp.json + the `[[hooks]]` array in config.toml),
         // so a stripped hook table behind a healthy mcp.json reads NeedsRepair.
-        // Source::Embedded is the only steady-state source for a non-CC backend (github
-        // unsupported, path install-only).
-        let comp = plugin.components(&Source::Embedded)?;
+        // `source` is the one self_heal resolved for this agent (rehydrated `--path`,
+        // else the compile-time default), so probe and reconcile render identical bytes.
+        let comp = plugin.components(source)?;
         let base = kimi_base(scope)?;
         let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let hooks = probe_hooks(&base.join("config.toml"), &comp.hooks)?;

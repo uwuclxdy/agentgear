@@ -38,7 +38,7 @@ impl AgentBackend for PiBackend {
         Capabilities { plugins: false, mcp: false, hooks: false, scopes: &["user"] }
     }
 
-    fn probe(&self, _plugin: &Plugin, _scope: &Scope) -> Result<BackendState> {
+    fn probe(&self, _plugin: &Plugin, _scope: &Scope, _source: &Source) -> Result<BackendState> {
         // Nothing is ever written, so nothing can drift or break -> always Healthy.
         // An Absent here would make self_heal drop a present marker for a host where
         // pi is installed; Healthy keeps it (never-resurrect and never-re-enable both

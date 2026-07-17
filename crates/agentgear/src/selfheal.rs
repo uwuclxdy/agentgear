@@ -52,11 +52,14 @@ pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
 /// CC-only restart flag; convergence delegates to the backend's `reconcile`.
 fn heal_agent(backend: &dyn AgentBackend, plugin: &Plugin, source: &Source, scope: &Scope, is_claude: bool) -> Result<Outcome> {
     let marker = stamp::read(plugin, scope, backend.id())?;
-    let state = backend.probe(plugin, scope)?;
     // This agent's OWN marker settles its source (never a sibling's — the
     // per-agent-marker invariant); `source` is the caller's `DEFAULT_SOURCE`,
     // used only absent a persisted `--path` for this specific agent.
     let resolved_source = stamp::source_from_marker(marker.as_ref(), source.clone());
+    // Probe against the SAME source `reconcile` (below) will render from, so a
+    // `--path` install whose tree differs from the embedded blob does not read as
+    // perpetual drift (probe wanting embedded bytes, reconcile writing path bytes).
+    let state = backend.probe(plugin, scope, &resolved_source)?;
     // self_heal never re-enables a deliberate disable (the design's install-only
     // enable flip); adopt/repair both converge without touching enable state.
     let desired = Desired { source: resolved_source, reenable: false };
