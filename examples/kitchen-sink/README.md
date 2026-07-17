@@ -29,7 +29,7 @@ seven harnesses (`claude` plus six non-CC backends). See
 | `plugin/hooks/hooks.json` | `SessionStart` -> `self-heal`, `UserPromptSubmit` -> `check-restart` |
 | `plugin/commands/greet.md` | one slash command |
 | `plugin/agents/reviewer.md` | one subagent |
-| `plugin/skills/demo/SKILL.md` | one skill (Claude Code only; no non-CC backend translates skills yet) |
+| `plugin/skills/demo/SKILL.md` | one skill; now translated by the skills-capable backends here (cursor/crush/goose), tag-owned in each `skills/` root |
 | `src/main.rs` | `setup` / `update` / `uninstall` / `self-heal` / `check-restart` / `doctor` / `mcp` |
 | `tests/lifecycle.rs` | hermetic gemini + crush install/uninstall against a temp `HOME`, each including the merge-safety case |
 
