@@ -105,9 +105,10 @@ Per-backend hook notes:
 - **kiro**: hooks are declared unsupported. kiro hosts hooks only inside user-owned per-agent
   config files, and its run-default agent is a setting rather than a file, so there is no target
   agentgear can own without editing the user's agent definitions.
-- **antigravity-cli**: the user-scope file lands outside the tool's only customization root, and
-  `agentSpawn`/`BeforeAgent` are not legal event names there. User-scope antigravity-cli hooks do
-  not fire (known limitation).
+- **antigravity-cli**: only five event names are legal (`PreToolUse`, `PostToolUse`,
+  `PreInvocation`, `PostInvocation`, `Stop`), so CC's `SessionStart` is skipped and
+  `UserPromptSubmit` lands on `PreInvocation`. The two tool events take a grouped
+  `{matcher, hooks:[…]}` wrapper; a matcher-less CC hook groups under `*`.
 
 ## MCP shapes
 

@@ -49,7 +49,7 @@ system; a dash means agentgear skips it rather than writing it under a guessed n
 | crush | - | - | Y | - |
 | droid | Y | Y | Y | Y |
 | augment\*\* | Y | - | Y | Y |
-| antigravity-cli\* | Y (`BeforeAgent`) | Y | Y | Y |
+| antigravity-cli | - | Y (`PreInvocation`) | Y | Y |
 
 crush is the one harness that skips most of this plugin's surface outright. It
 defines exactly one hook event (`PreToolUse`), so only `guard` lands there.
@@ -57,13 +57,12 @@ defines exactly one hook event (`PreToolUse`), so only `guard` lands there.
 That is the real, verified shape of crush's own hook engine
 (`docs/research/verify-crush.md`), not a translation gap.
 
-\* antigravity-cli has known landing bugs tracked in `docs/todo.md` §0: two
-illegal event names plus a wrong target file. The `Y`s above are what each
-backend's `map_event` currently translates to, not proof the hook actually
-fires yet. This example's hermetic tests only exercise codex/gemini/kimi/crush,
-so antigravity-cli does not land in `tests/lifecycle.rs`. (kiro left this table
-2026-07-17: its only hook surface is a user-owned per-agent config, so the kiro
-backend now declares hooks unsupported.)
+A `Y` is what a backend's `map_event` translates to, not proof the hook fires in
+a live session: several harnesses need auth this example's tests do not have.
+Every name written is one the harness's own docs or binary carry, though, so a
+`Y` never means a guessed event. (kiro left this table 2026-07-17: its only hook
+surface is a user-owned per-agent config, so the kiro backend now declares hooks
+unsupported.)
 
 \*\* augment currently drops `UserPromptSubmit` outright (`docs/todo.md` §0: it
 has a live `PromptSubmit` analog the backend does not map yet).
