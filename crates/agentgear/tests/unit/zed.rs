@@ -29,6 +29,23 @@ fn stdio(name: &str, command: &str, args: &[&str]) -> McpServer {
     }
 }
 
+/// Linux/FreeBSD only: an absolute XDG value wins, a relative/absent one falls
+/// back to `~/.config`. macOS deliberately has no counterpart here — zed hardcodes
+/// `~/.config/zed` there and consults no env, so its arm takes no XDG input at all
+/// (enforced by the type: `user_config_dir`'s macOS branch never reads the var).
+#[cfg(not(any(windows, target_os = "macos")))]
+#[test]
+fn xdg_wins_only_when_absolute_else_home_config() {
+    use std::path::{Path, PathBuf};
+
+    use super::xdg_or_home_config;
+    let home = || Some(PathBuf::from("/home/u"));
+    assert_eq!(xdg_or_home_config(Some(PathBuf::from("/xdg")), home()), Some(PathBuf::from("/xdg/zed")));
+    assert_eq!(xdg_or_home_config(Some(PathBuf::from("relative")), home()), Some(Path::new("/home/u/.config/zed").to_path_buf()));
+    assert_eq!(xdg_or_home_config(None, home()), Some(Path::new("/home/u/.config/zed").to_path_buf()));
+    assert_eq!(xdg_or_home_config(None, None), None);
+}
+
 fn read(path: &std::path::Path) -> Value {
     serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
 }

@@ -68,24 +68,32 @@ impl AgentBackend for ZedBackend {
 
 // --- paths -------------------------------------------------------------------
 
-/// Zed's user config dir: `$XDG_CONFIG_HOME/zed` or `~/.config/zed` on Linux AND
-/// macOS (zed uses the XDG layout on macOS too, unlike `dirs::config_dir`'s
-/// `~/Library/Application Support` platform default — so the non-Windows arm
-/// replicates dirs' own XDG-or-home logic to match what zed actually reads);
-/// `%APPDATA%\Zed` on Windows.
+/// Zed's user config dir, per its own `paths.rs`: `%APPDATA%\Zed` on Windows;
+/// `$XDG_CONFIG_HOME/zed` else `~/.config/zed` on Linux/FreeBSD; and on macOS a
+/// hardcoded `~/.config/zed` with NO env consulted — the location matches the XDG
+/// default but the mechanism doesn't, so an exported `XDG_CONFIG_HOME` must NOT
+/// redirect the macOS arm (zed wouldn't follow it).
 fn user_config_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         dirs::config_dir().map(|c| c.join("Zed"))
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
-            .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
-            .map(|c| c.join("zed"))
+        dirs::home_dir().map(|h| h.join(".config").join("zed"))
     }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        xdg_or_home_config(std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from), dirs::home_dir())
+    }
+}
+
+/// The Linux/FreeBSD arm's pure half: XDG (absolute, non-empty) wins, else
+/// `~/.config`, joined `zed`. Split from the env read so a unit test pins the
+/// precedence without mutating process env.
+#[cfg(not(any(windows, target_os = "macos")))]
+fn xdg_or_home_config(xdg: Option<PathBuf>, home: Option<PathBuf>) -> Option<PathBuf> {
+    xdg.filter(|p| p.is_absolute()).or_else(|| home.map(|h| h.join(".config"))).map(|c| c.join("zed"))
 }
 
 /// The `settings.json` for a scope: the user config dir (a missing config dir is a
