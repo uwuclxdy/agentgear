@@ -3,7 +3,9 @@
 //! `cline_mcp_settings.json` — a contested, mid-migration path, so we probe an
 //! ordered candidate list (modern `~/.cline/data/settings/` first, legacy VS Code
 //! globalStorage second) and pick the first that exists, else create the modern
-//! one. Cline has no project-level MCP scope, so MCP is always global.
+//! one. The CLI's own `CLINE_MCP_SETTINGS_PATH`/`CLINE_DATA_DIR`/`CLINE_DIR`
+//! overrides short-circuit that probe. Cline has no project-level MCP scope, so
+//! MCP is always global.
 //!
 //! CC commands become cline **workflows** (markdown slash-commands) and CC hooks
 //! become cline's file-based **hooks** (a script named exactly after the event).
@@ -109,11 +111,24 @@ impl AgentBackend for ClineBackend {
 
 // --- paths -------------------------------------------------------------------
 
+/// A cline path override, honored only when non-empty: the CLI itself falls back to
+/// its default on an empty value rather than resolving a relative path.
+fn env_path(var: &str) -> Option<PathBuf> {
+    std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+/// cline's unified store root: `$CLINE_DIR`, else `~/.cline`.
+fn store_root() -> Option<PathBuf> {
+    env_path("CLINE_DIR").or_else(|| dirs::home_dir().map(|h| h.join(".cline")))
+}
+
 /// Store roots whose presence means "cline is configured on this machine".
 fn detect_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
+    // The relocated store counts exactly like the default one: `$CLINE_DIR` *is*
+    // `~/.cline` for a user who set it, so detection must move with the writes.
+    dirs.extend(store_root()); // modern unified store + CLI
     if let Some(home) = dirs::home_dir() {
-        dirs.push(home.join(".cline")); // modern unified store + CLI
         dirs.push(home.join("Documents").join("Cline")); // global rules/workflows/hooks
     }
     if let Some(config) = dirs::config_dir() {
@@ -124,11 +139,23 @@ fn detect_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// The MCP settings file, global-only (cline has no project MCP scope). Modern
-/// unified store first — it wins merge conflicts during the in-progress migration —
-/// legacy VS Code globalStorage second. Returns the first that exists, else the
-/// modern path (to create). See the brief: the path is officially unresolved.
+/// The MCP settings file, global-only (cline has no project MCP scope). The CLI's
+/// own overrides win outright, in its order: a full-path `CLINE_MCP_SETTINGS_PATH`,
+/// then `CLINE_DATA_DIR`, then `CLINE_DIR`'s `data` subdir (all live-proven, see
+/// `docs/research/verify-cline.md`). Those are CLI-only vocabulary, so an override
+/// set means the CLI is the target and the legacy VS Code candidate is off the table.
+///
+/// Unoverridden, the path is mid-migration, so we probe: modern unified store first
+/// (it wins merge conflicts), legacy VS Code globalStorage second, first existing
+/// wins, else the modern path to create.
 fn mcp_settings_path() -> Result<PathBuf> {
+    if let Some(path) = env_path("CLINE_MCP_SETTINGS_PATH") {
+        return Ok(path);
+    }
+    if let Some(data) = env_path("CLINE_DATA_DIR").or_else(|| env_path("CLINE_DIR").map(|d| d.join("data"))) {
+        return Ok(data.join("settings").join("cline_mcp_settings.json"));
+    }
+
     let mut candidates = Vec::new();
     if let Some(home) = dirs::home_dir() {
         candidates.push(home.join(".cline").join("data").join("settings").join("cline_mcp_settings.json"));

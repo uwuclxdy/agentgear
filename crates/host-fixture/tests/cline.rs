@@ -50,6 +50,9 @@ struct Env {
     /// PATH holding only the fixture binary's dir, so `which("cline")` (and every
     /// other backend's PATH probe) stays false and detection rides on `~/.cline`.
     path: OsString,
+    /// The CLI's own config-dir overrides. Unset by default; the override test sets
+    /// them to prove the backend resolves the settings file the way the CLI does.
+    overrides: Vec<(&'static str, PathBuf)>,
 }
 
 impl Env {
@@ -70,6 +73,7 @@ impl Env {
             data: root.join("data"),
             run: root.join("run"),
             path: fixture_dir(),
+            overrides: Vec::new(),
             root,
         };
         // Pre-create `~/.cline/data/settings` so detect() passes with no `cline` on
@@ -91,6 +95,14 @@ impl Env {
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_RUNTIME_DIR", &self.run)
             .env("PATH", &self.path);
+        // A stray override on the dev box would relocate every other test's settings
+        // file, so clear all three and set back only what this Env asked for.
+        for var in ["CLINE_DIR", "CLINE_DATA_DIR", "CLINE_MCP_SETTINGS_PATH"] {
+            cmd.env_remove(var);
+        }
+        for (var, value) in &self.overrides {
+            cmd.env(var, value);
+        }
     }
 
     fn fixture(&self, args: &[&str]) -> (bool, String) {
@@ -205,6 +217,46 @@ fn cline_full_lifecycle() {
     let (ok, out) = env.fixture(&["setup", "--agent", "cline"]);
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.settings().contains("ez-fixture"), "re-install did not re-add our server");
+}
+
+/// The CLI resolves its mcp settings file through three overrides before falling
+/// back to `~/.cline`, and an empty value falls back rather than resolving to a
+/// relative path. Each level is live-proven against `cline@3.0.40`
+/// (`docs/research/verify-cline.md`); a settings file written to the HOME default
+/// while any of them is set is a file the CLI never reads.
+#[test]
+fn cline_honors_the_cli_config_dir_overrides() {
+    let mut env = Env::new("env-overrides");
+    let default_settings = env.settings.clone();
+
+    // `CLINE_DIR` relocates the whole store: `<dir>/data/settings/…`.
+    let store = env.root.join("relocated-store");
+    env.overrides = vec![("CLINE_DIR", store.clone())];
+    let (ok, out) = env.fixture(&["setup", "--agent", "cline"]);
+    assert!(ok, "setup under CLINE_DIR failed: {out}");
+    let via_dir = store.join("data").join("settings").join("cline_mcp_settings.json");
+    assert!(via_dir.exists(), "CLINE_DIR ignored; nothing at {}", via_dir.display());
+    assert!(fs::read_to_string(&via_dir).unwrap().contains("ez-fixture"), "our server missing under CLINE_DIR");
+
+    // `CLINE_DATA_DIR` beats `CLINE_DIR` and skips the `data` segment.
+    let data = env.root.join("relocated-data");
+    env.overrides = vec![("CLINE_DIR", store.clone()), ("CLINE_DATA_DIR", data.clone())];
+    let (ok, out) = env.fixture(&["setup", "--agent", "cline"]);
+    assert!(ok, "setup under CLINE_DATA_DIR failed: {out}");
+    let via_data = data.join("settings").join("cline_mcp_settings.json");
+    assert!(via_data.exists(), "CLINE_DATA_DIR ignored; nothing at {}", via_data.display());
+
+    // `CLINE_MCP_SETTINGS_PATH` is a full path and beats both dir-level overrides.
+    let full = env.root.join("elsewhere").join("custom-settings.json");
+    env.overrides = vec![("CLINE_DIR", store), ("CLINE_DATA_DIR", data), ("CLINE_MCP_SETTINGS_PATH", full.clone())];
+    let (ok, out) = env.fixture(&["setup", "--agent", "cline"]);
+    assert!(ok, "setup under CLINE_MCP_SETTINGS_PATH failed: {out}");
+    assert!(full.exists(), "CLINE_MCP_SETTINGS_PATH ignored; nothing at {}", full.display());
+    assert!(fs::read_to_string(&full).unwrap().contains("ez-fixture"), "our server missing at the overridden path");
+
+    // The HOME default keeps only its seed: no override run may write there.
+    let seeded = fs::read_to_string(&default_settings).unwrap();
+    assert!(!seeded.contains("ez-fixture"), "an override run wrote to the HOME default the CLI never reads:\n{seeded}");
 }
 
 /// Cline forces a hook script's filename to the bare event name (no plugin
