@@ -99,6 +99,14 @@ jobs:
         run: claude plugin validate examples/hooks-everywhere/plugin --strict
       - name: validate from-github example plugin tree
         run: claude plugin validate examples/from-github/plugin --strict
+      # The root marketplace serves the from-github plugin from a subdir source; add
+      # it + install locally (no network, no tag) so a malformed manifest or wrong
+      # source path reds here instead of only in the env-gated GitHub-source e2e.
+      - name: validate root marketplace
+        run: |
+          CFG=$(mktemp -d)
+          CLAUDE_CONFIG_DIR="$CFG" claude plugin marketplace add . --scope user
+          CLAUDE_CONFIG_DIR="$CFG" claude plugin install from-github@from-github --scope user
 
   e2e:
     runs-on: ubuntu-latest
