@@ -1,0 +1,12 @@
+{
+  "name": "from-github",
+  "description": "agentgear's own marketplace, serving the from-github example plugin for the GitHub-source lifecycle e2e",
+  "owner": { "name": "agentgear examples" },
+  "plugins": [
+    {
+      "name": "from-github",
+      "source": "./examples/from-github/plugin",
+      "description": "Zero-embed agentgear example plugin: installed from a GitHub marketplace, not baked into the binary."
+    }
+  ]
+}
