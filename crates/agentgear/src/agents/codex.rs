@@ -24,8 +24,9 @@ use serde_json::Value;
 
 use super::cchooks::{hook_is_portable, render_hook_group};
 use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem};
+use super::report;
 use super::{AgentBackend, BackendState, mcptoml};
-use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer};
+use crate::components::{HookBinding, MarkdownDoc, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
@@ -340,22 +341,12 @@ fn report_checks(backend: &CodexBackend, plugin: &Plugin, source: &Source) -> Ve
         }
     };
 
-    let comp = match plugin.components(source) {
-        Ok(comp) => comp,
-        Err(e) => {
-            checks.push(DoctorCheck {
-                name: "plugin components",
-                status: CheckStatus::Fail {
-                    problem: format!("could not read the plugin tree: {e}"),
-                    fix: "rebuild the host binary".into(),
-                },
-            });
-            return checks;
-        }
+    let Some(comp) = report::components(&mut checks, plugin, source) else {
+        return checks;
     };
 
     checks.push(check_mcp_registered(&comp.mcp_servers, doc.as_ref()));
-    checks.push(check_mcp_command(&comp.mcp_servers));
+    checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_prompts_present(&comp.commands, &base.join("prompts"), plugin.name));
     checks.push(check_agents_present(&comp.agents, &base.join("agents"), plugin.name));
     checks.push(check_hooks_present(&comp.hooks, &base.join("hooks.json")));
@@ -379,28 +370,6 @@ fn check_mcp_registered(servers: &[McpServer], doc: Option<&toml_edit::DocumentM
             status: CheckStatus::Fail {
                 problem: format!("mcp server(s) not in config.toml [mcp_servers]: {}", missing.join(", ")),
                 fix: "run the host's `setup`".into(),
-            },
-        }
-    }
-}
-
-fn check_mcp_command(servers: &[McpServer]) -> DoctorCheck {
-    let name = "mcp command on PATH";
-    let missing: Vec<String> = servers
-        .iter()
-        .filter(|s| s.is_portable() && matches!(s.kind, McpKind::Stdio))
-        .map(|s| s.command.clone())
-        // Only a bare executable name is a PATH lookup; a path/variable command can't be checked generically.
-        .filter(|c| !c.is_empty() && !c.contains('/') && !c.contains('\\') && !c.contains('$') && which::which(c).is_err())
-        .collect();
-    if missing.is_empty() {
-        DoctorCheck { name, status: CheckStatus::Ok("all referenced mcp commands resolve".into()) }
-    } else {
-        DoctorCheck {
-            name,
-            status: CheckStatus::Fail {
-                problem: format!("mcp command(s) not on PATH: {}", missing.join(", ")),
-                fix: "install the missing binaries into a PATH directory".into(),
             },
         }
     }
