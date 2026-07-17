@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
-use super::{hook_is_portable, hooks_path, map_event, mcp_path, reconcile_hooks, remove_hooks};
+use super::{hook_is_portable, hooks_path, map_event, mcp_path, probe_hooks, reconcile_hooks, remove_hooks, render_hook_tree};
 use crate::agents::BackendState;
 use crate::agents::mcpjson::{self, ServerShape};
 use crate::components::{HookBinding, McpKind, McpServer};
@@ -142,7 +142,7 @@ fn reconcile_hooks_writes_the_plugin_keyed_tree_then_noops() {
     let path = scratch("hooks.json");
     let hooks = [hook("UserPromptSubmit", "host_fixture check-restart"), hook("Stop", "host_fixture bye")];
 
-    assert!(reconcile_hooks(&path, "ez-fixture-plugin", &hooks).unwrap());
+    assert!(reconcile_hooks(&path, "ez-fixture-plugin", &hooks, true).unwrap());
     let v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     // Exact shape for a non-tool event: our top-level plugin key, then a FLAT
     // `{type, command}` handler list per event.
@@ -154,7 +154,7 @@ fn reconcile_hooks_writes_the_plugin_keyed_tree_then_noops() {
     assert_eq!(v["ez-fixture-plugin"]["Stop"], json!([{ "type": "command", "command": "host_fixture bye" }]));
 
     // idempotent: a rebuilt-identical subtree is a true NoOp (no write).
-    assert!(!reconcile_hooks(&path, "ez-fixture-plugin", &hooks).unwrap(), "second reconcile should no-op");
+    assert!(!reconcile_hooks(&path, "ez-fixture-plugin", &hooks, true).unwrap(), "second reconcile should no-op");
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
@@ -166,7 +166,7 @@ fn tool_events_get_the_grouped_matcher_wrapper() {
     // handler with a sibling matcher puts the command at a level nothing reads.
     let matched = HookBinding { event: "PreToolUse".into(), matcher: Some("run_command".into()), command: "host_fixture guard".into() };
 
-    assert!(reconcile_hooks(&path, "ez-fixture-plugin", std::slice::from_ref(&matched)).unwrap());
+    assert!(reconcile_hooks(&path, "ez-fixture-plugin", std::slice::from_ref(&matched), true).unwrap());
     let v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(
         v["ez-fixture-plugin"]["PreToolUse"],
@@ -184,7 +184,7 @@ fn a_matcherless_tool_hook_groups_under_the_wildcard() {
     // doc's PostToolUse example uses) rather than an omitted key of unknown meaning.
     let hooks = [hook("PostToolUse", "host_fixture audit")];
 
-    assert!(reconcile_hooks(&path, "ez-fixture-plugin", &hooks).unwrap());
+    assert!(reconcile_hooks(&path, "ez-fixture-plugin", &hooks, true).unwrap());
     let v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(
         v["ez-fixture-plugin"]["PostToolUse"],
@@ -203,7 +203,7 @@ fn tool_hooks_sharing_a_matcher_fold_into_one_group() {
         |command: &str, matcher: &str| HookBinding { event: "PreToolUse".into(), matcher: Some(matcher.into()), command: command.into() };
     let hooks = [mk("first", "run_command"), mk("second", "run_command"), mk("other", "edit_file")];
 
-    assert!(reconcile_hooks(&path, "ez-fixture-plugin", &hooks).unwrap());
+    assert!(reconcile_hooks(&path, "ez-fixture-plugin", &hooks, true).unwrap());
     let v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(
         v["ez-fixture-plugin"]["PreToolUse"],
@@ -221,7 +221,7 @@ fn reconcile_hooks_skips_non_portable_and_writes_no_file() {
     let path = scratch("hooks.json");
     let rooted = hook("Stop", "${CLAUDE_PLUGIN_ROOT}/hooks/self-heal.sh");
 
-    assert!(!reconcile_hooks(&path, "ez-fixture-plugin", std::slice::from_ref(&rooted)).unwrap());
+    assert!(!reconcile_hooks(&path, "ez-fixture-plugin", std::slice::from_ref(&rooted), true).unwrap());
     assert!(!path.exists(), "a non-portable-only hook set must not create hooks.json");
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
@@ -245,6 +245,70 @@ fn remove_hooks_deletes_only_our_key_and_keeps_a_foreign_plugin() {
 
     // Removing again is a NoOp (our key already gone).
     assert!(!remove_hooks(&path, "ez-fixture-plugin").unwrap(), "second remove should no-op");
+
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+// --- enabled:false carry-through (§6) -----------------------------------------
+
+#[test]
+fn reconcile_hooks_preserves_a_disable_on_self_heal_but_an_explicit_install_reenables() {
+    let path = scratch("hooks.json");
+    let hooks = [hook("Stop", "host_fixture bye")];
+
+    // Explicit install: writes the tree with no `enabled` key (default-enabled).
+    assert!(reconcile_hooks(&path, "ez-fixture-plugin", &hooks, true).unwrap());
+    let v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert!(v["ez-fixture-plugin"].get("enabled").is_none(), "a fresh install must not write an enabled key");
+
+    // A user disables our plugin's hooks by hand, and the event tree separately
+    // drifts (a hand edit), so the repair below has something real to fix.
+    let mut doc: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    doc["ez-fixture-plugin"]["enabled"] = json!(false);
+    doc["ez-fixture-plugin"]["Stop"] = json!([{ "type": "command", "command": "stale-command" }]);
+    std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+
+    // self_heal/adopt (reenable=false) repairs the drifted event but must not flip
+    // the disable back on.
+    assert!(reconcile_hooks(&path, "ez-fixture-plugin", &hooks, false).unwrap(), "the drifted event must still be repaired");
+    let v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(v["ez-fixture-plugin"]["enabled"], json!(false), "self_heal must preserve a user's deliberate disable");
+    assert_eq!(
+        v["ez-fixture-plugin"]["Stop"],
+        json!([{ "type": "command", "command": "host_fixture bye" }]),
+        "drifted event was not repaired"
+    );
+
+    // An explicit install/update (reenable=true) honors the user's request and
+    // re-enables by omitting the key again.
+    assert!(reconcile_hooks(&path, "ez-fixture-plugin", &hooks, true).unwrap());
+    let v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert!(v["ez-fixture-plugin"].get("enabled").is_none(), "an explicit install must re-enable (omit the key)");
+
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn probe_hooks_reports_disabled_when_enabled_is_false_even_with_drift() {
+    let path = scratch("hooks.json");
+    let hooks = [hook("Stop", "host_fixture bye")];
+    let tree = || render_hook_tree(&hooks);
+
+    // Absent file -> no surface owned yet.
+    assert!(matches!(probe_hooks(&path, "ez-fixture-plugin", tree()).unwrap(), Some(BackendState::Absent)));
+
+    // Healthy, matching write.
+    reconcile_hooks(&path, "ez-fixture-plugin", &hooks, true).unwrap();
+    assert!(matches!(probe_hooks(&path, "ez-fixture-plugin", tree()).unwrap(), Some(BackendState::Healthy)));
+
+    // Disabled + otherwise drifted (a stale event list): still reads Disabled, not
+    // NeedsRepair — the deliberate disable freezes the backend regardless of drift.
+    std::fs::write(&path, r#"{"ez-fixture-plugin":{"enabled":false,"Stop":[{"type":"command","command":"stale-command"}]}}"#).unwrap();
+    assert!(matches!(probe_hooks(&path, "ez-fixture-plugin", tree()).unwrap(), Some(BackendState::Disabled)));
+
+    // No subtree owned for this plugin (`tree()` is `None`) never reports Disabled
+    // even if the file happens to carry someone else's `enabled:false`.
+    assert!(probe_hooks(&path, "ez-fixture-plugin", None).unwrap().is_none());
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
