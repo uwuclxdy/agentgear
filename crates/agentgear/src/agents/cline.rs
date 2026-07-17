@@ -51,8 +51,8 @@ impl AgentBackend for ClineBackend {
 
     fn detect(&self) -> bool {
         // The config path is contested/mid-migration, so detection rides on any of
-        // cline's candidate store roots (HOME- or XDG-based, so a test redirecting
-        // those redirects detection too); the `cline` CLI on PATH is a bonus.
+        // cline's candidate store roots (HOME-, XDG-, or override-based, so a test
+        // redirecting those redirects detection too); `cline` on PATH is a bonus.
         which::which("cline").is_ok() || detect_dirs().iter().any(|d| d.is_dir())
     }
 
@@ -125,9 +125,15 @@ fn store_root() -> Option<PathBuf> {
 /// Store roots whose presence means "cline is configured on this machine".
 fn detect_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    // The relocated store counts exactly like the default one: `$CLINE_DIR` *is*
-    // `~/.cline` for a user who set it, so detection must move with the writes.
+    // Detection resolves through the same chain the writes do, so a relocated store
+    // counts exactly like the default one: `$CLINE_DIR` *is* `~/.cline` for a user
+    // who set it, and `CLINE_DATA_DIR`/`CLINE_MCP_SETTINGS_PATH` can relocate the
+    // settings file out from under both. Detecting on a narrower set than we write
+    // to would skip a user whose only marker is the override they set.
     dirs.extend(store_root()); // modern unified store + CLI
+    if let Ok(settings) = mcp_settings_path() {
+        dirs.extend(settings.parent().map(Path::to_path_buf));
+    }
     if let Some(home) = dirs::home_dir() {
         dirs.push(home.join("Documents").join("Cline")); // global rules/workflows/hooks
     }

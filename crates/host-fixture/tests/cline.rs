@@ -259,6 +259,44 @@ fn cline_honors_the_cli_config_dir_overrides() {
     assert!(!seeded.contains("ez-fixture"), "an override run wrote to the HOME default the CLI never reads:\n{seeded}");
 }
 
+/// Detection resolves through the same env chain as the writes. A user whose store
+/// lives entirely behind `CLINE_DATA_DIR` has no `~/.cline` and no `~/Documents/Cline`
+/// to detect on, so a HOME-only `detect()` would skip the backend outright and write
+/// nothing, while `reconcile` would happily have written to the override.
+#[test]
+fn cline_detects_a_store_that_exists_only_behind_an_override() {
+    let mut env = Env::new("detect-via-override");
+    // Strip every HOME-based marker: the override is the only evidence cline exists.
+    fs::remove_dir_all(env.root.join(".cline")).unwrap();
+    fs::remove_dir_all(env.root.join("Documents")).unwrap();
+
+    let data = env.root.join("only-marker");
+    fs::create_dir_all(data.join("settings")).unwrap();
+    env.overrides = vec![("CLINE_DATA_DIR", data.clone())];
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "cline"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "an undetected backend is silently skipped; got {out}");
+    let settings = data.join("settings").join("cline_mcp_settings.json");
+    assert!(settings.exists(), "nothing written to the override-only store: {}", settings.display());
+}
+
+/// An empty value falls back to the next level, matching the CLI (live-proven: all
+/// three set to `""` still resolve `~/.cline/data/settings/…`). Without that filter
+/// an empty `CLINE_DIR` would resolve `data/settings/cline_mcp_settings.json`
+/// relative to the process CWD, writing a stray config into whatever dir the host
+/// binary happened to run from.
+#[test]
+fn cline_treats_an_empty_override_as_unset() {
+    let mut env = Env::new("empty-overrides");
+    env.overrides = vec![("CLINE_DIR", PathBuf::new()), ("CLINE_DATA_DIR", PathBuf::new()), ("CLINE_MCP_SETTINGS_PATH", PathBuf::new())];
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "cline"]);
+    assert!(ok, "setup with empty overrides failed: {out}");
+    assert_eq!(out, "Installed", "empty overrides should fall back and install, got {out}");
+    assert!(env.settings().contains("ez-fixture"), "empty overrides did not fall back to the HOME default:\n{}", env.settings());
+}
+
 /// Cline forces a hook script's filename to the bare event name (no plugin
 /// namespacing), so `UserPromptSubmit` is the one path both a user's own hook and
 /// ours would collide on. This is the load-bearing case for the ownership-tag
