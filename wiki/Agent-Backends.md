@@ -100,9 +100,8 @@ Per-backend hook notes:
 - **kimi**: no trust gate; config hooks fire as soon as they are written.
 - **gemini**: `BeforeTool`/`AfterTool` take a CC tool-name matcher that never matches gemini's own
   tool names (known limitation).
-- **cline**: project-scope hooks (`.clinerules/hooks/<Event>`) are correct. User-scope hooks land
-  under `~/Documents/Cline/Rules/Hooks/`, which the CLI never scans (it reads `~/Documents/Cline/
-  Hooks/` and `~/.cline/hooks/`), so user-scope cline hooks are silently inert (known limitation).
+- **cline**: hooks land in dirs the CLI scans at both scopes: `~/Documents/Cline/Hooks/<Event>`
+  (user) and `.clinerules/hooks/<Event>` (project). `Hooks` is a sibling of `Rules`, not a child.
 - **kiro**: hooks are declared unsupported. kiro hosts hooks only inside user-owned per-agent
   config files, and its run-default agent is a setting rather than a file, so there is no target
   agentgear can own without editing the user's agent definitions.

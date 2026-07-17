@@ -40,7 +40,7 @@ system; a dash means agentgear skips it rather than writing it under a guessed n
 | codex | Y | Y | Y | Y |
 | gemini | Y | Y (`BeforeAgent`) | Y (`BeforeTool`) | Y (`AfterTool`) |
 | cursor | Y | Y (`beforeSubmitPrompt`) | Y | Y |
-| cline\* | - | Y | Y | Y |
+| cline | - | Y | Y | Y |
 | devin | Y | Y | Y | Y |
 | qwen-code | Y | Y | Y | Y |
 | copilot-cli | Y (`sessionStart`) | Y (`userPromptSubmitted`) | Y | Y |
@@ -57,14 +57,13 @@ defines exactly one hook event (`PreToolUse`), so only `guard` lands there.
 That is the real, verified shape of crush's own hook engine
 (`docs/research/verify-crush.md`), not a translation gap.
 
-\* cline and antigravity-cli have known landing bugs tracked in `docs/todo.md`
-§0: a cline path segment the CLI never scans, and two illegal antigravity-cli
-event names plus a wrong target file. The `Y`s above are what each backend's
-`map_event` currently translates to, not proof the hook actually fires yet.
-This example's hermetic tests only exercise codex/gemini/kimi/crush, so
-neither lands in `tests/lifecycle.rs`. (kiro left this table 2026-07-17: its
-only hook surface is a user-owned per-agent config, so the kiro backend now
-declares hooks unsupported.)
+\* antigravity-cli has known landing bugs tracked in `docs/todo.md` §0: two
+illegal event names plus a wrong target file. The `Y`s above are what each
+backend's `map_event` currently translates to, not proof the hook actually
+fires yet. This example's hermetic tests only exercise codex/gemini/kimi/crush,
+so antigravity-cli does not land in `tests/lifecycle.rs`. (kiro left this table
+2026-07-17: its only hook surface is a user-owned per-agent config, so the kiro
+backend now declares hooks unsupported.)
 
 \*\* augment currently drops `UserPromptSubmit` outright (`docs/todo.md` §0: it
 has a live `PromptSubmit` analog the backend does not map yet).
