@@ -113,7 +113,7 @@ some reject the shape and void the file. Per-tool fixes are queued.
 | pi | skipped. core pi has no native mcp surface |
 | qwen-code | faithful: rendered with qwen's key-presence form (http `{httpUrl}`, sse `{url}`) |
 | vscode-copilot | http faithful; **sse known limitation**: parser collapses to http, the writer rewrites the stored value → churn |
-| zed | stdio only. the backend filters remotes out before rendering |
+| zed | http faithful (native `{url, headers}`); sse skipped (zed has a single remote transport) |
 
 ## Native Claude-Code-config interop
 
