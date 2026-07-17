@@ -36,6 +36,10 @@ struct Env {
     /// PATH holding only the fixture binary's dir, so `which("goose")` (and every
     /// other backend's PATH probe) stays false and detection rides on the config dir.
     path: OsString,
+    /// `GOOSE_PATH_ROOT` override. Unset by default; the path-root test sets it to
+    /// prove the backend follows goose's own unconditional precedence over
+    /// `XDG_CONFIG_HOME`/`HOME` for both the config file and the plugins/hooks dir.
+    path_root: Option<PathBuf>,
 }
 
 impl Env {
@@ -46,7 +50,15 @@ impl Env {
         let root = std::env::temp_dir().join(format!("ez-goose-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let config = root.join("config");
-        let env = Env { goose: config.join("goose"), data: root.join("data"), run: root.join("run"), path: fixture_dir(), config, root };
+        let env = Env {
+            goose: config.join("goose"),
+            data: root.join("data"),
+            run: root.join("run"),
+            path: fixture_dir(),
+            path_root: None,
+            config,
+            root,
+        };
         // Pre-create <config>/goose so detect() passes with no `goose` on PATH, and
         // seed an unrelated user config the lifecycle must preserve.
         fs::create_dir_all(&env.goose).unwrap();
@@ -63,6 +75,12 @@ impl Env {
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_RUNTIME_DIR", &self.run)
             .env("PATH", &self.path);
+        match &self.path_root {
+            // A stray GOOSE_PATH_ROOT on the dev box would relocate every other
+            // test's paths too; clear it so those keep resolving XDG/HOME.
+            Some(root) => cmd.env("GOOSE_PATH_ROOT", root),
+            None => cmd.env_remove("GOOSE_PATH_ROOT"),
+        };
     }
 
     fn fixture(&self, args: &[&str]) -> (bool, String) {
@@ -188,4 +206,59 @@ fn goose_self_heal_never_reenables_a_user_disable() {
     assert!(ok, "re-setup failed: {out}");
     assert_ne!(out, "NoOp", "explicit setup should have re-enabled the disabled entry, got {out}");
     assert!(env.config_yaml().contains("enabled: true"), "explicit setup did not re-enable the disabled entry");
+}
+
+/// `GOOSE_PATH_ROOT` wins unconditionally over `XDG_CONFIG_HOME`/`HOME` and relocates
+/// both surfaces at once: goose resolves the config file at `<root>/config/config.yaml`
+/// (not `<XDG_CONFIG_HOME>/goose/config.yaml`) and the plugins/hooks dir at
+/// `<root>/.agents/plugins` (not the ordinary HOME-based `~/.agents/plugins`).
+/// `detect()` does not consult the env (out of this fix's scope), so it still rides
+/// the `<XDG_CONFIG_HOME>/goose` dir `Env::new` pre-creates. See `docs/harness/goose.md`
+/// gotcha 3.
+#[test]
+fn goose_honors_goose_path_root() {
+    let mut env = Env::new("path-root");
+    let path_root = env.root.join("pathroot");
+    env.path_root = Some(path_root.clone());
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "goose"]);
+    assert!(ok, "setup under GOOSE_PATH_ROOT failed: {out}");
+    assert_eq!(out, "Installed", "first setup under GOOSE_PATH_ROOT should install, got {out}");
+
+    // config.yaml lands at <root>/config/config.yaml, goose's own relocated layout.
+    let relocated_config = path_root.join("config").join("config.yaml");
+    assert!(relocated_config.is_file(), "config.yaml not written under GOOSE_PATH_ROOT: {}", relocated_config.display());
+    let c = fs::read_to_string(&relocated_config).unwrap();
+    assert!(c.contains("ez-fixture") && c.contains("cmd: host_fixture"), "our extension missing from the relocated config:\n{c}");
+
+    // the XDG-path config.yaml (pre-seeded for detect()) must stay untouched: the
+    // backend must never write the config goose would never read.
+    let xdg_config = fs::read_to_string(env.goose.join("config.yaml")).unwrap();
+    assert_eq!(xdg_config, SEED_CONFIG, "config.yaml at the XDG path must stay untouched when GOOSE_PATH_ROOT is set:\n{xdg_config}");
+
+    // hooks.json lands at <root>/.agents/plugins/<plugin>/hooks/hooks.json.
+    let relocated_hooks = path_root.join(".agents").join("plugins").join("ez-fixture-plugin").join("hooks").join("hooks.json");
+    assert!(relocated_hooks.is_file(), "hooks.json not written under GOOSE_PATH_ROOT: {}", relocated_hooks.display());
+    let h = fs::read_to_string(&relocated_hooks).unwrap();
+    assert!(h.contains("SessionStart") && h.contains("host_fixture self-heal"), "SessionStart hook missing from the relocated hooks:\n{h}");
+
+    // the ordinary HOME-based hooks dir must never be created: the backend must
+    // never write a hooks dir goose would never scan.
+    assert!(
+        !env.hooks_json().exists(),
+        "hooks.json must not land at the HOME path when GOOSE_PATH_ROOT is set: {}",
+        env.hooks_json().display()
+    );
+
+    // idempotent: a second identical reconcile under the same root no-ops.
+    let (ok, out) = env.fixture(&["setup", "--agent", "goose"]);
+    assert!(ok && out == "NoOp", "second setup under GOOSE_PATH_ROOT should no-op, got {out}");
+
+    // uninstall follows the same relocated paths and cleans them up.
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall under GOOSE_PATH_ROOT failed: {out}");
+    let c = fs::read_to_string(&relocated_config).unwrap();
+    assert!(!c.contains("ez-fixture"), "our extension survived uninstall under GOOSE_PATH_ROOT:\n{c}");
+    let relocated_plugin_dir = path_root.join(".agents").join("plugins").join("ez-fixture-plugin");
+    assert!(!relocated_plugin_dir.exists(), "the relocated plugin hooks dir survived uninstall: {}", relocated_plugin_dir.display());
 }

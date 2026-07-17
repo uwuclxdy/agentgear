@@ -14,6 +14,9 @@
 //!   config is never rewritten, keeping a user's comments intact in steady state.
 //! - MCP registration is user-scope-only: goose has a single user `config.yaml`
 //!   with no project-level extensions file, so `probe`/`remove` anchor on it.
+//! - `GOOSE_PATH_ROOT` wins unconditionally over `XDG_CONFIG_HOME`/`HOME` (goose's
+//!   own precedence) and relocates both surfaces: `<root>/config/config.yaml` and
+//!   `<root>/.agents/plugins`, not the ordinary XDG/HOME-derived paths.
 //!
 //! Skipped surfaces (see `docs/harness/goose.md`): commands + agents (both would
 //! translate into goose's single `recipe` YAML format — a command also needs a
@@ -100,30 +103,49 @@ impl AgentBackend for GooseBackend {
 
 // --- paths -------------------------------------------------------------------
 
-/// The user-scope `~/.config/goose` dir (XDG-honoring). goose has no documented
-/// config-dir override env (`GOOSE_PATH_ROOT` moves only the data/state root), so
-/// this rides `dirs::config_dir()` and a test redirecting it redirects the backend.
+/// `GOOSE_PATH_ROOT`, goose's own path-root override: it wins unconditionally over
+/// `XDG_CONFIG_HOME`/`HOME` (checked first, no merge) and relocates both the config
+/// file and the plugins/hooks dir (`docs/harness/goose.md` gotcha 3). An unset or
+/// empty value is ignored; goose treats it as an absolute root, so we don't
+/// second-guess it here.
+fn goose_path_root() -> Option<PathBuf> {
+    std::env::var_os("GOOSE_PATH_ROOT").filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+/// The user-scope `~/.config/goose` dir (XDG-honoring), used only when
+/// `GOOSE_PATH_ROOT` is unset. `detect()` doesn't consult `GOOSE_PATH_ROOT`, so a
+/// test redirecting `XDG_CONFIG_HOME`/`HOME` still redirects detection.
 fn goose_config_dir() -> Option<PathBuf> {
     dirs::config_dir().map(|c| c.join("goose"))
 }
 
 /// The single `config.yaml` we read-modify-write for MCP. goose has exactly one
-/// user-level config file (no project variant), so this takes no scope. A missing
-/// config home is a clear, actionable error rather than a silent skip.
+/// user-level config file (no project variant), so this takes no scope. Under
+/// `GOOSE_PATH_ROOT` goose resolves `<root>/config/config.yaml` — a different layout
+/// than `<XDG_CONFIG_HOME>/goose/config.yaml`, not a `.join("goose")` on the root. A
+/// missing config home is a clear, actionable error rather than a silent skip.
 fn config_yaml() -> Result<PathBuf> {
+    if let Some(root) = goose_path_root() {
+        return Ok(root.join("config").join("config.yaml"));
+    }
     goose_config_dir()
         .map(|d| d.join("config.yaml"))
         .ok_or_else(|| Error::Tree("no config directory (HOME and XDG_CONFIG_HOME unset); cannot locate ~/.config/goose".into()))
 }
 
 /// The plugin-owned dir under the Open Plugins hooks spec: `~/.agents/plugins/
-/// <plugin>/` (user) or `<project>/.agents/plugins/<plugin>/` (project). HOME-based
-/// (not XDG), so a test redirecting `HOME` redirects it. The whole dir is ours.
+/// <plugin>/` (user) or `<project>/.agents/plugins/<plugin>/` (project). User scope
+/// honors `GOOSE_PATH_ROOT` first (goose relocates its plugins dir under the same
+/// root as the config file), then falls back to the ordinary HOME-based dir, so a
+/// test redirecting either env redirects it. The whole dir is ours.
 fn plugin_dir(scope: &Scope, plugin: &str) -> Result<PathBuf> {
     let base = match scope {
-        Scope::User => {
-            dirs::home_dir().ok_or_else(|| Error::Tree("no home directory (HOME unset); cannot locate ~/.agents/plugins".into()))?
-        }
+        Scope::User => match goose_path_root() {
+            Some(root) => root,
+            None => {
+                dirs::home_dir().ok_or_else(|| Error::Tree("no home directory (HOME unset); cannot locate ~/.agents/plugins".into()))?
+            }
+        },
         Scope::Project { path } => path.clone(),
     };
     Ok(base.join(".agents").join("plugins").join(plugin))
