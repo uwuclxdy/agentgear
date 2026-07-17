@@ -18,7 +18,7 @@ pub trait AgentBackend {
     fn id(&self) -> &'static str;
     fn detect(&self) -> bool;                                 // is this agent installed?
     fn capabilities(&self) -> Capabilities;                   // plugins / mcp / hooks / scopes
-    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState>;  // self_heal's input
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState>;  // self_heal's input
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome>;
     fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome>;
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport;
@@ -27,7 +27,10 @@ pub trait AgentBackend {
 
 `reconcile` is the seam. Every lifecycle op (`install`, `update`, `self_heal`) reduces to a
 reconcile with a different desired state. `probe` classifies the plugin's current state so
-`self_heal` can run a marker × state table per agent. Each backend defines what "converged" means:
+`self_heal` can run a marker × state table per agent; it renders from the `source` argument
+(the same one `self_heal` resolves for reconcile), and a backend writing more than one surface
+classifies each into an `Option<BackendState>` and folds them through `report::compose`. Each
+backend defines what "converged" means:
 
 - Claude Code: marketplace present, plugin installed, version at or above the embedded one, files on
   disk.
