@@ -38,20 +38,22 @@ fn hook(event: &str, command: &str) -> HookBinding {
 // --- paths -------------------------------------------------------------------
 
 #[test]
-fn project_paths_use_the_agents_dir_but_mcp_and_hooks_split_at_user_scope() {
+fn both_configs_live_in_the_scope_s_customization_root() {
     // Project scope: both live under the workspace's native `.agents/` dir.
     let root = PathBuf::from("/work/repo");
     let scope = Scope::Project { path: root.clone() };
     assert_eq!(mcp_path(&scope).unwrap(), root.join(".agents").join("mcp_config.json"));
     assert_eq!(hooks_path(&scope).unwrap(), root.join(".agents").join("hooks.json"));
 
-    // User scope: mcp is the SHARED `config/` file, hooks the CLI-specific dir —
-    // they intentionally diverge, so a single base-join would be wrong.
+    // User scope: `~/.gemini/config/` is the global customization root, and `agy`
+    // scans a root for both files. `~/.gemini/antigravity-cli/` holds the CLI's own
+    // settings + transcripts and is scanned for neither, so a hooks.json there is
+    // never loaded (Google fixed this same bug in their own TUI, CHANGELOG v1.0.8).
     let mcp = mcp_path(&Scope::User).unwrap();
     let hooks = hooks_path(&Scope::User).unwrap();
     assert!(mcp.ends_with("config/mcp_config.json"), "user mcp path: {}", mcp.display());
-    assert!(hooks.ends_with("antigravity-cli/hooks.json"), "user hooks path: {}", hooks.display());
-    assert_ne!(mcp.parent(), hooks.parent(), "user mcp and hooks must not share a dir");
+    assert!(hooks.ends_with("config/hooks.json"), "user hooks path: {}", hooks.display());
+    assert_eq!(mcp.parent(), hooks.parent(), "both user files live in the one customization root");
 }
 
 // --- mcp (shared renderer, wired exactly as the backend does) ----------------
@@ -106,40 +108,50 @@ fn mcp_probe_classifies_absent_healthy_and_needs_repair() {
 // --- hooks (bespoke plugin-name-keyed tree) ----------------------------------
 
 #[test]
-fn event_map_covers_the_briefs_names_and_skips_the_rest() {
-    assert_eq!(map_event("SessionStart"), Some("SessionStart"));
-    assert_eq!(map_event("UserPromptSubmit"), Some("BeforeAgent"));
+fn event_map_emits_only_agy_s_five_legal_events() {
+    // `agy` documents exactly five. Anything else is written and silently ignored,
+    // so a name outside this set is worse than a skip: it looks wired and never fires.
+    const LEGAL: [&str; 5] = ["PreToolUse", "PostToolUse", "PreInvocation", "PostInvocation", "Stop"];
+    for cc in ["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SubagentStop", "PreCompact"] {
+        if let Some(mapped) = map_event(cc) {
+            assert!(LEGAL.contains(&mapped), "{cc} maps to `{mapped}`, which is not a legal agy event");
+        }
+    }
+
     assert_eq!(map_event("PreToolUse"), Some("PreToolUse"));
     assert_eq!(map_event("PostToolUse"), Some("PostToolUse"));
     assert_eq!(map_event("Stop"), Some("Stop"));
-    // No listed Antigravity analog -> skipped, never guessed.
-    for unmapped in ["SessionEnd", "SubagentStop", "PreCompact", "Notification"] {
+    // `PreInvocation` fires before the model runs: agy's own "before the agent loop"
+    // analog, and the closest thing to CC's UserPromptSubmit.
+    assert_eq!(map_event("UserPromptSubmit"), Some("PreInvocation"));
+    // No agy analog -> skipped, never guessed. `SessionStart` once mapped to itself
+    // and `UserPromptSubmit` to `BeforeAgent`; neither name exists in the binary.
+    for unmapped in ["SessionStart", "SessionEnd", "SubagentStop", "PreCompact", "Notification"] {
         assert_eq!(map_event(unmapped), None, "{unmapped} should be skipped");
     }
 }
 
 #[test]
 fn hook_portability_matches_the_mcp_rule() {
-    assert!(hook_is_portable(&hook("SessionStart", "host_fixture self-heal")));
-    assert!(!hook_is_portable(&hook("SessionStart", "${CLAUDE_PLUGIN_ROOT}/hooks/self-heal.sh")));
+    assert!(hook_is_portable(&hook("Stop", "host_fixture self-heal")));
+    assert!(!hook_is_portable(&hook("Stop", "${CLAUDE_PLUGIN_ROOT}/hooks/self-heal.sh")));
 }
 
 #[test]
 fn reconcile_hooks_writes_the_plugin_keyed_tree_then_noops() {
     let path = scratch("hooks.json");
-    let hooks = [hook("SessionStart", "host_fixture self-heal"), hook("UserPromptSubmit", "host_fixture check-restart")];
+    let hooks = [hook("UserPromptSubmit", "host_fixture check-restart"), hook("Stop", "host_fixture bye")];
 
     assert!(reconcile_hooks(&path, "ez-fixture-plugin", &hooks).unwrap());
     let v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    // Exact shape: our top-level plugin key, a FLAT `{type, command}` entry (matcher
-    // omitted when None) under each mapped event — the shape `agy` reads, not the
-    // CC-nested `{hooks:[...]}` group.
-    assert_eq!(v["ez-fixture-plugin"]["SessionStart"], json!([{ "type": "command", "command": "host_fixture self-heal" }]));
+    // Exact shape for a non-tool event: our top-level plugin key, then a FLAT
+    // `{type, command}` handler list per event.
     assert_eq!(
-        v["ez-fixture-plugin"]["BeforeAgent"],
+        v["ez-fixture-plugin"]["PreInvocation"],
         json!([{ "type": "command", "command": "host_fixture check-restart" }]),
-        "UserPromptSubmit was not mapped to BeforeAgent"
+        "UserPromptSubmit was not mapped to a flat PreInvocation"
     );
+    assert_eq!(v["ez-fixture-plugin"]["Stop"], json!([{ "type": "command", "command": "host_fixture bye" }]));
 
     // idempotent: a rebuilt-identical subtree is a true NoOp (no write).
     assert!(!reconcile_hooks(&path, "ez-fixture-plugin", &hooks).unwrap(), "second reconcile should no-op");
@@ -148,15 +160,58 @@ fn reconcile_hooks_writes_the_plugin_keyed_tree_then_noops() {
 }
 
 #[test]
-fn reconcile_hooks_writes_matcher_as_a_flat_sibling() {
+fn tool_events_get_the_grouped_matcher_wrapper() {
     let path = scratch("hooks.json");
-    // A matcher must land as a sibling of type/command in the flat entry, never
-    // inside a nested CC `{hooks:[...]}` group.
-    let matched = HookBinding { event: "PreToolUse".into(), matcher: Some("Bash".into()), command: "host_fixture guard".into() };
+    // `agy` reads PreToolUse/PostToolUse as `{matcher, hooks:[handler,…]}`; a flat
+    // handler with a sibling matcher puts the command at a level nothing reads.
+    let matched = HookBinding { event: "PreToolUse".into(), matcher: Some("run_command".into()), command: "host_fixture guard".into() };
 
     assert!(reconcile_hooks(&path, "ez-fixture-plugin", std::slice::from_ref(&matched)).unwrap());
     let v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(v["ez-fixture-plugin"]["PreToolUse"], json!([{ "matcher": "Bash", "type": "command", "command": "host_fixture guard" }]));
+    assert_eq!(
+        v["ez-fixture-plugin"]["PreToolUse"],
+        json!([{ "matcher": "run_command", "hooks": [{ "type": "command", "command": "host_fixture guard" }] }])
+    );
+
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_matcherless_tool_hook_groups_under_the_wildcard() {
+    let path = scratch("hooks.json");
+    // CC treats an absent matcher as "every tool". The grouped shape has nowhere to
+    // put that but the matcher itself, so it becomes agy's own `*` (the value its
+    // doc's PostToolUse example uses) rather than an omitted key of unknown meaning.
+    let hooks = [hook("PostToolUse", "host_fixture audit")];
+
+    assert!(reconcile_hooks(&path, "ez-fixture-plugin", &hooks).unwrap());
+    let v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        v["ez-fixture-plugin"]["PostToolUse"],
+        json!([{ "matcher": "*", "hooks": [{ "type": "command", "command": "host_fixture audit" }] }])
+    );
+
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn tool_hooks_sharing_a_matcher_fold_into_one_group() {
+    let path = scratch("hooks.json");
+    // One group per matcher, handlers stacked inside it: the shape CC itself uses and
+    // the one agy's doc shows. Two groups with the same matcher would be ambiguous.
+    let mk =
+        |command: &str, matcher: &str| HookBinding { event: "PreToolUse".into(), matcher: Some(matcher.into()), command: command.into() };
+    let hooks = [mk("first", "run_command"), mk("second", "run_command"), mk("other", "edit_file")];
+
+    assert!(reconcile_hooks(&path, "ez-fixture-plugin", &hooks).unwrap());
+    let v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        v["ez-fixture-plugin"]["PreToolUse"],
+        json!([
+            { "matcher": "edit_file", "hooks": [{ "type": "command", "command": "other" }] },
+            { "matcher": "run_command", "hooks": [{ "type": "command", "command": "first" }, { "type": "command", "command": "second" }] },
+        ])
+    );
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
@@ -164,7 +219,7 @@ fn reconcile_hooks_writes_matcher_as_a_flat_sibling() {
 #[test]
 fn reconcile_hooks_skips_non_portable_and_writes_no_file() {
     let path = scratch("hooks.json");
-    let rooted = hook("SessionStart", "${CLAUDE_PLUGIN_ROOT}/hooks/self-heal.sh");
+    let rooted = hook("Stop", "${CLAUDE_PLUGIN_ROOT}/hooks/self-heal.sh");
 
     assert!(!reconcile_hooks(&path, "ez-fixture-plugin", std::slice::from_ref(&rooted)).unwrap());
     assert!(!path.exists(), "a non-portable-only hook set must not create hooks.json");

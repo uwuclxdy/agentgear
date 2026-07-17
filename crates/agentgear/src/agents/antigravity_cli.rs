@@ -10,6 +10,7 @@
 //! skipped — MCP is the only surface backed by an official-Google source, so the
 //! rest is left out per the research brief (see `docs/harness/antigravity-cli.md`).
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -101,34 +102,42 @@ fn mcp_path(scope: &Scope) -> Result<PathBuf> {
     }
 }
 
-/// The hooks config: user scope = the CLI's own `~/.gemini/antigravity-cli/hooks.json`
-/// (NOT the shared `config/` dir — global hooks live under the CLI-specific dir);
-/// project scope = `<root>/.agents/hooks.json` (loads only after the folder is
-/// trusted).
+/// The hooks config, always in the scope's customization root: user scope = the
+/// shared `~/.gemini/config/hooks.json`; project scope = `<root>/.agents/hooks.json`
+/// (loads only after the folder is trusted). `~/.gemini/antigravity-cli/` holds the
+/// CLI's own settings and transcripts, is a customization root for nothing, and a
+/// `hooks.json` written there is never loaded (Google's CHANGELOG v1.0.8 records
+/// fixing this exact bug in their own `/hooks` command).
 fn hooks_path(scope: &Scope) -> Result<PathBuf> {
     match scope {
-        Scope::User => Ok(gemini_home()?.join("antigravity-cli").join("hooks.json")),
+        Scope::User => Ok(gemini_home()?.join("config").join("hooks.json")),
         Scope::Project { path } => Ok(path.join(".agents").join("hooks.json")),
     }
 }
 
 // --- hooks -------------------------------------------------------------------
 
-/// Map a CC hook event to an Antigravity hook event, using only names the brief
-/// enumerates. `SessionStart`/`PreToolUse`/`PostToolUse`/`Stop` are identity
-/// matches (Antigravity carries the literal CC names); `UserPromptSubmit` ->
-/// `BeforeAgent` is the closest analog (fires before the agent loop, same as the
-/// gemini mapping). Events with no listed counterpart (`SessionEnd`,
-/// `SubagentStop`, `PreCompact`, `Notification`) are skipped, never guessed.
+/// Map a CC hook event onto one of `agy`'s five legal events: `PreToolUse`,
+/// `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`. Anything outside that
+/// set is accepted by the file and silently never fires, which is worse than a skip
+/// (it reads as wired), so an event with no analog is dropped. `PreInvocation` runs
+/// before the model does, making it CC's `UserPromptSubmit` analog. `SessionStart`
+/// has none: `agy` carries no session-level hook at all.
 fn map_event(cc_event: &str) -> Option<&'static str> {
     match cc_event {
-        "SessionStart" => Some("SessionStart"),
-        "UserPromptSubmit" => Some("BeforeAgent"),
+        "UserPromptSubmit" => Some("PreInvocation"),
         "PreToolUse" => Some("PreToolUse"),
         "PostToolUse" => Some("PostToolUse"),
         "Stop" => Some("Stop"),
         _ => None,
     }
+}
+
+/// `agy` reads its two tool events as `{matcher, hooks:[handler,…]}` groups and
+/// every other event as a flat handler list. One event, one nesting: a flat handler
+/// under `PreToolUse` puts the command where nothing reads it.
+fn is_grouped(agy_event: &str) -> bool {
+    matches!(agy_event, "PreToolUse" | "PostToolUse")
 }
 
 /// A `${CLAUDE_PLUGIN_ROOT}` reference only expands inside Claude Code's own hook
@@ -140,19 +149,41 @@ fn hook_is_portable(hook: &HookBinding) -> bool {
     !hook.command.contains("${CLAUDE_PLUGIN_ROOT}")
 }
 
-/// One Antigravity hook entry: flat `{matcher?, type:"command", command}` — the
-/// shape `agy` reads, with matcher/type/command as siblings (Antigravity ties one
-/// matcher to one command), NOT the CC-nested `{matcher?, hooks:[{type, command}]}`
-/// group. `timeout` is omitted: the components IR carries none and Antigravity
-/// supplies its own default.
-fn render_hook_entry(hook: &HookBinding) -> Value {
-    let mut entry = Map::new();
-    if let Some(matcher) = &hook.matcher {
-        entry.insert("matcher".into(), Value::from(matcher.clone()));
+/// One `agy` hook handler: `{type:"command", command}`. `timeout` is omitted (the
+/// components IR carries none and `agy` defaults it to 30s), and `matcher` never
+/// belongs here: a flat event has no matcher at all, and a grouped one carries it
+/// on the wrapper.
+fn render_handler(hook: &HookBinding) -> Value {
+    let mut handler = Map::new();
+    handler.insert("type".into(), Value::from("command"));
+    handler.insert("command".into(), Value::from(hook.command.clone()));
+    Value::Object(handler)
+}
+
+/// The handler list for one event, in that event's own nesting. Flat events take the
+/// handlers directly. Grouped events take one `{matcher, hooks:[…]}` per matcher, so
+/// handlers sharing a matcher stack inside one group rather than repeating it. A CC
+/// hook with no matcher means "every tool", which in the grouped shape can only be
+/// said as `agy`'s own `*` wildcard.
+fn render_event(agy_event: &str, hooks: &[&HookBinding]) -> Value {
+    if !is_grouped(agy_event) {
+        return Value::Array(hooks.iter().map(|h| render_handler(h)).collect());
     }
-    entry.insert("type".into(), Value::from("command"));
-    entry.insert("command".into(), Value::from(hook.command.clone()));
-    Value::Object(entry)
+    let mut groups: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
+    for hook in hooks {
+        groups.entry(hook.matcher.as_deref().unwrap_or("*")).or_default().push(render_handler(hook));
+    }
+    Value::Array(
+        groups
+            .into_iter()
+            .map(|(matcher, handlers)| {
+                let mut group = Map::new();
+                group.insert("matcher".into(), Value::from(matcher));
+                group.insert("hooks".into(), Value::Array(handlers));
+                Value::Object(group)
+            })
+            .collect(),
+    )
 }
 
 /// Write our whole hook subtree under the top-level `<plugin>` key
@@ -167,13 +198,14 @@ fn reconcile_hooks(path: &Path, plugin: &str, hooks: &[HookBinding]) -> Result<b
     if writable.is_empty() {
         return Ok(false);
     }
+    let mut by_event: BTreeMap<&'static str, Vec<&HookBinding>> = BTreeMap::new();
+    for (event, hook) in writable {
+        by_event.entry(event).or_default().push(hook);
+    }
     json_edit(path, |root| {
         let mut events: Map<String, Value> = Map::new();
-        for (event, hook) in &writable {
-            let entry = render_hook_entry(hook);
-            if let Value::Array(list) = events.entry((*event).to_string()).or_insert_with(|| Value::Array(Vec::new())) {
-                list.push(entry);
-            }
+        for (event, group) in &by_event {
+            events.insert((*event).to_string(), render_event(event, group));
         }
         if let Value::Object(map) = root {
             map.insert(plugin.to_string(), Value::Object(events));

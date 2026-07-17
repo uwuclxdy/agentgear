@@ -2,7 +2,7 @@
 //! No docker, no auth, no `agy` binary: the backend only ever writes Antigravity's
 //! config files, so we drive `host_fixture setup --agent antigravity-cli` against a
 //! temp `HOME` (+ XDG dirs) and assert the written `config/mcp_config.json` /
-//! `antigravity-cli/hooks.json` by parsing them back. `detect()` passes off the
+//! `config/hooks.json` by parsing them back. `detect()` passes off the
 //! pre-created `~/.gemini/antigravity-cli` dir alone (no `agy` on PATH).
 //!
 //! Every path the backend touches derives from `HOME`, which we point at a throwaway
@@ -50,7 +50,10 @@ impl Env {
         let gemini = root.join(".gemini");
         let env = Env {
             mcp: gemini.join("config").join("mcp_config.json"),
-            hooks: gemini.join("antigravity-cli").join("hooks.json"),
+            // `~/.gemini/config/` is agy's global customization root and holds both
+            // files; `~/.gemini/antigravity-cli/` (the detect marker below) is the
+            // CLI's own settings dir, scanned for neither.
+            hooks: gemini.join("config").join("hooks.json"),
             config: root.join("config"),
             data: root.join("data"),
             run: root.join("run"),
@@ -132,13 +135,18 @@ fn antigravity_cli_full_lifecycle() {
     assert!(parsed["mcpServers"].get("ez-fixture-http").is_none(), "http remote must be skipped (no agy landing):\n{m}");
     assert!(m.contains("\"theme\"") && m.contains("dark"), "seeded top-level key was clobbered:\n{m}");
 
-    // hooks: our plugin-keyed tree, SessionStart identity + UserPromptSubmit -> BeforeAgent.
+    // hooks: our plugin-keyed tree. The fixture ships SessionStart + UserPromptSubmit;
+    // `agy` has no session-level hook, so only UserPromptSubmit lands, flat under its
+    // `PreInvocation` analog. Every name written here must be one agy really fires.
     let h = env.hooks();
-    assert!(h.contains("ez-fixture-plugin"), "our plugin hook key missing:\n{h}");
-    assert!(h.contains("SessionStart"), "SessionStart hook missing:\n{h}");
-    assert!(h.contains("BeforeAgent"), "UserPromptSubmit was not mapped to BeforeAgent:\n{h}");
-    assert!(h.contains("self-heal"), "SessionStart hook command missing:\n{h}");
-    assert!(h.contains("check-restart"), "BeforeAgent hook command missing:\n{h}");
+    let parsed: serde_json::Value = serde_json::from_str(&h).unwrap();
+    assert_eq!(
+        parsed["ez-fixture-plugin"],
+        serde_json::json!({ "PreInvocation": [{ "type": "command", "command": "host_fixture check-restart" }] }),
+        "hook tree mismatch:\n{h}"
+    );
+    assert!(!h.contains("SessionStart"), "SessionStart is not an agy event; it must be skipped, not written:\n{h}");
+    assert!(!h.contains("BeforeAgent"), "BeforeAgent does not exist in agy; it must never be written:\n{h}");
 
     // safety: everything we wrote is under the throwaway temp root.
     for p in [&env.mcp, &env.hooks] {
@@ -160,7 +168,7 @@ fn antigravity_cli_full_lifecycle() {
 
     let h = env.hooks();
     assert!(!h.contains("ez-fixture-plugin"), "our hook key survived uninstall:\n{h}");
-    assert!(!h.contains("self-heal") && !h.contains("check-restart"), "our hook commands survived uninstall:\n{h}");
+    assert!(!h.contains("check-restart"), "our hook command survived uninstall:\n{h}");
 
     // the post-uninstall config still parses: a clean re-install lands again
     // (json_edit would error on an unparseable mcp_config.json).

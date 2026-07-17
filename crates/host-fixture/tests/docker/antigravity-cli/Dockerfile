@@ -34,8 +34,10 @@ cat > /usr/local/bin/antigravity-cli-leg.sh <<'TEST'
 set -euo pipefail
 
 export HOME=/tmp/antigravity-home
+# Both files live in agy's global customization root; `antigravity-cli/` is the
+# CLI's own settings dir and is scanned for neither.
 MCP="$HOME/.gemini/config/mcp_config.json"
-HOOKS="$HOME/.gemini/antigravity-cli/hooks.json"
+HOOKS="$HOME/.gemini/config/hooks.json"
 # Pre-create the CLI-specific dir so the backend's detect() passes deterministically
 # (agy-on-PATH is the other signal; this keeps the leg independent of PATH quirks).
 mkdir -p "$HOME/.gemini/antigravity-cli" "$HOME/.gemini/config"
@@ -53,8 +55,14 @@ host_fixture setup --agent antigravity-cli
 if ! grep -q 'ez-fixture' "$MCP";  then echo "FAIL: our mcp server not registered"; cat "$MCP"; exit 1; fi
 if ! grep -q 'theirs'     "$MCP";  then echo "FAIL: seeded server clobbered on install"; exit 1; fi
 if ! grep -q '"theme"'    "$MCP";  then echo "FAIL: seeded key clobbered on install"; exit 1; fi
-if [ ! -f "$HOOKS" ];              then echo "FAIL: hooks.json missing"; exit 1; fi
+if [ ! -f "$HOOKS" ];              then echo "FAIL: hooks.json missing from the customization root"; exit 1; fi
 if ! grep -q 'ez-fixture-plugin' "$HOOKS"; then echo "FAIL: our plugin hook key missing"; cat "$HOOKS"; exit 1; fi
+if ! grep -q 'PreInvocation'     "$HOOKS"; then echo "FAIL: UserPromptSubmit did not land on PreInvocation"; cat "$HOOKS"; exit 1; fi
+# Only agy's five legal events may be written; a dead name reads as wired and never
+# fires. The validator has no teeth on hooks, so this grep is the gate.
+for dead in SessionStart BeforeAgent SessionEnd Notification; do
+  if grep -q "$dead" "$HOOKS"; then echo "FAIL: dead hook event $dead written"; cat "$HOOKS"; exit 1; fi
+done
 
 # Native second opinion (best-effort; auth-free per the brief, lists plugins not
 # mcp servers, so it can only prove the CLI parses its config tree without erroring).
