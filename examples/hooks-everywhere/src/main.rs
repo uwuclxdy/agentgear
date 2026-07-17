@@ -34,7 +34,7 @@ use agentgear::{PluginHost, Scope, Source};
     name = "hooks-everywhere",
     agents = [
         "claude", "codex", "gemini", "cursor", "cline", "devin", "qwen-code",
-        "copilot-cli", "kimi", "kiro", "goose", "crush", "droid", "augment",
+        "copilot-cli", "kimi", "goose", "crush", "droid", "augment",
         "antigravity-cli",
     ]
 )]

@@ -1,27 +1,25 @@
-//! The kiro (kiro-cli) backend: a config-merge translate of the CC plugin's mcp
-//! servers + hooks into kiro's own surfaces. MCP goes through the shared json
+//! The kiro (kiro-cli) backend: mcp-only. MCP goes through the shared json
 //! renderer (`~/.kiro/settings/mcp.json` `mcpServers`, Plain shape — kiro's local
-//! entry is a superset of `{command,args,env}` and defaults the rest). Hooks are
-//! special: kiro-cli has no standalone hooks file — they live in a `hooks` object
-//! **inside an agent's own `.json`** under `~/.kiro/agents/`. We merge only into
-//! the default agent (`agents/default.json`) and only if that file already exists,
-//! so we never fabricate an agent definition (a hooks-only file is not a valid
-//! agent). Everything we write is keyed by our server names / hook command strings,
-//! so `remove` is exact and a second reconcile is a true `NoOp`.
+//! entry is a superset of `{command,args,env}` and defaults the rest), keyed by
+//! our server names, so `remove` is exact and a second reconcile is a true `NoOp`.
 //!
-//! Commands (`~/.kiro/prompts/`), agents (kiro's own json agent schema) and skills
-//! are skipped — see `docs/harness/kiro.md` for why.
+//! Hooks are declared unsupported (`capabilities().hooks == false`): kiro's only
+//! hook surface is a `hooks` object inside a user-owned per-agent config json
+//! under `~/.kiro/agents/`, and its run-default agent is a *setting*, not a file —
+//! there is no file agentgear can target without editing user-owned agent configs
+//! (an earlier version merged into a literal `agents/default.json`, which kiro
+//! treats as nothing special, so those hooks never fired). Commands
+//! (`~/.kiro/prompts/`), agents (kiro's own json agent schema) and skills are
+//! skipped too — see `docs/harness/kiro.md` for why.
 
-use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
-use super::confedit::{json_edit, json_obj_at};
 use super::mcpjson::{self, ServerShape};
 use super::{AgentBackend, BackendState};
-use crate::components::{HookBinding, McpKind};
+use crate::components::McpKind;
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
@@ -41,15 +39,16 @@ impl AgentBackend for KiroBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user", "project"] }
+        // hooks:false — kiro hosts hooks only inside user-owned agent configs, and
+        // its default agent is a setting we cannot reliably target (module doc).
+        Capabilities { plugins: false, mcp: true, hooks: false, scopes: &["user", "project"] }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
         // Ownership is our mcp server keys (the "are we here" signal); the shared
         // probe returns Healthy — never Absent — for an mcp-less plugin, so a present
-        // marker is never dropped. Hooks are best-effort (they only land when the
-        // default agent file exists), so they do not define install state.
-        // Source::Embedded is the only steady-state source for a non-CC backend.
+        // marker is never dropped. Source::Embedded is the only steady-state source
+        // for a non-CC backend.
         let comp = plugin.components(&Source::Embedded)?;
         let mcp = mcp_path(scope)?;
         mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
@@ -57,20 +56,12 @@ impl AgentBackend for KiroBackend {
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?;
-
-        let mut changed = false;
-        changed |= mcpjson::reconcile(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
-        changed |= reconcile_hooks(&default_agent_path(scope)?, &comp.hooks)?;
-        Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
+        mcpjson::reconcile(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
     }
 
     fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&Source::Embedded)?;
-
-        let mut changed = false;
-        changed |= mcpjson::remove(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
-        changed |= remove_hooks(&default_agent_path(scope)?, &comp.hooks)?;
-        Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
+        mcpjson::remove(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {
@@ -101,119 +92,6 @@ fn kiro_base(scope: &Scope) -> Result<PathBuf> {
 
 fn mcp_path(scope: &Scope) -> Result<PathBuf> {
     Ok(kiro_base(scope)?.join("settings").join("mcp.json"))
-}
-
-/// The default agent config file we merge hooks into. Kiro has no standalone hooks
-/// file; hooks live inside an agent's `.json`, and `default` is its default agent.
-/// We only ever merge into this file when it already exists (never create it).
-fn default_agent_path(scope: &Scope) -> Result<PathBuf> {
-    Ok(kiro_base(scope)?.join("agents").join("default.json"))
-}
-
-// --- hooks -------------------------------------------------------------------
-
-/// Map a CC hook event to kiro-cli's camelCase analog. `SessionStart`->`agentSpawn`
-/// (fires when an agent spins up), `UserPromptSubmit`->`userPromptSubmit`,
-/// `PreToolUse`/`PostToolUse`/`Stop` map by name. Events with no kiro analog
-/// (`SessionEnd`, `SubagentStop`, `PreCompact`, `Notification`) are skipped rather
-/// than written under a guessed name.
-fn map_event(cc_event: &str) -> Option<&'static str> {
-    match cc_event {
-        "SessionStart" => Some("agentSpawn"),
-        "UserPromptSubmit" => Some("userPromptSubmit"),
-        "PreToolUse" => Some("preToolUse"),
-        "PostToolUse" => Some("postToolUse"),
-        "Stop" => Some("stop"),
-        _ => None,
-    }
-}
-
-/// Kiro documents `matcher` only for `preToolUse`/`postToolUse`; for the lifecycle
-/// events a matcher is meaningless, so it is dropped even if the CC hook carried one.
-fn event_supports_matcher(kiro_event: &str) -> bool {
-    matches!(kiro_event, "preToolUse" | "postToolUse")
-}
-
-/// A `${CLAUDE_PLUGIN_ROOT}` reference only expands inside Claude Code's own hook
-/// runner (kiro has no equivalent token — its `${VAR}` expansion is OS-env only),
-/// so such a command would spawn as the literal, unexpanded string. Mirrors
-/// `McpServer::is_portable`; applied locally since `HookBinding` has no such method.
-fn hook_is_portable(hook: &HookBinding) -> bool {
-    !hook.command.contains("${CLAUDE_PLUGIN_ROOT}")
-}
-
-/// Kiro's per-hook entry: `{command, matcher?}`. `timeout_ms`/`cache_ttl_seconds`
-/// are left to kiro's defaults (minimal, so a re-reconcile stays byte-identical).
-fn render_hook_entry(kiro_event: &str, hook: &HookBinding) -> Value {
-    let mut obj = Map::new();
-    obj.insert("command".into(), Value::from(hook.command.clone()));
-    if event_supports_matcher(kiro_event)
-        && let Some(matcher) = &hook.matcher
-    {
-        obj.insert("matcher".into(), Value::from(matcher.clone()));
-    }
-    Value::Object(obj)
-}
-
-/// Add-if-absent our hook entries under each mapped event inside the agent file's
-/// `hooks` object, leaving the user's own entries. Idempotent (an entry already
-/// present deep-equal is not re-added). **Never fabricates**: if the agent file does
-/// not exist, hooks are skipped entirely rather than writing a hooks-only file that
-/// is not a valid agent definition. Non-portable hooks and unmapped events are
-/// skipped, same as mcp servers.
-fn reconcile_hooks(agent_file: &Path, hooks: &[HookBinding]) -> Result<bool> {
-    let writable: Vec<(&'static str, &HookBinding)> =
-        hooks.iter().filter(|h| hook_is_portable(h)).filter_map(|h| map_event(&h.event).map(|event| (event, h))).collect();
-    // Skip before any file check when there is nothing to write, and never create
-    // the agent file: hooks only attach to an agent the user already owns.
-    if writable.is_empty() || !agent_file.exists() {
-        return Ok(false);
-    }
-    json_edit(agent_file, |root| {
-        let events = json_obj_at(root, &["hooks"]);
-        for (event, hook) in &writable {
-            let entry = render_hook_entry(event, hook);
-            let list = events.entry((*event).to_string()).or_insert_with(|| Value::Array(Vec::new()));
-            if let Value::Array(list) = list
-                && !list.iter().any(|e| e == &entry)
-            {
-                list.push(entry);
-            }
-        }
-        Ok(())
-    })
-}
-
-/// Strip exactly our hook entries (matched by command string) from every event in
-/// the agent file's `hooks` object, dropping an event array we emptied and the whole
-/// `hooks` object if nothing of ours or the user's remains. A user entry (under any
-/// event) survives.
-fn remove_hooks(agent_file: &Path, hooks: &[HookBinding]) -> Result<bool> {
-    if !agent_file.exists() {
-        return Ok(false);
-    }
-    let ours: BTreeSet<&str> = hooks.iter().filter(|h| hook_is_portable(h)).map(|h| h.command.as_str()).collect();
-    json_edit(agent_file, |root| {
-        let Some(map) = root.as_object_mut() else { return Ok(()) };
-        let emptied = {
-            let Some(events) = map.get_mut("hooks").and_then(Value::as_object_mut) else {
-                return Ok(());
-            };
-            for entries in events.values_mut() {
-                if let Some(list) = entries.as_array_mut() {
-                    list.retain(|e| e.get("command").and_then(Value::as_str).is_none_or(|c| !ours.contains(c)));
-                }
-            }
-            events.retain(|_, entries| entries.as_array().is_none_or(|a| !a.is_empty()));
-            events.is_empty()
-        };
-        // Drop a `hooks` key we emptied so an uninstall leaves no residue in the
-        // user's agent file. A user's own hook keeps `events` non-empty -> kept.
-        if emptied {
-            map.remove("hooks");
-        }
-        Ok(())
-    })
 }
 
 // --- report ------------------------------------------------------------------

@@ -22,7 +22,6 @@ agentgear = { path = "../../crates/agentgear", features = [
     "qwen-code",
     "copilot-cli",
     "kimi",
-    "kiro",
     "goose",
     "crush",
     "droid",

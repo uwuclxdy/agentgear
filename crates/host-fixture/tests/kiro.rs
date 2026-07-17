@@ -121,7 +121,7 @@ fn fixture_dir() -> OsString {
 fn kiro_full_lifecycle() {
     let env = Env::new("lifecycle");
 
-    // install: translates mcp into settings/mcp.json + hooks into agents/default.json.
+    // install: translates mcp into settings/mcp.json (hooks: no kiro surface).
     let (ok, out) = env.fixture(&["setup", "--agent", "kiro"]);
     assert!(ok, "setup failed: {out}");
     assert_eq!(out, "Installed", "first setup should install, got {out}");
@@ -147,15 +147,11 @@ fn kiro_full_lifecycle() {
         "sse remote arm mismatch:\n{m}"
     );
 
+    // hooks: capability is false — kiro's only hook surface is a user-owned
+    // per-agent config json (its default agent is a setting, not a file named
+    // default.json), so the backend must leave the seeded agent file untouched.
     let a = env.agent();
-    // hooks: SessionStart -> agentSpawn, UserPromptSubmit -> userPromptSubmit.
-    assert!(a.contains("agentSpawn"), "SessionStart was not mapped to agentSpawn:\n{a}");
-    assert!(a.contains("userPromptSubmit"), "UserPromptSubmit hook missing:\n{a}");
-    assert!(a.contains("self-heal"), "agentSpawn hook command missing:\n{a}");
-    assert!(a.contains("check-restart"), "userPromptSubmit hook command missing:\n{a}");
-    // the user's agent identity + their own hook survived.
-    assert!(a.contains("you are helpful"), "seeded agent prompt was clobbered:\n{a}");
-    assert!(a.contains("user-own-stop-hook"), "seeded user hook was clobbered:\n{a}");
+    assert_eq!(a, SEED_AGENT, "kiro backend must not touch the user's agent file:\n{a}");
 
     // safety: everything we wrote is under the throwaway temp root.
     for p in [env.kiro.join("settings").join("mcp.json"), env.kiro.join("agents").join("default.json")] {
@@ -176,14 +172,10 @@ fn kiro_full_lifecycle() {
     assert!(m.contains("someOtherSetting"), "uninstall removed the seeded top-level key:\n{m}");
 
     let a = env.agent();
-    assert!(!a.contains("agentSpawn") && !a.contains("userPromptSubmit"), "our hook events survived uninstall:\n{a}");
-    assert!(!a.contains("self-heal") && !a.contains("check-restart"), "our hook commands survived uninstall:\n{a}");
-    assert!(a.contains("user-own-stop-hook"), "uninstall removed the user's own hook:\n{a}");
-    assert!(a.contains("you are helpful"), "uninstall removed the user's agent identity:\n{a}");
+    assert_eq!(a, SEED_AGENT, "uninstall must leave the user's agent file untouched:\n{a}");
 
     // the post-uninstall config still parses: a clean re-install lands again.
     let (ok, out) = env.fixture(&["setup", "--agent", "kiro"]);
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.mcp().contains("ez-fixture"), "re-install did not re-add our server");
-    assert!(env.agent().contains("agentSpawn"), "re-install did not re-add our hooks");
 }
