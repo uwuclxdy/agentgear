@@ -119,6 +119,8 @@ fn goose_full_lifecycle() {
     let env = Env::new("lifecycle");
     let hooks_file = env.hooks_json();
     let plugin_dir = env.root.join(".agents").join("plugins").join("ez-fixture-plugin");
+    let skill_dir = plugin_dir.join("skills").join("ez-skill");
+    let skill = skill_dir.join("SKILL.md");
 
     // install: translates mcp (extensions) + hooks into goose's config.
     let (ok, out) = env.fixture(&["setup", "--agent", "goose"]);
@@ -159,6 +161,13 @@ fn goose_full_lifecycle() {
     assert!(h.contains("SessionStart") && h.contains("host_fixture self-heal"), "SessionStart hook missing:\n{h}");
     assert!(h.contains("UserPromptSubmit") && h.contains("host_fixture check-restart"), "UserPromptSubmit hook missing:\n{h}");
 
+    // skills: inside the `~/.agents/plugins/<plugin>/skills` dir goose owns, ownership-tagged.
+    assert!(skill.exists(), "skill SKILL.md not written: {}", skill.display());
+    let sk = fs::read_to_string(&skill).unwrap();
+    assert!(sk.contains("name: ez-skill") && sk.contains("description:"), "skill frontmatter missing:\n{sk}");
+    assert!(sk.contains("x-agentgear") && sk.contains("ez-fixture-plugin"), "ownership tag missing:\n{sk}");
+    assert!(skill_dir.join("reference.md").exists(), "skill support file not copied through");
+
     // safety: everything we wrote is under the throwaway temp root.
     for target in [env.goose.join("config.yaml"), hooks_file.clone()] {
         assert!(target.starts_with(&env.root), "backend wrote outside the temp root: {}", target.display());
@@ -167,6 +176,13 @@ fn goose_full_lifecycle() {
     // idempotent: a second identical reconcile re-parses the config and no-ops.
     let (ok, out) = env.fixture(&["setup", "--agent", "goose"]);
     assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+
+    // mutation guard: delete our SKILL.md; self-heal must repair (skills Absent -> NeedsRepair),
+    // not NoOp. A no-op skills probe would leave it missing.
+    fs::remove_file(&skill).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted skill: {out}");
+    assert!(skill.exists() && fs::read_to_string(&skill).unwrap().contains("x-agentgear"), "self-heal did not restore the tagged skill");
 
     // uninstall: our entries/files gone, the user's kept.
     let (ok, out) = env.fixture(&["uninstall"]);

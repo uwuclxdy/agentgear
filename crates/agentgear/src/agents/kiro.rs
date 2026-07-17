@@ -9,13 +9,16 @@
 //! there is no file agentgear can target without editing user-owned agent configs
 //! (an earlier version merged into a literal `agents/default.json`, which kiro
 //! treats as nothing special, so those hooks never fired). Commands
-//! (`~/.kiro/prompts/`), agents (kiro's own json agent schema) and skills are
-//! skipped too — see `docs/harness/kiro.md` for why.
+//! (`~/.kiro/prompts/`) and agents (kiro's own json agent schema) are skipped — see
+//! `docs/harness/kiro.md` for why. Skills land as bare
+//! `~/.kiro/skills/<name>/SKILL.md` (both scopes), auto-inherited by every kiro agent,
+//! tagged for ownership; kiro requires `name`+`description`, which the renderer ensures.
 
 use std::path::PathBuf;
 
 use super::mcpjson::{self, ServerShape};
 use super::report;
+use super::skillsdir;
 use super::{AgentBackend, BackendState};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
@@ -48,18 +51,23 @@ impl AgentBackend for KiroBackend {
         // (rehydrated `--path`, else the compile-time default), so probe and reconcile
         // render identical bytes.
         let comp = plugin.components(source)?;
-        let mcp = mcp_path(scope)?;
-        mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
+        let mcp = mcpjson::probe(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
+        let skills = skillsdir::probe(&kiro_base(scope)?.join("skills"), plugin, &comp.skills)?;
+        Ok(report::compose([Some(mcp), skills].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?;
-        mcpjson::reconcile(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
+        let mut changed = mcpjson::reconcile(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= skillsdir::reconcile(&kiro_base(scope)?.join("skills"), plugin, &comp.skills)?;
+        Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
     fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&Source::Embedded)?;
-        mcpjson::remove(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
+        let mut changed = mcpjson::remove(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= skillsdir::remove(&kiro_base(scope)?.join("skills"), plugin, &comp.skills)?;
+        Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {

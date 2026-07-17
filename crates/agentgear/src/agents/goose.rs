@@ -18,12 +18,15 @@
 //!   own precedence) and relocates both surfaces: `<root>/config/config.yaml` and
 //!   `<root>/.agents/plugins`, not the ordinary XDG/HOME-derived paths.
 //!
+//! Skills land inside the plugin dir goose already owns
+//! (`~/.agents/plugins/<plugin>/skills/<name>/SKILL.md`), tagged for ownership;
+//! `remove` drops the whole plugin dir so they need no separate removal.
+//!
 //! Skipped surfaces (see `docs/harness/goose.md`): commands + agents (both would
 //! translate into goose's single `recipe` YAML format — a command also needs a
 //! `slash_commands:` config.yaml entry, an agent a `sub_recipes:`/by-name
 //! reference — with a Jinja `{{ }}` parameter contract the brief could not pin
-//! down; writing a malformed recipe a live goose rejects is the risk we avoid) and
-//! skills.
+//! down; writing a malformed recipe a live goose rejects is the risk we avoid).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -36,6 +39,7 @@ use serde_norway::{Mapping, Value as Yaml};
 use super::cchooks::{hook_is_portable, render_hook_group};
 use super::confedit::{write_file_idem, yaml_edit};
 use super::report;
+use super::skillsdir;
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, McpKind, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -77,7 +81,8 @@ impl AgentBackend for GooseBackend {
         let comp = plugin.components(source)?;
         let mcp = if comp.mcp_servers.iter().any(is_writable) { Some(probe_mcp(&config_yaml()?, &comp.mcp_servers)?) } else { None };
         let hooks = probe_hooks(&hooks_json_path(scope, plugin.name)?, &comp.hooks)?;
-        Ok(report::compose([mcp, hooks].into_iter().flatten()))
+        let skills = skillsdir::probe(&skills_dir(scope, plugin.name)?, plugin, &comp.skills)?;
+        Ok(report::compose([mcp, hooks, skills].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -86,6 +91,7 @@ impl AgentBackend for GooseBackend {
         let mut changed = false;
         changed |= reconcile_mcp(&config_yaml()?, &comp.mcp_servers, desired.reenable)?;
         changed |= reconcile_hooks(&hooks_json_path(scope, plugin.name)?, &comp.hooks)?;
+        changed |= skillsdir::reconcile(&skills_dir(scope, plugin.name)?, plugin, &comp.skills)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -157,6 +163,13 @@ fn plugin_dir(scope: &Scope, plugin: &str) -> Result<PathBuf> {
 
 fn hooks_json_path(scope: &Scope, plugin: &str) -> Result<PathBuf> {
     Ok(plugin_dir(scope, plugin)?.join("hooks").join("hooks.json"))
+}
+
+/// The skills root inside the plugin dir goose owns: `<plugin_dir>/skills`. goose
+/// auto-discovers `~/.agents/plugins/<plugin>/skills/<name>/SKILL.md`. `remove` drops
+/// the whole plugin dir, so skills need no separate removal.
+fn skills_dir(scope: &Scope, plugin: &str) -> Result<PathBuf> {
+    Ok(plugin_dir(scope, plugin)?.join("skills"))
 }
 
 /// What goose can faithfully host: stdio and streamable HTTP. An `sse` extension

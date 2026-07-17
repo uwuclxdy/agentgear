@@ -1,14 +1,18 @@
-//! The openclaw backend: mcp-only, into openclaw's single user-level config
-//! `~/.openclaw/openclaw.json`. MCP goes through the shared json renderer under the
-//! two-segment key path `mcp.servers.<name>` with `ServerShape::plain()` (openclaw's
-//! stdio body is exactly `{command, args, env}`). Every key is our own server name,
-//! so `remove` is exact and a second reconcile is a true `NoOp`.
+//! The openclaw backend: mcp + skills, into openclaw's single user-level config
+//! `~/.openclaw/openclaw.json` plus its global managed skill dir `~/.openclaw/skills`.
+//! MCP goes through the shared json renderer under the two-segment key path
+//! `mcp.servers.<name>` with `ServerShape::plain()` (openclaw's stdio body is exactly
+//! `{command, args, env}`). Every key is our own server name and every skill dir
+//! carries our ownership tag, so `remove` is exact and a second reconcile is a true
+//! `NoOp`.
 //!
-//! openclaw exposes no config-writable surface for anything else agentgear
-//! translates (see `docs/harness/openclaw.md`): hooks are JS/TS plugin code enabled
-//! by a flag, never a shell command in JSON; "commands" are SKILL.md skills, not the
-//! CC command-markdown shape; subagents live in-config but have no per-file surface
-//! to point at. All are skipped. The config is JSON5 (comments + trailing commas
+//! openclaw exposes no config-writable surface for hooks/commands/subagents (see
+//! `docs/harness/openclaw.md`): hooks are JS/TS plugin code enabled by a flag, never
+//! a shell command in JSON; "commands" are themselves SKILL.md skills; subagents live
+//! in-config but have no per-file surface to point at. Those are skipped. The
+//! translated CC skills land as bare `~/.openclaw/skills/<name>/SKILL.md` (openclaw
+//! requires `name`+`description`, which the shared renderer ensures). The config is
+//! JSON5 (comments + trailing commas
 //! legal), but we parse it as strict JSON: a JSON5-only file surfaces as
 //! `Error::Config` (the never-clobber path) rather than being silently rewritten.
 
@@ -19,6 +23,7 @@ use serde_json::Value;
 
 use super::mcpjson::{self, ServerShape};
 use super::report;
+use super::skillsdir;
 use super::{AgentBackend, BackendState};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
@@ -50,23 +55,29 @@ impl AgentBackend for OpenclawBackend {
     }
 
     fn probe(&self, plugin: &Plugin, _scope: &Scope, source: &Source) -> Result<BackendState> {
-        // Ownership is defined by our mcp server keys (the canonical "are we here"
-        // signal); the shared probe returns Healthy — never Absent — for an mcp-less
-        // plugin, so a present marker is never dropped. `source` is the one self_heal
-        // resolved for this agent (rehydrated `--path`, else the compile-time default),
-        // so probe and reconcile render identical bytes.
+        // Compose the mcp-server keys (the canonical "are we here" signal, Healthy —
+        // never Absent — for an mcp-less plugin so a present marker is never dropped)
+        // with the skills surface, so a deleted skill behind healthy mcp reads
+        // NeedsRepair. `source` is the one self_heal resolved for this agent (rehydrated
+        // `--path`, else the compile-time default), so probe/reconcile render identical bytes.
         let comp = plugin.components(source)?;
-        mcpjson::probe(&config_path()?, MCP_KEY, &comp.mcp_servers, ServerShape::plain())
+        let mcp = mcpjson::probe(&config_path()?, MCP_KEY, &comp.mcp_servers, ServerShape::plain())?;
+        let skills = skillsdir::probe(&skills_root()?, plugin, &comp.skills)?;
+        Ok(report::compose([Some(mcp), skills].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, _scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?;
-        mcpjson::reconcile(&config_path()?, MCP_KEY, &comp.mcp_servers, ServerShape::plain())
+        let mut changed = mcpjson::reconcile(&config_path()?, MCP_KEY, &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= skillsdir::reconcile(&skills_root()?, plugin, &comp.skills)?;
+        Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
     fn remove(&self, plugin: &Plugin, _scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&Source::Embedded)?;
-        mcpjson::remove(&config_path()?, MCP_KEY, &comp.mcp_servers, ServerShape::plain())
+        let mut changed = mcpjson::remove(&config_path()?, MCP_KEY, &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= skillsdir::remove(&skills_root()?, plugin, &comp.skills)?;
+        Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {
@@ -113,6 +124,16 @@ fn config_path() -> Result<PathBuf> {
     config_path_opt().ok_or_else(|| {
         Error::Tree("no home dir (HOME/OPENCLAW_STATE_DIR/OPENCLAW_HOME/OPENCLAW_CONFIG_PATH unset); cannot locate ~/.openclaw".into())
     })
+}
+
+/// openclaw's global managed skill dir, beside the config file: `<home>/skills`
+/// (`~/.openclaw/skills` by default, honoring the same env overrides as
+/// `config_path`). Bare `<name>/SKILL.md`, tagged for ownership; openclaw registers a
+/// loose file here as `openclaw-managed`.
+fn skills_root() -> Result<PathBuf> {
+    let config = config_path()?;
+    let base = config.parent().ok_or_else(|| Error::Tree("openclaw config path has no parent dir".into()))?;
+    Ok(base.join("skills"))
 }
 
 fn env_nonempty(var: &str) -> Option<std::ffi::OsString> {

@@ -120,8 +120,10 @@ fn fixture_dir() -> OsString {
 #[test]
 fn kiro_full_lifecycle() {
     let env = Env::new("lifecycle");
+    let skill_dir = env.kiro.join("skills").join("ez-skill");
+    let skill = skill_dir.join("SKILL.md");
 
-    // install: translates mcp into settings/mcp.json (hooks: no kiro surface).
+    // install: translates mcp into settings/mcp.json + skills (hooks: no kiro surface).
     let (ok, out) = env.fixture(&["setup", "--agent", "kiro"]);
     assert!(ok, "setup failed: {out}");
     assert_eq!(out, "Installed", "first setup should install, got {out}");
@@ -153,8 +155,15 @@ fn kiro_full_lifecycle() {
     let a = env.agent();
     assert_eq!(a, SEED_AGENT, "kiro backend must not touch the user's agent file:\n{a}");
 
+    // skills: bare `<name>/SKILL.md` under ~/.kiro/skills, name+description ensured, tagged.
+    assert!(skill.exists(), "skill SKILL.md not written: {}", skill.display());
+    let sk = fs::read_to_string(&skill).unwrap();
+    assert!(sk.contains("name: ez-skill") && sk.contains("description:"), "skill frontmatter missing name/description:\n{sk}");
+    assert!(sk.contains("x-agentgear") && sk.contains("ez-fixture-plugin"), "ownership tag missing:\n{sk}");
+    assert!(skill_dir.join("reference.md").exists(), "skill support file not copied through");
+
     // safety: everything we wrote is under the throwaway temp root.
-    for p in [env.kiro.join("settings").join("mcp.json"), env.kiro.join("agents").join("default.json")] {
+    for p in [env.kiro.join("settings").join("mcp.json"), env.kiro.join("agents").join("default.json"), skill.clone()] {
         assert!(p.starts_with(&env.root), "backend wrote outside the temp root: {}", p.display());
     }
 
@@ -173,6 +182,7 @@ fn kiro_full_lifecycle() {
 
     let a = env.agent();
     assert_eq!(a, SEED_AGENT, "uninstall must leave the user's agent file untouched:\n{a}");
+    assert!(!skill_dir.exists(), "our skill dir survived uninstall: {}", skill_dir.display());
 
     // the post-uninstall config still parses: a clean re-install lands again.
     let (ok, out) = env.fixture(&["setup", "--agent", "kiro"]);

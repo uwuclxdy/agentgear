@@ -10,10 +10,13 @@
 //! plugin-name-prefixed and every mcp key is our own server name, so `remove` is
 //! exact and a second reconcile is a true `NoOp`.
 //!
-//! Skipped surfaces (see `docs/harness/kilo.md`): hooks (kilo has no config-file
+//! Skills land as bare `<base>/skills/<name>/SKILL.md` (kilo scans `{skill,skills}/`
+//! in every discovered config dir, both scopes), tagged for ownership; kilo requires
+//! `name`+`description`, which the shared renderer ensures.
+//!
+//! Skipped surface (see `docs/harness/kilo.md`): hooks (kilo has no config-file
 //! shell-hook surface — an open feature request, kilocode#5827, asks for
-//! opencode-style lifecycle hooks), and skills (no first-class loose-file skill
-//! surface).
+//! opencode-style lifecycle hooks).
 
 use std::fmt::Write as _;
 use std::fs;
@@ -23,6 +26,7 @@ use serde_json::{Map, Value};
 
 use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem, yaml_quote};
 use super::report;
+use super::skillsdir;
 use super::{AgentBackend, BackendState};
 use crate::components::{MarkdownDoc, McpKind, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -65,7 +69,8 @@ impl AgentBackend for KiloBackend {
             &expected_docs(&base, "agents", plugin.name, &comp.agents, |doc| render_agent_md(doc).into_bytes()),
             |_, _| true,
         )?;
-        Ok(report::compose([mcp, commands, agents].into_iter().flatten()))
+        let skills = skillsdir::probe(&base.join("skills"), plugin, &comp.skills)?;
+        Ok(report::compose([mcp, commands, agents, skills].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -83,6 +88,7 @@ impl AgentBackend for KiloBackend {
         for doc in &comp.agents {
             changed |= write_file_idem(&doc_path(&base, "agents", plugin.name, doc), render_agent_md(doc).as_bytes())?;
         }
+        changed |= skillsdir::reconcile(&base.join("skills"), plugin, &comp.skills)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -99,6 +105,7 @@ impl AgentBackend for KiloBackend {
         for doc in &comp.agents {
             changed |= remove_file_idem(&doc_path(&base, "agents", plugin.name, doc))?;
         }
+        changed |= skillsdir::remove(&base.join("skills"), plugin, &comp.skills)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 

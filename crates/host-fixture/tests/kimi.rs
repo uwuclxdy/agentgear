@@ -134,6 +134,8 @@ fn fixture_dir() -> OsString {
 #[test]
 fn kimi_full_lifecycle() {
     let env = Env::new("lifecycle");
+    let skill_dir = env.kimi.join("skills").join("ez-skill");
+    let skill = skill_dir.join("SKILL.md");
 
     // install: translates mcp -> mcp.json + hooks -> config.toml.
     let (ok, out) = env.fixture(&["setup", "--agent", "kimi"]);
@@ -181,8 +183,15 @@ fn kimi_full_lifecycle() {
     assert!(c.contains("model = \"kimi-k2\""), "seeded top-level key was clobbered:\n{c}");
     assert!(c.contains("the user's own kimi config"), "seeded comment was dropped (naive re-serialize?):\n{c}");
 
+    // skills: bare `<name>/SKILL.md` under ~/.kimi-code/skills, ownership-tagged, support file copied.
+    assert!(skill.exists(), "skill SKILL.md not written: {}", skill.display());
+    let sk = fs::read_to_string(&skill).unwrap();
+    assert!(sk.contains("name: ez-skill") && sk.contains("description:"), "skill frontmatter missing:\n{sk}");
+    assert!(sk.contains("x-agentgear") && sk.contains("ez-fixture-plugin"), "ownership tag missing:\n{sk}");
+    assert!(skill_dir.join("reference.md").exists(), "skill support file not copied through");
+
     // safety: everything we wrote is under the throwaway temp root.
-    for target in [env.kimi.join("mcp.json"), env.kimi.join("config.toml")] {
+    for target in [env.kimi.join("mcp.json"), env.kimi.join("config.toml"), skill.clone()] {
         assert!(target.starts_with(&env.root), "backend wrote outside the temp root: {}", target.display());
     }
 
@@ -204,10 +213,38 @@ fn kimi_full_lifecycle() {
     assert!(c.contains("their-stop-hook"), "uninstall removed the seeded Stop hook:\n{c}");
     assert!(c.contains("model = \"kimi-k2\""), "uninstall removed the seeded top-level key:\n{c}");
     assert!(c.contains("the user's own kimi config"), "uninstall dropped the seeded comment:\n{c}");
+    assert!(!skill_dir.exists(), "our skill dir survived uninstall: {}", skill_dir.display());
 
     // the post-uninstall config still parses: a clean re-install lands again
     // (json_edit/toml_edit would error on an unparseable file).
     let (ok, out) = env.fixture(&["setup", "--agent", "kimi"]);
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.mcp_json().contains("ez-fixture"), "re-install did not re-add our server");
+}
+
+/// The same never-clobber guarantee on a DEDICATED skill root (`~/.kimi-code/skills`,
+/// not the shared `.agents/skills`): a foreign skill at our plugin skill's name survives
+/// install (reconcile skips it) and uninstall (remove deletes only our-tagged dirs),
+/// proving the ownership guard is root-agnostic, not shared-root-specific.
+#[test]
+fn kimi_never_clobbers_a_foreign_skill() {
+    for (label, seed) in [
+        ("untagged", "---\nname: ez-skill\ndescription: the user's own\n---\nkeep me\n"),
+        ("rival-tagged", "---\nname: ez-skill\ndescription: rival\nx-agentgear: \"rival-plugin@rival-mkt\"\n---\nrival body\n"),
+    ] {
+        let env = Env::new(&format!("foreign-{label}"));
+        let dir = env.kimi.join("skills").join("ez-skill");
+        let skill = dir.join("SKILL.md");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&skill, seed).unwrap();
+
+        let (ok, out) = env.fixture(&["setup", "--agent", "kimi"]);
+        assert!(ok, "setup failed ({label}): {out}");
+        assert_eq!(fs::read_to_string(&skill).unwrap(), seed, "install clobbered the foreign skill ({label})");
+
+        let (ok, out) = env.fixture(&["uninstall"]);
+        assert!(ok, "uninstall failed ({label}): {out}");
+        assert!(skill.exists(), "uninstall deleted the foreign skill dir ({label})");
+        assert_eq!(fs::read_to_string(&skill).unwrap(), seed, "uninstall altered the foreign skill ({label})");
+    }
 }

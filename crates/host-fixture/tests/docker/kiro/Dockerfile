@@ -31,6 +31,8 @@ export KIRO_HOME="$HOME/.kiro"
 export PATH="$HOME/.local/bin:$KIRO_HOME/bin:$PATH"
 MCP="$KIRO_HOME/settings/mcp.json"
 AGENT="$KIRO_HOME/agents/default.json"
+SKILL_DIR="$KIRO_HOME/skills/ez-skill"
+SKILL="$SKILL_DIR/SKILL.md"
 mkdir -p "$KIRO_HOME/settings" "$KIRO_HOME/agents"
 
 # Best-effort real install: its payoff is the first-use login flow (unconfirmed
@@ -59,6 +61,8 @@ if ! grep -q 'ez-fixture'        "$MCP";   then echo "FAIL: our mcp server not r
 if ! grep -q 'theirs'            "$MCP";   then echo "FAIL: seeded server clobbered on install"; exit 1; fi
 if ! grep -q 'someOtherSetting'  "$MCP";   then echo "FAIL: seeded key clobbered on install"; exit 1; fi
 if [ "$(cat "$AGENT")" != "$AGENT_BEFORE" ]; then echo "FAIL: kiro backend touched the user's agent file (hooks are unsupported)"; cat "$AGENT"; exit 1; fi
+if [ ! -f "$SKILL" ];            then echo "FAIL: translated skill SKILL.md missing"; exit 1; fi
+if ! grep -q 'x-agentgear' "$SKILL"; then echo "FAIL: skill ownership tag missing"; exit 1; fi
 
 # Native second opinion (best-effort; auth-free config parse above is authoritative).
 if out=$(kiro-cli mcp list 2>&1); then
@@ -76,6 +80,7 @@ host_fixture uninstall
 if grep -q 'ez-fixture'   "$MCP";   then echo "FAIL: our server survived uninstall"; exit 1; fi
 if ! grep -q 'theirs'     "$MCP";   then echo "FAIL: uninstall removed the seeded server"; exit 1; fi
 if [ "$(cat "$AGENT")" != "$AGENT_BEFORE" ]; then echo "FAIL: uninstall touched the user's agent file"; cat "$AGENT"; exit 1; fi
+if [ -d "$SKILL_DIR" ]; then echo "FAIL: skill dir survived uninstall"; exit 1; fi
 
 echo "kiro docker leg: OK"
 TEST

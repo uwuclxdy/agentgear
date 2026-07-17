@@ -112,6 +112,8 @@ fn copilot_cli_full_lifecycle() {
     let user_hooks = env.copilot.join("hooks").join("user-own.json");
     let agent_file = env.copilot.join("agents").join("ez-fixture-plugin-ez-helper.agent.md");
     let user_agent = env.copilot.join("agents").join("user-own.agent.md");
+    let skill_dir = env.copilot.join("skills").join("ez-skill");
+    let skill = skill_dir.join("SKILL.md");
 
     // install: translates mcp + hooks + agents into copilot's config.
     let (ok, out) = env.fixture(&["setup", "--agent", "copilot-cli"]);
@@ -169,8 +171,15 @@ fn copilot_cli_full_lifecycle() {
     assert!(a.contains("fixture helper agent"), "agent body not preserved:\n{a}");
     assert!(user_agent.exists(), "seeded user agent file was removed on install");
 
+    // skills: bare `<name>/SKILL.md` under ~/.copilot/skills, name+description ensured, tagged.
+    assert!(skill.exists(), "skill SKILL.md not written: {}", skill.display());
+    let sk = fs::read_to_string(&skill).unwrap();
+    assert!(sk.contains("name: ez-skill") && sk.contains("description:"), "skill frontmatter missing name/description:\n{sk}");
+    assert!(sk.contains("x-agentgear") && sk.contains("ez-fixture-plugin"), "ownership tag missing:\n{sk}");
+    assert!(skill_dir.join("reference.md").exists(), "skill support file not copied through");
+
     // safety: everything we wrote is under the throwaway temp root.
-    for p in [env.copilot.join("mcp-config.json"), hooks_file.clone(), agent_file.clone()] {
+    for p in [env.copilot.join("mcp-config.json"), hooks_file.clone(), agent_file.clone(), skill.clone()] {
         assert!(p.starts_with(&env.root), "backend wrote outside the temp root: {}", p.display());
     }
 
@@ -190,6 +199,7 @@ fn copilot_cli_full_lifecycle() {
     assert!(user_hooks.exists(), "uninstall removed the seeded user hook file");
     assert!(!agent_file.exists(), "our agent file survived uninstall: {}", agent_file.display());
     assert!(user_agent.exists(), "uninstall removed the seeded user agent file");
+    assert!(!skill_dir.exists(), "our skill dir survived uninstall: {}", skill_dir.display());
 
     // the post-uninstall config still parses: a clean re-install lands again
     // (json_edit would error on an unparseable mcp-config.json).

@@ -28,6 +28,8 @@ CONFIG_DIR="$HOME/.config/kilo"
 CONFIG="$CONFIG_DIR/kilo.json"
 CMD_FILE="$CONFIG_DIR/commands/ez-fixture-plugin-hello.md"
 AGENT_FILE="$CONFIG_DIR/agents/ez-fixture-plugin-ez-helper.md"
+SKILL_DIR="$CONFIG_DIR/skills/ez-skill"
+SKILL="$SKILL_DIR/SKILL.md"
 mkdir -p "$CONFIG_DIR"
 
 # Seed a foreign mcp server + an unrelated key that must survive install/uninstall.
@@ -45,6 +47,8 @@ if ! grep -q '"theme"'        "$CONFIG"; then echo "FAIL: seeded key clobbered o
 if [ ! -f "$CMD_FILE" ];                  then echo "FAIL: translated command markdown missing"; exit 1; fi
 if [ ! -f "$AGENT_FILE" ];                then echo "FAIL: translated agent markdown missing"; exit 1; fi
 if ! grep -q 'mode: subagent' "$AGENT_FILE"; then echo "FAIL: agent not translated to a subagent"; exit 1; fi
+if [ ! -f "$SKILL" ];                     then echo "FAIL: translated skill SKILL.md missing"; exit 1; fi
+if ! grep -q 'x-agentgear'   "$SKILL";    then echo "FAIL: skill ownership tag missing"; exit 1; fi
 
 # Native second opinion (best-effort; auth-free config parse above is authoritative).
 if out=$(kilo mcp list 2>&1); then
@@ -63,6 +67,7 @@ if grep -q 'ez-fixture' "$CONFIG"; then echo "FAIL: our server survived uninstal
 if ! grep -q 'theirs'   "$CONFIG"; then echo "FAIL: uninstall removed the seeded server"; exit 1; fi
 if [ -f "$CMD_FILE" ];             then echo "FAIL: command file survived uninstall"; exit 1; fi
 if [ -f "$AGENT_FILE" ];           then echo "FAIL: agent file survived uninstall"; exit 1; fi
+if [ -d "$SKILL_DIR" ];            then echo "FAIL: skill dir survived uninstall"; exit 1; fi
 
 echo "kilo docker leg: OK"
 TEST

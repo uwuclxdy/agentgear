@@ -99,6 +99,8 @@ fn kilo_full_lifecycle() {
     let env = Env::new("full-lifecycle");
     let cmd_file = env.kilo.join("commands").join("ez-fixture-plugin-hello.md");
     let agent_file = env.kilo.join("agents").join("ez-fixture-plugin-ez-helper.md");
+    let skill_dir = env.kilo.join("skills").join("ez-skill");
+    let skill = skill_dir.join("SKILL.md");
 
     // install: translates mcp + commands + agents into kilo's config.
     let (ok, out) = env.fixture(&["setup", "--agent", "kilo"]);
@@ -149,8 +151,15 @@ fn kilo_full_lifecycle() {
     assert!(agent.contains("fixture subagent"), "agent description not translated:\n{agent}");
     assert!(agent.contains("fixture helper agent"), "agent body not translated:\n{agent}");
 
+    // skills: bare `<name>/SKILL.md` under ~/.config/kilo/skills, name+description ensured, tagged.
+    assert!(skill.exists(), "skill SKILL.md not written: {}", skill.display());
+    let sk = fs::read_to_string(&skill).unwrap();
+    assert!(sk.contains("name: ez-skill") && sk.contains("description:"), "skill frontmatter missing name/description:\n{sk}");
+    assert!(sk.contains("x-agentgear") && sk.contains("ez-fixture-plugin"), "ownership tag missing:\n{sk}");
+    assert!(skill_dir.join("reference.md").exists(), "skill support file not copied through");
+
     // safety: everything we wrote is under the throwaway temp root.
-    for p in [env.kilo.join("kilo.json"), cmd_file.clone(), agent_file.clone()] {
+    for p in [env.kilo.join("kilo.json"), cmd_file.clone(), agent_file.clone(), skill.clone()] {
         assert!(p.starts_with(&env.root), "backend wrote outside the temp root: {}", p.display());
     }
 
@@ -168,6 +177,7 @@ fn kilo_full_lifecycle() {
     assert!(c.contains("\"theme\"") && c.contains("dark"), "uninstall removed the seeded top-level key:\n{c}");
     assert!(!cmd_file.exists(), "our command file survived uninstall: {}", cmd_file.display());
     assert!(!agent_file.exists(), "our agent file survived uninstall: {}", agent_file.display());
+    assert!(!skill_dir.exists(), "our skill dir survived uninstall: {}", skill_dir.display());
 
     // the post-uninstall config still parses: a clean re-install lands again
     // (json_edit would error on an unparseable kilo.json).

@@ -37,6 +37,8 @@ MCP="$BASE/mcp.json"
 HOOKS="$BASE/hooks.json"
 COMMAND="$BASE/commands/ez-fixture-plugin-hello.md"
 DROID="$BASE/droids/ez-fixture-plugin-ez-helper.md"
+SKILL_DIR="$BASE/skills/ez-skill"
+SKILL="$SKILL_DIR/SKILL.md"
 mkdir -p "$BASE"
 
 # Seed a foreign mcp server + an unrelated key that must survive install/uninstall,
@@ -55,6 +57,8 @@ if ! grep -q 'UserPromptSubmit' "$HOOKS"; then echo "FAIL: UserPromptSubmit hook
 if [ ! -f "$COMMAND" ]; then echo "FAIL: translated command markdown missing"; exit 1; fi
 if [ ! -f "$DROID" ];   then echo "FAIL: translated custom droid markdown missing"; exit 1; fi
 if ! grep -q 'name: ez-fixture-plugin-ez-helper' "$DROID"; then echo "FAIL: custom droid name not namespaced"; exit 1; fi
+if [ ! -f "$SKILL" ]; then echo "FAIL: translated skill SKILL.md missing"; exit 1; fi
+if ! grep -q 'x-agentgear' "$SKILL"; then echo "FAIL: skill ownership tag missing"; exit 1; fi
 
 # No native second opinion: `droid` gates on FACTORY_API_KEY for model-facing work and
 # documents no auth-free `mcp list`, so the config-file assert above is authoritative.
@@ -70,6 +74,7 @@ if grep -q 'ez-fixture' "$MCP"; then echo "FAIL: our server survived uninstall";
 if ! grep -q 'theirs'   "$MCP"; then echo "FAIL: uninstall removed the seeded server"; exit 1; fi
 if [ -f "$COMMAND" ]; then echo "FAIL: command file survived uninstall"; exit 1; fi
 if [ -f "$DROID" ];   then echo "FAIL: custom droid file survived uninstall"; exit 1; fi
+if [ -d "$SKILL_DIR" ]; then echo "FAIL: skill dir survived uninstall"; exit 1; fi
 
 echo "droid docker leg: OK"
 TEST

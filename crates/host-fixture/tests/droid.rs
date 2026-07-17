@@ -117,6 +117,8 @@ fn droid_full_lifecycle() {
     let env = Env::new("lifecycle");
     let command = env.factory.join("commands").join("ez-fixture-plugin-hello.md");
     let droid = env.factory.join("droids").join("ez-fixture-plugin-ez-helper.md");
+    let skill_dir = env.factory.join("skills").join("ez-skill");
+    let skill = skill_dir.join("SKILL.md");
 
     // install: translates mcp + hooks + commands + agents into droid's config tree.
     let (ok, out) = env.fixture(&["setup", "--agent", "droid"]);
@@ -170,8 +172,15 @@ fn droid_full_lifecycle() {
     assert!(d.contains("model: sonnet"), "custom droid model frontmatter not translated:\n{d}");
     assert!(d.contains("fixture helper agent"), "custom droid body not translated:\n{d}");
 
+    // skills: bare `<name>/SKILL.md` under ~/.factory/skills, ownership-tagged, support file copied.
+    assert!(skill.exists(), "skill SKILL.md not written: {}", skill.display());
+    let sk = fs::read_to_string(&skill).unwrap();
+    assert!(sk.contains("name: ez-skill") && sk.contains("description:"), "skill frontmatter missing:\n{sk}");
+    assert!(sk.contains("x-agentgear") && sk.contains("ez-fixture-plugin"), "ownership tag missing:\n{sk}");
+    assert!(skill_dir.join("reference.md").exists(), "skill support file not copied through");
+
     // safety: everything we wrote is under the throwaway temp root.
-    for p in [env.factory.join("mcp.json"), env.factory.join("hooks.json"), command.clone(), droid.clone()] {
+    for p in [env.factory.join("mcp.json"), env.factory.join("hooks.json"), command.clone(), droid.clone(), skill.clone()] {
         assert!(p.starts_with(&env.root), "backend wrote outside the temp root: {}", p.display());
     }
 
@@ -194,6 +203,7 @@ fn droid_full_lifecycle() {
 
     assert!(!command.exists(), "our command file survived uninstall: {}", command.display());
     assert!(!droid.exists(), "our custom droid file survived uninstall: {}", droid.display());
+    assert!(!skill_dir.exists(), "our skill dir survived uninstall: {}", skill_dir.display());
 
     // the post-uninstall config still parses: a clean re-install lands again
     // (json_edit would error on an unparseable mcp.json).

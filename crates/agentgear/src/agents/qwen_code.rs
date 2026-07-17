@@ -12,7 +12,8 @@
 //! `commands/<plugin>/` subtree we own whole; agent files are plugin-prefixed. So
 //! `remove` is exact and a second reconcile is a true `NoOp`. `~/.qwen` is honored
 //! via `QWEN_HOME` first (so a test redirecting it redirects the backend), else
-//! HOME-based. Skills have no qwen file surface and are skipped (see
+//! HOME-based. Skills land as bare `~/.qwen/skills/<name>/SKILL.md` (both scopes),
+//! tagged for ownership so `remove` only deletes skills we wrote (see
 //! `docs/harness/qwen-code.md`).
 
 use std::collections::BTreeSet;
@@ -25,6 +26,7 @@ use super::cchooks::{hook_is_portable, render_hook_group};
 use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem};
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
+use super::skillsdir;
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, MarkdownDoc};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -79,7 +81,8 @@ impl AgentBackend for QwenCodeBackend {
                 .collect::<Vec<_>>(),
             |_, _| true,
         )?;
-        Ok(report::compose([mcp, hooks, commands, agents].into_iter().flatten()))
+        let skills = skillsdir::probe(&base.join("skills"), plugin, &comp.skills)?;
+        Ok(report::compose([mcp, hooks, commands, agents, skills].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -103,6 +106,7 @@ impl AgentBackend for QwenCodeBackend {
         for doc in &comp.agents {
             changed |= write_file_idem(&agent_root.join(agent_file(plugin.name, doc)), render_agent(plugin.name, doc).as_bytes())?;
         }
+        changed |= skillsdir::reconcile(&base.join("skills"), plugin, &comp.skills)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -127,6 +131,7 @@ impl AgentBackend for QwenCodeBackend {
         for doc in &comp.agents {
             changed |= remove_file_idem(&agent_root.join(agent_file(plugin.name, doc)))?;
         }
+        changed |= skillsdir::remove(&base.join("skills"), plugin, &comp.skills)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 

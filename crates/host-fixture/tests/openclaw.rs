@@ -105,6 +105,8 @@ fn fixture_dir() -> OsString {
 #[test]
 fn openclaw_full_lifecycle() {
     let env = Env::new("lifecycle");
+    let skill_dir = env.openclaw.join("skills").join("ez-skill");
+    let skill = skill_dir.join("SKILL.md");
 
     // install: translates our mcp server into openclaw's config.
     let (ok, out) = env.fixture(&["setup", "--agent", "openclaw"]);
@@ -125,8 +127,16 @@ fn openclaw_full_lifecycle() {
     assert!(c.contains("theirs") && c.contains("their-server"), "seeded mcp server was clobbered:\n{c}");
     assert!(c.contains("\"theme\"") && c.contains("dark"), "seeded top-level key was clobbered:\n{c}");
 
+    // skills: bare `<name>/SKILL.md` under ~/.openclaw/skills, name+description ensured, tagged.
+    assert!(skill.exists(), "skill SKILL.md not written: {}", skill.display());
+    let sk = fs::read_to_string(&skill).unwrap();
+    assert!(sk.contains("name: ez-skill") && sk.contains("description:"), "skill frontmatter missing name/description:\n{sk}");
+    assert!(sk.contains("x-agentgear") && sk.contains("ez-fixture-plugin"), "ownership tag missing:\n{sk}");
+    assert!(skill_dir.join("reference.md").exists(), "skill support file not copied through");
+
     // safety: everything we wrote is under the throwaway temp root.
     assert!(env.openclaw.join("openclaw.json").starts_with(&env.root), "backend wrote outside the temp root");
+    assert!(skill.starts_with(&env.root), "skill written outside the temp root");
 
     // idempotent: a second identical reconcile is a true NoOp (no write).
     let (ok, out) = env.fixture(&["setup", "--agent", "openclaw"]);
@@ -140,6 +150,7 @@ fn openclaw_full_lifecycle() {
     assert!(!c.contains("ez-fixture"), "our mcp server survived uninstall:\n{c}");
     assert!(c.contains("theirs") && c.contains("their-server"), "uninstall removed the seeded mcp server:\n{c}");
     assert!(c.contains("\"theme\"") && c.contains("dark"), "uninstall removed the seeded top-level key:\n{c}");
+    assert!(!skill_dir.exists(), "our skill dir survived uninstall: {}", skill_dir.display());
 
     // the post-uninstall config still parses: a clean re-install lands again
     // (json_edit would error on an unparseable openclaw.json).

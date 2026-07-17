@@ -107,6 +107,8 @@ fn fixture_dir() -> OsString {
 fn crush_full_lifecycle() {
     let env = Env::new("lifecycle");
     let config_file = env.crush.join("crush.json");
+    let skill_dir = env.crush.join("skills").join("ez-skill");
+    let skill = skill_dir.join("SKILL.md");
 
     // install: translates our mcp server into crush's single crush.json.
     let (ok, out) = env.fixture(&["setup", "--agent", "crush"]);
@@ -142,8 +144,16 @@ fn crush_full_lifecycle() {
         "sse remote arm mismatch:\n{c}"
     );
 
-    // safety: the one file we wrote is under the throwaway temp root.
+    // skills: bare `<name>/SKILL.md` under ~/.config/crush/skills, name+description ensured, tagged.
+    assert!(skill.exists(), "skill SKILL.md not written: {}", skill.display());
+    let sk = fs::read_to_string(&skill).unwrap();
+    assert!(sk.contains("name: ez-skill") && sk.contains("description:"), "skill frontmatter missing name/description:\n{sk}");
+    assert!(sk.contains("x-agentgear") && sk.contains("ez-fixture-plugin"), "ownership tag missing:\n{sk}");
+    assert!(skill_dir.join("reference.md").exists(), "skill support file not copied through");
+
+    // safety: everything we wrote is under the throwaway temp root.
     assert!(config_file.starts_with(&env.root), "backend wrote outside the temp root: {}", config_file.display());
+    assert!(skill.starts_with(&env.root), "skill written outside the temp root");
 
     // idempotent: a second identical reconcile is a true NoOp (no write).
     let (ok, out) = env.fixture(&["setup", "--agent", "crush"]);
@@ -158,6 +168,7 @@ fn crush_full_lifecycle() {
     assert!(c.contains("theirs") && c.contains("their-server"), "uninstall removed the seeded mcp server:\n{c}");
     assert!(c.contains("\"theme\"") && c.contains("dark"), "uninstall removed the seeded top-level key:\n{c}");
     assert!(c.contains("their-guard.sh"), "uninstall removed the seeded user PreToolUse hook:\n{c}");
+    assert!(!skill_dir.exists(), "our skill dir survived uninstall: {}", skill_dir.display());
 
     // the post-uninstall config still parses: a clean re-install lands again
     // (json_edit would error on an unparseable crush.json).

@@ -8,9 +8,11 @@
 //! valid at both scopes — unlike `.cursor/rules/*.mdc`, which cursor only reads as
 //! project files, storing user rules in a SQLite blob no file write can reach).
 //! Every file/key we write is prefixed/keyed by our plugin name, so `remove` is
-//! exact and a second reconcile is a true `NoOp`. Skills have no cursor file
-//! surface and are skipped (see `docs/harness/cursor.md`). Cursor is GUI-first with
-//! no headless config probe, so detection rides on `~/.cursor` (or a CLI on PATH).
+//! exact and a second reconcile is a true `NoOp`. Skills land as bare
+//! `~/.cursor/skills/<name>/SKILL.md` (both scopes), tagged for ownership so `remove`
+//! only ever deletes skills we wrote (see `docs/harness/cursor.md`). Cursor is
+//! GUI-first with no headless config probe, so detection rides on `~/.cursor` (or a
+//! CLI on PATH).
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -21,6 +23,7 @@ use super::cchooks::hook_is_portable;
 use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem};
 use super::mcpjson::{self, ServerShape};
 use super::report;
+use super::skillsdir;
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, MarkdownDoc};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -65,7 +68,8 @@ impl AgentBackend for CursorBackend {
             &expected_docs(&base.join("agents"), plugin.name, "agents/", &comp.agents, |doc| render_agent(plugin.name, doc).into_bytes()),
             |_, _| true,
         )?;
-        Ok(report::compose([mcp, hooks, commands, agents].into_iter().flatten()))
+        let skills = skillsdir::probe(&base.join("skills"), plugin, &comp.skills)?;
+        Ok(report::compose([mcp, hooks, commands, agents, skills].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -84,6 +88,7 @@ impl AgentBackend for CursorBackend {
         for doc in &comp.agents {
             changed |= write_file_idem(&agent_root.join(agent_file(plugin.name, doc)), render_agent(plugin.name, doc).as_bytes())?;
         }
+        changed |= skillsdir::reconcile(&base.join("skills"), plugin, &comp.skills)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -105,6 +110,7 @@ impl AgentBackend for CursorBackend {
         for doc in &comp.agents {
             changed |= remove_file_idem(&agent_root.join(agent_file(plugin.name, doc)))?;
         }
+        changed |= skillsdir::remove(&base.join("skills"), plugin, &comp.skills)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 

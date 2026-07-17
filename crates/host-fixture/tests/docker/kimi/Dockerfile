@@ -34,6 +34,8 @@ export KIMI_DISABLE_TELEMETRY=1
 export KIMI_CODE_NO_AUTO_UPDATE=1
 MCP="$KIMI_CODE_HOME/mcp.json"
 CONFIG="$KIMI_CODE_HOME/config.toml"
+SKILL_DIR="$KIMI_CODE_HOME/skills/ez-skill"
+SKILL="$SKILL_DIR/SKILL.md"
 # Pre-create the config dir so the backend's dir-based detect passes (the CLI would
 # create it on first run anyway); the two products share the `kimi` binary, so the
 # `~/.kimi-code` dir — not the binary name — is what marks this as the current one.
@@ -70,6 +72,8 @@ if ! grep -q 'their-session-hook' "$CONFIG"; then echo "FAIL: seeded colliding h
 if ! grep -q 'their-stop-hook'    "$CONFIG"; then echo "FAIL: seeded untouched hook clobbered on install"; exit 1; fi
 if ! grep -q 'kimi-k2'            "$CONFIG"; then echo "FAIL: seeded config key clobbered on install"; exit 1; fi
 if ! grep -q "user's own kimi config" "$CONFIG"; then echo "FAIL: seeded comment dropped on install"; exit 1; fi
+if [ ! -f "$SKILL" ];             then echo "FAIL: translated skill SKILL.md missing"; exit 1; fi
+if ! grep -q 'x-agentgear' "$SKILL"; then echo "FAIL: skill ownership tag missing"; exit 1; fi
 
 # Native second opinion (best-effort; the auth-free config parse above is authoritative).
 # No native `kimi mcp list` exists to cross-check the mcp write; `kimi doctor` never
@@ -90,6 +94,7 @@ if grep -q 'host_fixture check-restart' "$CONFIG"; then echo "FAIL: our UserProm
 if ! grep -q 'their-session-hook' "$CONFIG"; then echo "FAIL: uninstall removed the seeded SessionStart hook"; exit 1; fi
 if ! grep -q 'their-stop-hook'    "$CONFIG"; then echo "FAIL: uninstall removed the seeded Stop hook"; exit 1; fi
 if ! grep -q 'kimi-k2'            "$CONFIG"; then echo "FAIL: uninstall removed the seeded config key"; exit 1; fi
+if [ -d "$SKILL_DIR" ]; then echo "FAIL: skill dir survived uninstall"; exit 1; fi
 
 echo "kimi docker leg: OK"
 TEST

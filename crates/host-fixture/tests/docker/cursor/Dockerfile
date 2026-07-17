@@ -29,6 +29,8 @@ MCP="$CURSOR/mcp.json"
 HOOKS="$CURSOR/hooks.json"
 CMD="$CURSOR/commands/ez-fixture-plugin-hello.md"
 AGENT="$CURSOR/agents/ez-fixture-plugin-ez-helper.md"
+SKILL_DIR="$CURSOR/skills/ez-skill"
+SKILL="$SKILL_DIR/SKILL.md"
 mkdir -p "$CURSOR"
 
 # Seed a foreign mcp server + an unrelated key that must survive install/uninstall.
@@ -54,6 +56,8 @@ if ! grep -q 'their-session-hook' "$HOOKS"; then echo "FAIL: seeded sessionStart
 if ! grep -q 'their-stop-hook'    "$HOOKS"; then echo "FAIL: seeded stop hook clobbered";          cat "$HOOKS"; exit 1; fi
 if [ ! -f "$CMD" ];                        then echo "FAIL: translated command file missing";     exit 1; fi
 if [ ! -f "$AGENT" ];                      then echo "FAIL: translated agent file missing";       exit 1; fi
+if [ ! -f "$SKILL" ];                      then echo "FAIL: translated skill SKILL.md missing";   exit 1; fi
+if ! grep -q 'x-agentgear'       "$SKILL"; then echo "FAIL: skill ownership tag missing";         exit 1; fi
 
 # A second setup must be a true NoOp — which also proves the written config
 # re-parses cleanly (json_edit errors on an unparseable mcp.json).
@@ -80,6 +84,7 @@ if ! grep -q 'their-session-hook' "$HOOKS"; then echo "FAIL: uninstall removed t
 if ! grep -q 'their-stop-hook'    "$HOOKS"; then echo "FAIL: uninstall removed the seeded stop hook";         exit 1; fi
 if [ -f "$CMD" ];                   then echo "FAIL: command file survived uninstall";        exit 1; fi
 if [ -f "$AGENT" ];                 then echo "FAIL: agent file survived uninstall";          exit 1; fi
+if [ -d "$SKILL_DIR" ];             then echo "FAIL: skill dir survived uninstall";           exit 1; fi
 
 echo "cursor docker leg: OK"
 TEST
