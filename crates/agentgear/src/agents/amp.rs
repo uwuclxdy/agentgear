@@ -44,11 +44,12 @@ impl AgentBackend for AmpBackend {
     }
 
     fn detect(&self) -> bool {
-        // Amp uses a literal `~/.config/amp` on every platform (not the OS config
-        // dir, which diverges on macOS/Windows), so it is HOME-based: a test
-        // redirecting `HOME` also redirects detection. Amp documents no config-dir
-        // override env, so the `amp` binary on PATH is the only other signal.
-        which::which("amp").is_ok() || dirs::home_dir().is_some_and(|h| h.join(".config").join("amp").is_dir())
+        // Amp resolves `$XDG_CONFIG_HOME/amp` (else `~/.config/amp`) on every
+        // platform, not the OS config dir that diverges on macOS/Windows, so a test
+        // redirecting `XDG_CONFIG_HOME` (or `HOME`) also redirects detection. Amp
+        // documents no other config-dir override env, so the `amp` binary on PATH
+        // is the only other signal.
+        which::which("amp").is_ok() || user_config_dir().is_some_and(|d| d.is_dir())
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -86,16 +87,26 @@ impl AgentBackend for AmpBackend {
 
 // --- paths -------------------------------------------------------------------
 
-/// The `~/.config/amp` config base for a scope. Amp hardcodes `~/.config` on every
-/// platform, so this resolves through `HOME`; a missing home is a clear, actionable
+/// Amp's user config dir: `$XDG_CONFIG_HOME/amp` or `~/.config/amp` on every
+/// platform (amp hardcodes this literal path, not the OS config dir that diverges
+/// on macOS/Windows — so this replicates dirs' own XDG-or-home logic rather than
+/// deferring to `dirs::config_dir()`).
+fn user_config_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        .map(|c| c.join("amp"))
+}
+
+/// The amp config base for a scope. A missing config home is a clear, actionable
 /// error. Project scope targets amp's own `.amp/` dir (not advertised in
 /// `capabilities` — a project server needs an explicit `amp mcp approve`, so the
 /// orchestrator only ever reaches user scope; this arm stays defensively correct).
 fn amp_dir(scope: &Scope) -> Result<PathBuf> {
     match scope {
-        Scope::User => dirs::home_dir()
-            .map(|h| h.join(".config").join("amp"))
-            .ok_or_else(|| Error::Tree("no home directory (HOME unset); cannot locate ~/.config/amp".into())),
+        Scope::User => user_config_dir()
+            .ok_or_else(|| Error::Tree("no config directory (XDG_CONFIG_HOME and HOME both unset); cannot locate ~/.config/amp".into())),
         Scope::Project { path } => Ok(path.join(".amp")),
     }
 }

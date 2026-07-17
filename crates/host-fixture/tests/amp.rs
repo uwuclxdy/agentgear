@@ -1,11 +1,15 @@
 //! Hermetic amp-backend lifecycle, fully isolated from the real `~/.config/amp`.
 //! No docker, no auth, no `amp` binary: the backend only ever writes amp's
 //! `settings.json`, so we drive `host_fixture setup --agent amp` against a temp
-//! `$HOME` (amp resolves `~/.config/amp` through `HOME` on every platform) and
-//! assert the written config by reading it back. `detect()` passes off the
-//! pre-created `<home>/.config/amp` dir alone (no `amp` on PATH).
+//! `XDG_CONFIG_HOME` (+ HOME/XDG data dirs) and assert the written config by
+//! reading it back. `detect()` passes off the pre-created config dir alone (no
+//! `amp` on PATH).
 //!
-//! Every path the backend touches derives from `HOME`/`XDG_*`, pointed at a
+//! `XDG_CONFIG_HOME` is also set to a *different* dir than `<home>/.config`, so
+//! the test proves amp's real precedence (XDG wins over `$HOME/.config`, matching
+//! the tool on every OS) rather than merely tolerating an unused env var.
+//!
+//! Every path the backend touches derives from the redirected env, pointed at a
 //! throwaway temp root — so proving our server lands there (and the seeded user
 //! entries survive) also proves it never reaches the real config.
 
@@ -30,8 +34,12 @@ const SEED_CONFIG: &str = r#"{
 
 struct Env {
     root: PathBuf,
-    /// `<home>/.config/amp` — amp's user-scope config dir.
+    /// `$XDG_CONFIG_HOME/amp` — amp's user-scope config dir. `XDG_CONFIG_HOME`
+    /// itself lives outside `<home>/.config` so a resolver that fell back to
+    /// `HOME` instead of honoring the env var would write to the wrong place and
+    /// fail the assertions below.
     amp: PathBuf,
+    config: PathBuf,
     data: PathBuf,
     run: PathBuf,
     /// PATH holding only the fixture binary's dir, so `which("amp")` (and every
@@ -46,8 +54,9 @@ impl Env {
     fn new(name: &str) -> Self {
         let root = std::env::temp_dir().join(format!("ez-amp-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        let env = Env { amp: root.join(".config").join("amp"), data: root.join("data"), run: root.join("run"), path: fixture_dir(), root };
-        // Pre-create <home>/.config/amp so detect() passes with no `amp` on PATH,
+        let config = root.join("config");
+        let env = Env { amp: config.join("amp"), config, data: root.join("data"), run: root.join("run"), path: fixture_dir(), root };
+        // Pre-create $XDG_CONFIG_HOME/amp so detect() passes with no `amp` on PATH,
         // and seed an unrelated user config the lifecycle must preserve.
         fs::create_dir_all(&env.amp).unwrap();
         for dir in [&env.data, &env.run] {
@@ -58,7 +67,11 @@ impl Env {
     }
 
     fn apply(&self, cmd: &mut Command) {
-        cmd.env("HOME", &self.root).env("XDG_DATA_HOME", &self.data).env("XDG_RUNTIME_DIR", &self.run).env("PATH", &self.path);
+        cmd.env("HOME", &self.root)
+            .env("XDG_CONFIG_HOME", &self.config)
+            .env("XDG_DATA_HOME", &self.data)
+            .env("XDG_RUNTIME_DIR", &self.run)
+            .env("PATH", &self.path);
     }
 
     fn fixture(&self, args: &[&str]) -> (bool, String) {
