@@ -38,24 +38,33 @@ system; a dash means agentgear skips it rather than writing it under a guessed n
 |---|---|---|---|---|
 | claude | Y | Y | Y | Y |
 | codex | Y | Y | Y | Y |
-| gemini | Y | Y (`BeforeAgent`) | Y (`BeforeTool`) | Y (`AfterTool`) |
+| gemini\* | Y | Y (`BeforeAgent`) | Y\* (`BeforeTool`) | Y\* (`AfterTool`) |
 | cursor | Y | Y (`beforeSubmitPrompt`) | Y | Y |
-| cline | - | Y | Y | Y |
+| cline\* | - | Y | Y\* | Y\* |
 | devin | Y | Y | Y | Y |
 | qwen-code | Y | Y | Y | Y |
-| copilot-cli | Y (`sessionStart`) | Y (`userPromptSubmitted`) | Y | Y |
+| copilot-cli\* | Y (`sessionStart`) | Y (`userPromptSubmitted`) | Y\* | Y |
 | kimi | Y | Y | Y | Y |
 | goose | Y | Y | Y | Y |
 | crush | - | - | Y | - |
 | droid | Y | Y | Y | Y |
 | augment | Y | Y (`PromptSubmit`) | Y | Y |
-| antigravity-cli | - | Y (`PreInvocation`) | Y | Y |
+| antigravity-cli\* | - | Y (`PreInvocation`) | Y\* | Y\* |
 
 crush is the one harness that skips most of this plugin's surface outright. It
 defines exactly one hook event (`PreToolUse`), so only `guard` lands there.
 `self-heal`, `check-restart`, and `audit` are never written under a guessed name.
 That is the real, verified shape of crush's own hook engine
 (`docs/research/verify-crush.md`), not a translation gap.
+
+\* This plugin's `guard` hook is scoped to CC's `Bash` tool, and a tool matcher
+does not survive translation everywhere. Two things happen to it. gemini,
+copilot-cli, and antigravity-cli take the CC tool name verbatim into a harness
+whose own tools are named differently (`run_command`, not `Bash`), so the hook
+lands correctly and then matches nothing. cline has no matcher field at all, so
+`guard` runs on *every* tool there instead. Either way the hook itself is live;
+only its scoping is lost, and the unmatched events above are unaffected.
+Per-harness detail: each `docs/harness/<id>.md`.
 
 A `Y` is what a backend's `map_event` translates to, not proof the hook fires in
 a live session: several harnesses need auth this example's tests do not have.
