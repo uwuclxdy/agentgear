@@ -116,12 +116,14 @@ args, env}` for the json-`mcpServers` family; `type:"stdio"` prefixed for cursor
 copilot-cli (a bare `"*"` string voids copilot's whole file); a `[mcp_servers.<name>]` inline table
 for codex; a yaml `extensions.<name>` block for goose.
 
-Remote (http/sse) servers stay best-effort. Some tools read the rendered `{type, url, headers}`
-shape faithfully; four load the wrong transport silently (devin, kimi, qwen-code, vscode-copilot
-sse); two refuse the shape and void the whole file (antigravity, antigravity-cli); goose accepts sse
-then refuses it at runtime. The full verdict per tool is on
-[Harness comparison](Harness-Comparison#remote-mcp-fidelity). Servers whose command or args carry
-`${CLAUDE_PLUGIN_ROOT}` are skipped on non-CC backends (that token only expands inside Claude Code).
+Remote (http/sse) servers render in each tool's own dialect: the majority take
+`{type, url, headers}`, cline gets its literal `streamableHttp` value, kimi/devin their
+`transport` key, qwen-code its key-presence form (`httpUrl` vs `url`), the antigravity family
+its `{serverUrl}` SSE form, zed its bare `{url, headers}`. A transport a tool cannot host
+faithfully is skipped rather than written wrong (antigravity http, goose/zed/vscode-copilot
+sse). The per-tool verdicts are on [Harness comparison](Harness-Comparison#remote-mcp-fidelity).
+Servers whose command or args carry `${CLAUDE_PLUGIN_ROOT}` are skipped on non-CC backends
+(that token only expands inside Claude Code).
 
 ## Add a backend
 
