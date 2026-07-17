@@ -48,6 +48,11 @@ pub(crate) enum RemoteShape {
     /// transport is streamable HTTP. SSE has no faithful landing (zed would dial
     /// the URL as streamable HTTP against an SSE endpoint), so it is skipped.
     UrlHeadersHttpOnly,
+    /// The majority `{type:"http", url, headers:{}}` body, http only —
+    /// vscode-copilot, whose parser collapses `type:"sse"` to http and whose own
+    /// writer then rewrites the stored key (permanent probe churn), so sse is
+    /// skipped rather than written with a silently wrong transport.
+    TypeUrlHeadersHttpOnly,
 }
 
 #[derive(Clone, Copy)]
@@ -102,7 +107,8 @@ pub(crate) fn render_server(server: &McpServer, shape: ServerShape) -> Option<Va
 fn remote(shape: RemoteShape, kind: &str, url: &str) -> Option<Value> {
     let mut obj = Map::new();
     match shape {
-        RemoteShape::TypeUrlHeaders | RemoteShape::StreamableHttpValue => {
+        RemoteShape::TypeUrlHeadersHttpOnly if kind != "http" => return None,
+        RemoteShape::TypeUrlHeaders | RemoteShape::StreamableHttpValue | RemoteShape::TypeUrlHeadersHttpOnly => {
             let type_value = match shape {
                 RemoteShape::StreamableHttpValue if kind == "http" => "streamableHttp",
                 _ => kind,

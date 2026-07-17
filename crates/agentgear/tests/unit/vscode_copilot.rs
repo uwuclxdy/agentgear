@@ -31,6 +31,22 @@ fn read(path: &Path) -> Value {
 }
 
 #[test]
+fn remote_renders_http_only_and_skips_sse() {
+    let http = McpServer {
+        name: "h".into(),
+        kind: McpKind::Http { url: "https://x/mcp".into() },
+        command: String::new(),
+        args: vec![],
+        env: BTreeMap::new(),
+    };
+    let sse = McpServer { name: "s".into(), kind: McpKind::Sse { url: "https://x/sse".into() }, ..http.clone() };
+    // VS Code has one remote transport: its parser collapses `type:"sse"` to http
+    // and its own writer rewrites the stored key (probe churn), so sse is skipped.
+    assert_eq!(mcpjson::render_server(&http, super::SHAPE).unwrap(), serde_json::json!({"type":"http","url":"https://x/mcp","headers":{}}));
+    assert!(mcpjson::render_server(&sse, super::SHAPE).is_none(), "sse must be skipped (VS Code rewrites it to http)");
+}
+
+#[test]
 fn reconcile_writes_servers_key_with_typed_stdio_shape() {
     let path = scratch("mcp.json");
     let servers = [server("ez-fixture", "host_fixture")];

@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 use super::confedit::{remove_file_idem, write_file_idem};
-use super::mcpjson::{self, ServerShape};
+use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -31,9 +31,11 @@ use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 pub(crate) struct VscodeCopilotBackend;
 
 /// `.vscode/mcp.json` nests servers under a bare `servers` object (not CC's
-/// `mcpServers`); stdio entries carry an explicit `"type":"stdio"`.
+/// `mcpServers`); stdio entries carry an explicit `"type":"stdio"`. Remote is
+/// http-only: VS Code's parser collapses `type:"sse"` to http and its own writer
+/// rewrites the stored key (permanent probe churn), so sse is skipped.
 const MCP_KEY: &[&str] = &["servers"];
-const SHAPE: ServerShape = ServerShape::typed();
+const SHAPE: ServerShape = ServerShape::typed().with_remote(RemoteShape::TypeUrlHeadersHttpOnly);
 
 impl AgentBackend for VscodeCopilotBackend {
     fn id(&self) -> &'static str {
