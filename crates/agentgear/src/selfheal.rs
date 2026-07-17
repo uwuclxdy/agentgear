@@ -32,6 +32,9 @@ pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
     // stable session context to key on in v1.
     let scope = Scope::User;
     let _lock = lock::acquire()?;
+    // `source` here is the caller's `DEFAULT_SOURCE`; a prior `--path` install left
+    // a marker recording the real runtime path, which `resolve_source` prefers.
+    let source = stamp::resolve_source(plugin, &scope, source);
 
     let mut merged = Outcome::NoOp;
     for id in plugin.agents {

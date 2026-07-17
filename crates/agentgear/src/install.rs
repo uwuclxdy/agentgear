@@ -24,6 +24,9 @@ pub(crate) fn install_filtered(plugin: &Plugin, scope: Scope, source: Source, fi
 
 pub(crate) fn update(plugin: &Plugin, scope: Scope, source: Source) -> Result<Outcome> {
     let _lock = lock::acquire()?;
+    // `source` here is the caller's `DEFAULT_SOURCE`; a prior `--path` install left
+    // a marker recording the real runtime path, which `resolve_source` prefers.
+    let source = stamp::resolve_source(plugin, &scope, source);
     let desired = Desired { source, reenable: true };
     let fan = reconcile_all(plugin, &desired, &scope, &[])?;
     // Only a CC change strands the running session: Claude Code loads plugin

@@ -116,6 +116,18 @@ impl Env {
         std::fs::remove_dir_all(&markers).unwrap();
     }
 
+    /// Delete agentgear's own materialized tree (`versions/` + the `current`
+    /// pointer), leaving the stamp markers untouched. `materialize` is idempotent
+    /// per version — an existing `versions/<version>` dir is reused without
+    /// re-reading its source — so without this, a re-materialize from any source
+    /// would silently serve the already-written bytes back and never prove which
+    /// source it actually resolved.
+    fn break_materialized_cache(&self) {
+        let root = self.data.join("ez-fixture-plugin");
+        let _ = std::fs::remove_dir_all(root.join("versions"));
+        let _ = std::fs::remove_file(root.join("current"));
+    }
+
     fn manual_disable(&self) {
         let mut cmd = Command::new("claude");
         cmd.args(["plugin", "disable", PLUGIN_ID]);
@@ -138,6 +150,21 @@ fn claude_available() -> bool {
 fn locate(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path).map(|dir| dir.join(name)).find(|p| p.is_file())
+}
+
+/// Recursively copy a plugin tree into a scratch dir so a test can mutate its
+/// own copy without touching the checked-in fixture (which other tests read).
+fn copy_dir_all(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let dst_path = dst.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir_all(&entry.path(), &dst_path);
+        } else {
+            std::fs::copy(entry.path(), &dst_path).unwrap();
+        }
+    }
 }
 
 /// A `PATH` holding only the fixture binary's dir and `claude`'s dir, so `which`
@@ -221,6 +248,57 @@ fn install_via_path_source() {
     let (ok, out) = env.fixture("uninstall");
     assert!(ok && out == "Removed", "uninstall after path install failed: {out}");
     assert_eq!(env.plugin_list(), "[]", "plugin still present after uninstall");
+}
+
+#[test]
+#[ignore = "spawns the real `claude` CLI; run with --ignored"]
+fn self_heal_repairs_a_path_install_from_the_persisted_path() {
+    if !claude_available() {
+        eprintln!("skipping: `claude` not on PATH");
+        return;
+    }
+    let env = Env::new("path-repair");
+
+    // A mutable copy: the stamp marker must persist THIS dir's path (not the
+    // checked-in fixture dir), and a later repair must re-read its live bytes.
+    let src_plugin = env.root.join("src-plugin");
+    copy_dir_all(&Path::new(env!("CARGO_MANIFEST_DIR")).join("plugin"), &src_plugin);
+
+    let (ok, out) = env.fixture_args(&["setup", "--path", src_plugin.to_str().unwrap()]);
+    assert!(ok, "path setup failed: {out}");
+    assert_eq!(out, "Installed", "path install did not register");
+    assert!(env.plugin_list().contains(PLUGIN_ID), "plugin not registered after path setup");
+
+    // Mutate the path source after install: a marker the baked blob never carries,
+    // so a re-materialize can only reproduce it by reading this dir again.
+    let hello = src_plugin.join("commands/hello.md");
+    let original = std::fs::read_to_string(&hello).unwrap();
+    std::fs::write(&hello, format!("{original}\n<!-- path-source-marker -->\n")).unwrap();
+
+    // Force a genuine repair: break CC's own cache (files-missing -> NeedsRepair)
+    // and agentgear's own materialized cache (so re-materialize can't just reuse
+    // the already-written version dir and skip reading the source).
+    env.break_cache();
+    env.break_materialized_cache();
+
+    let (ok, out) = env.fixture("self-heal");
+    assert!(ok, "self-heal errored on a broken path install: {out}");
+    assert_eq!(out, "Repaired", "expected repair of a files-missing path install, got {out}");
+
+    // The re-materialized tree must carry the mutation: proof self_heal resolved
+    // the SAME --path dir's current bytes, not the binary's baked blob (which
+    // never saw the mutation and would fail this assertion).
+    let materialized = env.data.join("ez-fixture-plugin/current/commands/hello.md");
+    let content = std::fs::read_to_string(&materialized).unwrap_or_default();
+    assert!(content.contains("path-source-marker"), "self-heal did not re-materialize from the persisted --path source:\n{content}");
+
+    // doctor must also resolve the persisted path (not error, not fall back to the
+    // baked blob) and see a matching tree.
+    let (ok, report) = env.doctor();
+    assert!(ok, "doctor reported unhealthy after a path repair:\n{report}");
+    assert!(report.contains("hashes match"), "doctor should see the path-sourced tree as matching:\n{report}");
+
+    env.fixture("uninstall");
 }
 
 #[test]

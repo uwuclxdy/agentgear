@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::cli::{ClaudeCli, MIN_CLAUDE_VERSION, parse_version};
 use crate::error::Result;
-use crate::host::{Plugin, Source, data_root};
+use crate::host::{Plugin, Scope, Source, data_root};
 use crate::materialize::{dir_hash, tree_hash};
 
 const FLOOR: (u64, u64, u64) = (2, 1, 196);
@@ -84,11 +84,16 @@ impl fmt::Display for DoctorReport {
 /// configured agent's own `report` merged in (design §6). `PluginHost::doctor`
 /// calls this; a claude-only host gets exactly today's six checks in order.
 pub(crate) fn doctor(plugin: &Plugin, source: &Source) -> Result<DoctorReport> {
+    // `source` here is the caller's `DEFAULT_SOURCE`; a prior `--path` install left
+    // a marker recording the real runtime path, which `resolve_source` prefers.
+    // `doctor` (like self_heal) has no scope of its own, so it keys on the same
+    // user-scope marker self_heal writes.
+    let source = crate::stamp::resolve_source(plugin, &Scope::User, source.clone());
     let mut checks = vec![check_host_binary()];
     for id in plugin.agents {
         let backend = crate::install::resolve(id)?;
         if backend.detect() {
-            checks.extend(backend.report(plugin, source).checks);
+            checks.extend(backend.report(plugin, &source).checks);
         } else {
             // A declared harness that isn't installed here is not a failure: it is
             // simply not this host's concern, exactly as install/self_heal skip it.
