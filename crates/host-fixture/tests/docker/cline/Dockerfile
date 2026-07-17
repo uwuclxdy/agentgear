@@ -27,7 +27,10 @@ set -euo pipefail
 export HOME=/tmp/cline-home
 SETTINGS="$HOME/.cline/data/settings/cline_mcp_settings.json"
 WORKFLOW="$HOME/Documents/Cline/Workflows/ez-fixture-plugin-hello.md"
-HOOK="$HOME/Documents/Cline/Rules/Hooks/UserPromptSubmit"
+# `Hooks` is a sibling of `Rules`: the CLI scans `~/Documents/Cline/Hooks` and
+# `~/.cline/hooks`, never a `Rules/Hooks` subdir.
+HOOK="$HOME/Documents/Cline/Hooks/UserPromptSubmit"
+UNSCANNED="$HOME/Documents/Cline/Rules/Hooks"
 
 # Seed the modern unified store with a foreign mcp server + an unrelated key that
 # must survive install/uninstall. Its presence also makes detect() pass without the
@@ -45,6 +48,8 @@ if ! grep -q 'someUserSetting' "$SETTINGS"; then echo "FAIL: seeded key clobbere
 if [ ! -f "$WORKFLOW" ];                     then echo "FAIL: translated workflow markdown missing"; exit 1; fi
 if [ ! -f "$HOOK" ];                         then echo "FAIL: translated UserPromptSubmit hook missing"; exit 1; fi
 if ! grep -q 'agentgear-managed:ez-fixture-plugin' "$HOOK"; then echo "FAIL: hook missing ownership tag"; exit 1; fi
+if [ -d "$UNSCANNED" ];                      then echo "FAIL: hook written to a dir the CLI never scans"; exit 1; fi
+if [ ! -x "$HOOK" ];                         then echo "FAIL: hook script is not executable"; exit 1; fi
 
 # Confirm the written JSON actually parses (node is present in this stage).
 node -e 'JSON.parse(require("fs").readFileSync(process.env.SETTINGS,"utf8"))' \
