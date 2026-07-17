@@ -159,8 +159,10 @@ fn hook_portability_and_event_mapping() {
     assert_eq!(map_event("UserPromptSubmit"), Some("UserPromptSubmit"));
     assert_eq!(map_event("PreToolUse"), Some("PreToolUse"));
     assert_eq!(map_event("SubagentStop"), Some("SubagentStop"));
-    // CC-only among the overlap set -> no analog, skipped (never guessed).
-    assert_eq!(map_event("SessionEnd"), None);
+    // `SessionEnd` is absent from the `vscode` vocabulary but present in the parser's
+    // canonical set, which our `.github/hooks` file resolves against, so it lands.
+    assert_eq!(map_event("SessionEnd"), Some("SessionEnd"));
+    // Genuinely outside every VS Code vocabulary -> skipped, never guessed.
     assert_eq!(map_event("Notification"), None);
 }
 
@@ -172,7 +174,7 @@ fn reconcile_hooks_writes_owned_file_maps_events_and_is_idempotent() {
         HookBinding { event: "UserPromptSubmit".into(), matcher: None, command: "host_fixture check-restart".into() },
         HookBinding { event: "PreToolUse".into(), matcher: Some("Write".into()), command: "host_fixture guard".into() },
         // no VS Code analog -> skipped
-        HookBinding { event: "SessionEnd".into(), matcher: None, command: "host_fixture bye".into() },
+        HookBinding { event: "Notification".into(), matcher: None, command: "host_fixture ping".into() },
         // non-portable -> skipped
         HookBinding { event: "Stop".into(), matcher: None, command: "${CLAUDE_PLUGIN_ROOT}/x.sh".into() },
     ];
@@ -181,7 +183,7 @@ fn reconcile_hooks_writes_owned_file_maps_events_and_is_idempotent() {
     let root = read(&path);
     let events = root["hooks"].as_object().unwrap();
     assert!(events.contains_key("SessionStart") && events.contains_key("UserPromptSubmit") && events.contains_key("PreToolUse"));
-    assert!(!events.contains_key("SessionEnd"), "an event with no VS Code analog must be skipped:\n{root}");
+    assert!(!events.contains_key("Notification"), "an event with no VS Code analog must be skipped:\n{root}");
     assert!(!events.contains_key("Stop"), "a non-portable hook must be skipped:\n{root}");
     // entry shape: flat command object; CC's matcher is dropped (the hook above carries
     // `matcher: Some("Write")`, but VS Code's native schema has no matcher field).
@@ -204,7 +206,7 @@ fn reconcile_hooks_writes_owned_file_maps_events_and_is_idempotent() {
 fn reconcile_hooks_creates_nothing_for_zero_writable_hooks() {
     let path = scratch("ez-fixture-plugin.json");
     let hooks = vec![
-        HookBinding { event: "SessionEnd".into(), matcher: None, command: "host_fixture bye".into() },
+        HookBinding { event: "Notification".into(), matcher: None, command: "host_fixture ping".into() },
         HookBinding { event: "SessionStart".into(), matcher: None, command: "${CLAUDE_PLUGIN_ROOT}/x.sh".into() },
     ];
     assert!(!reconcile_hooks(&path, &hooks).unwrap(), "no writable hook must not report a change");

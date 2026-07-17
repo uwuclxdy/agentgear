@@ -149,14 +149,18 @@ fn portable_names(servers: &[McpServer]) -> Vec<&str> {
 
 // --- hooks -------------------------------------------------------------------
 
-/// Map a CC hook event to VS Code Copilot's own name. VS Code's 8-event set
-/// (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PreCompact`,
-/// `SubagentStart`, `SubagentStop`, `Stop`) shares CC's PascalCase names, so the map
-/// is identity for the 7 CC events that overlap. `SessionEnd`/`Notification` (CC-only
-/// among these) have no VS Code analog and are skipped, never written under a guess.
+/// Map a CC hook event to VS Code Copilot's own name. VS Code carries three hook
+/// vocabularies; a `.github/hooks` file like ours parses as the `copilot` format,
+/// whose resolver tries the camelCase map first and then falls back to accepting any
+/// name from the canonical 10-event set verbatim. That set shares CC's PascalCase
+/// spelling, so the map is identity for the 8 CC events it contains. `SessionEnd` is
+/// among them (it is absent only from the narrower `vscode` vocabulary, which is why
+/// it once looked analog-less). `Notification` is in no vocabulary at all and stays
+/// skipped, never written under a guess.
 fn map_event(cc_event: &str) -> Option<&'static str> {
     match cc_event {
         "SessionStart" => Some("SessionStart"),
+        "SessionEnd" => Some("SessionEnd"),
         "UserPromptSubmit" => Some("UserPromptSubmit"),
         "PreToolUse" => Some("PreToolUse"),
         "PostToolUse" => Some("PostToolUse"),
