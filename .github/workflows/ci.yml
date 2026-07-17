@@ -105,7 +105,7 @@ jobs:
       - name: validate root marketplace
         run: |
           CFG=$(mktemp -d)
-          CLAUDE_CONFIG_DIR="$CFG" claude plugin marketplace add . --scope user
+          CLAUDE_CONFIG_DIR="$CFG" claude plugin marketplace add ./ --scope user
           CLAUDE_CONFIG_DIR="$CFG" claude plugin install from-github@from-github --scope user
 
   e2e:
