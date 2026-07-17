@@ -103,7 +103,7 @@ some reject the shape and void the file. Per-tool fixes are queued.
 | droid | faithful. `type` is the live discriminator |
 | gemini | faithful. native `{url, type, headers?}` |
 | goose | http faithful; sse skipped (goose runtime-refuses sse, so a dead extension is never written) |
-| jetbrains-copilot | `type` faithful; headers land at the wrong key (latent, empty today) |
+| jetbrains-copilot | faithful: `{type, url}` (headers will nest under `requestInit.headers` once plugins carry them) |
 | kilo | faithful. `type` mandatory, dial-proven |
 | kimi | faithful: rendered with kimi's native `{url, transport}` form |
 | kiro | unproven (login-walled). native `{url, headers}`, examples carry no `type` |
