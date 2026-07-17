@@ -119,8 +119,9 @@ some reject the shape and void the file. Per-tool fixes are queued.
 
 Several tools read Claude Code's own config or plugin trees directly, the exact tree agentgear's
 materializer already produces. Where a tool ingests the full plugin tree natively, translating its
-config is redundant (and sometimes conflicting: omp double-registers agents). Scope of ingestion is
-the honest limit per tool.
+config is redundant, so agentgear retires the overlapping translation where the native path already
+covers it (omp's agents, once its provider is on and CC's registry lists the plugin). Scope of
+ingestion is the honest limit per tool.
 
 | harness | reads | scope |
 |---|---|---|
@@ -129,7 +130,7 @@ the honest limit per tool.
 | cursor | aggregator reads `~/.claude/plugins/installed_plugins.json`, `~/.claude/settings.json` `enabledPlugins`, then loads `.claude-plugin/plugin.json` per install | full tree with `${CLAUDE_PLUGIN_ROOT}` substitution (source-proven, undocumented) |
 | droid | `droid plugin marketplace add` reads `.claude-plugin/marketplace.json` + `plugin.json` | full tree → `~/.factory/plugins/` (binary-proven end to end) |
 | qwen-code | `qwen extensions install` converts a `.claude-plugin/plugin.json` dir into a qwen extension | full tree, install-time and manual. carries skills through too |
-| omp | first-class `claude-plugins` provider reads `~/.claude/plugins/installed_plugins.json` | agents only. **double-registers** when both `omp` and `claude` backends run |
+| omp | first-class `claude-plugins` provider reads `~/.claude/plugins/installed_plugins.json` | agents only. agentgear retires its agent translation when omp's `claude-plugins` provider is on and CC's registry lists the plugin, so no double-register |
 | openclaw | `plugins.load.paths` append, or drop the tree at `~/.openclaw/extensions/<id>/` (auto-detect) | full tree, "Claude-compatible bundles". hooks still register nothing |
 | jetbrains-copilot | bundled agent's marketplace service reads `.claude-plugin/plugin.json`, `hooks/hooks.json`, `${CLAUDE_PLUGIN_ROOT}` | full tree per the format descriptor (source-proven, no IDE launched) |
 | antigravity-cli | `agy plugin import <path>` copies the source dir verbatim | full tree, path-only. skills + agents ingest; hooks copied raw and never fire; `mcpServers` dropped |
