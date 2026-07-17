@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
+use super::cchooks::hook_is_portable;
 use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem};
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer};
@@ -268,14 +269,6 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
         "Notification" => Some("notification"),
         _ => None,
     }
-}
-
-/// A `${CLAUDE_PLUGIN_ROOT}` reference only expands inside Claude Code's own hook
-/// runner; copilot has no equivalent substitution, so such a command would spawn as
-/// the literal, unexpanded token. Mirrors `McpServer::is_portable` (applied locally
-/// since `HookBinding` has no such method in the shared IR).
-fn hook_is_portable(hook: &HookBinding) -> bool {
-    !hook.command.contains("${CLAUDE_PLUGIN_ROOT}")
 }
 
 /// The (copilot-event, hook) pairs we actually write: portable hooks whose CC event

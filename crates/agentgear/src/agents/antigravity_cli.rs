@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
+use super::cchooks::hook_is_portable;
 use super::confedit::json_edit;
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::{AgentBackend, BackendState};
@@ -138,15 +139,6 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
 /// under `PreToolUse` puts the command where nothing reads it.
 fn is_grouped(agy_event: &str) -> bool {
     matches!(agy_event, "PreToolUse" | "PostToolUse")
-}
-
-/// A `${CLAUDE_PLUGIN_ROOT}` reference only expands inside Claude Code's own hook
-/// runner; Antigravity has no equivalent substitution (it requires absolute paths,
-/// no `${workspaceFolder}` token), so such a command would spawn as the literal,
-/// unexpanded token. Mirrors `McpServer::is_portable` (applied locally since
-/// `HookBinding` has no such method in the shared IR).
-fn hook_is_portable(hook: &HookBinding) -> bool {
-    !hook.command.contains("${CLAUDE_PLUGIN_ROOT}")
 }
 
 /// One `agy` hook handler: `{type:"command", command}`. `timeout` is omitted (the

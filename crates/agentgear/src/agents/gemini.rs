@@ -12,8 +12,9 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
+use super::cchooks::{hook_is_portable, render_hook_group};
 use super::confedit::{json_edit, json_obj_at, write_file_idem};
 use super::mcpjson::{self, ServerShape};
 use super::{AgentBackend, BackendState};
@@ -133,27 +134,6 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
         "Notification" => Some("Notification"),
         _ => None,
     }
-}
-
-/// A `${CLAUDE_PLUGIN_ROOT}` reference only expands inside Claude Code's own hook
-/// runner; gemini has no equivalent substitution, so a hook command carrying it
-/// would be written verbatim and then spawn as the literal, unexpanded token.
-/// Mirrors `McpServer::is_portable`; applied locally since `HookBinding` (unlike
-/// `McpServer`) has no such method in the shared components IR.
-fn hook_is_portable(hook: &HookBinding) -> bool {
-    !hook.command.contains("${CLAUDE_PLUGIN_ROOT}")
-}
-
-fn render_hook_group(hook: &HookBinding) -> Value {
-    let mut group = Map::new();
-    if let Some(matcher) = &hook.matcher {
-        group.insert("matcher".into(), Value::from(matcher.clone()));
-    }
-    let mut handler = Map::new();
-    handler.insert("type".into(), Value::from("command"));
-    handler.insert("command".into(), Value::from(hook.command.clone()));
-    group.insert("hooks".into(), Value::Array(vec![Value::Object(handler)]));
-    Value::Object(group)
 }
 
 /// Add-if-absent our hook groups under each mapped event, leaving the user's own

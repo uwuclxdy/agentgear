@@ -20,8 +20,9 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
+use super::cchooks::{hook_is_portable, render_hook_group};
 use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem};
 use super::{AgentBackend, BackendState, mcptoml};
 use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer};
@@ -229,25 +230,6 @@ const CODEX_EVENTS: &[&str] = &[
 
 fn map_event(cc_event: &str) -> Option<&'static str> {
     CODEX_EVENTS.iter().copied().find(|e| *e == cc_event)
-}
-
-/// A `${CLAUDE_PLUGIN_ROOT}` reference only expands inside Claude Code, so a hook
-/// carrying it would spawn the literal token under codex. Mirrors
-/// `McpServer::is_portable`; applied locally since `HookBinding` has no such method.
-fn hook_is_portable(hook: &HookBinding) -> bool {
-    !hook.command.contains("${CLAUDE_PLUGIN_ROOT}")
-}
-
-fn render_hook_group(hook: &HookBinding) -> Value {
-    let mut group = Map::new();
-    if let Some(matcher) = &hook.matcher {
-        group.insert("matcher".into(), Value::from(matcher.clone()));
-    }
-    let mut handler = Map::new();
-    handler.insert("type".into(), Value::from("command"));
-    handler.insert("command".into(), Value::from(hook.command.clone()));
-    group.insert("hooks".into(), Value::Array(vec![Value::Object(handler)]));
-    Value::Object(group)
 }
 
 /// Add-if-absent our hook groups into codex's `hooks.json` (CC's exact shape, event

@@ -111,6 +111,10 @@ cfg_config_backends! {
     #[allow(dead_code)]
     pub(crate) mod mcpjson;
 }
+cfg_config_backends! {
+    #[allow(dead_code)]
+    pub(crate) mod cchooks;
+}
 
 /// What `probe` classifies a plugin's per-agent state as. Drives self_heal's
 /// marker × state table (never resurrect, never re-enable, repair drift).

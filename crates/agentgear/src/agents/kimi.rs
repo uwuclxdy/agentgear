@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
+use super::cchooks::hook_is_portable;
 use super::confedit;
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::{AgentBackend, BackendState};
@@ -145,13 +146,6 @@ const KIMI_EVENTS: &[&str] = &[
 
 fn map_event(cc_event: &str) -> Option<&'static str> {
     KIMI_EVENTS.iter().copied().find(|e| *e == cc_event)
-}
-
-/// A `${CLAUDE_PLUGIN_ROOT}` reference only expands inside Claude Code, so a hook
-/// carrying it would spawn the literal token under kimi. Mirrors
-/// `McpServer::is_portable`; applied locally since `HookBinding` has no such method.
-fn hook_is_portable(hook: &HookBinding) -> bool {
-    !hook.command.contains("${CLAUDE_PLUGIN_ROOT}")
 }
 
 /// One `[[hooks]]` table: `event` + optional `matcher` + `command`. Deterministic, so

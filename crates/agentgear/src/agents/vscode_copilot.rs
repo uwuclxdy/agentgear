@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
+use super::cchooks::hook_is_portable;
 use super::confedit::{remove_file_idem, write_file_idem};
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::{AgentBackend, BackendState};
@@ -169,14 +170,6 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
         "Stop" => Some("Stop"),
         _ => None,
     }
-}
-
-/// A `${CLAUDE_PLUGIN_ROOT}` reference only expands inside Claude Code's own hook
-/// runner; VS Code has no equivalent substitution, so such a command would spawn as
-/// the literal, unexpanded token. Mirrors `McpServer::is_portable` (applied locally
-/// since `HookBinding` has no such method in the shared IR).
-fn hook_is_portable(hook: &HookBinding) -> bool {
-    !hook.command.contains("${CLAUDE_PLUGIN_ROOT}")
 }
 
 /// A VS Code hook entry: a flat `{type:"command", command}` object placed directly in

@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::cchooks::hook_is_portable;
 use super::confedit::{remove_file_idem, write_file_idem};
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::{AgentBackend, BackendState};
@@ -228,13 +229,6 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
         "PostToolUse" => Some("PostToolUse"),
         _ => None,
     }
-}
-
-/// A `${CLAUDE_PLUGIN_ROOT}` reference only expands inside Claude Code's own hook
-/// runner; cline has none, so such a command would spawn the literal token. Mirrors
-/// `McpServer::is_portable` (applied locally: `HookBinding` has no such method).
-fn hook_is_portable(hook: &HookBinding) -> bool {
-    !hook.command.contains("${CLAUDE_PLUGIN_ROOT}")
 }
 
 /// The in-file marker proving a hook script is ours. Cline forces a hook file's name

@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
+use super::cchooks::hook_is_portable;
 use super::confedit::{json_edit, json_obj_at};
 use super::mcpjson::{self, ServerShape};
 use super::{AgentBackend, BackendState};
@@ -123,14 +124,6 @@ fn portable_names(servers: &[McpServer]) -> Vec<&str> {
 /// has no crush analog and is skipped rather than written under a guessed name.
 fn map_event(cc_event: &str) -> Option<&'static str> {
     cc_event.eq_ignore_ascii_case("PreToolUse").then_some("PreToolUse")
-}
-
-/// A `${CLAUDE_PLUGIN_ROOT}` reference only expands inside Claude Code's own hook
-/// runner; crush's generic POSIX expansion has no such token, so a hook carrying it
-/// would spawn the literal, unexpanded string. Mirrors `McpServer::is_portable`
-/// (applied locally since `HookBinding` has no such method in the shared IR).
-fn hook_is_portable(hook: &HookBinding) -> bool {
-    !hook.command.contains("${CLAUDE_PLUGIN_ROOT}")
 }
 
 /// A crush hook entry is a flat `{command, matcher?}` object directly in the event
