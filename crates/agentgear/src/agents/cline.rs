@@ -254,6 +254,11 @@ fn file_is_ours(path: &Path, plugin: &str) -> bool {
 /// stdout becomes the injected context; we never cancel). Deterministic so a
 /// re-reconcile is byte-identical. The JSON-string escape is best-effort via `sed`
 /// (POSIX, present on the macOS/Linux platforms cline hooks support).
+///
+/// CC's per-tool `matcher` is dropped: cline's surface is one script per event with
+/// no matcher field, so a `PreToolUse` hook scoped to `Bash` runs on every tool here.
+/// Filtering inside the script would need cline's own tool vocabulary, which no doc
+/// pins. See `docs/harness/cline.md` gotcha 9.
 fn render_hook_script(plugin: &str, hooks: &[&HookBinding]) -> String {
     const TEMPLATE: &str = r##"#!/usr/bin/env bash
 # __TAG__

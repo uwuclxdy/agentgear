@@ -3,8 +3,8 @@
 //! `~/.gemini/config/mcp_config.json` `mcpServers` key, `ServerShape::plain()`
 //! (`{command,args,env}`) — byte-identical to the antigravity desktop backend
 //! (same file, same key, same renderer), so a double-install across the two
-//! antigravity backends is a true `NoOp`. Hooks land in the CLI's own
-//! `~/.gemini/antigravity-cli/hooks.json`, keyed by our plugin name at the top
+//! antigravity backends is a true `NoOp`. Hooks land in the same customization
+//! root (`~/.gemini/config/hooks.json`), keyed by our plugin name at the top
 //! level (`{"<plugin>":{"<Event>":[...]}}`), so we own that whole subtree and
 //! `remove` is an exact single-key delete. Commands/agents/skills/rules are
 //! skipped — MCP is the only surface backed by an official-Google source, so the
@@ -162,9 +162,14 @@ fn render_handler(hook: &HookBinding) -> Value {
 
 /// The handler list for one event, in that event's own nesting. Flat events take the
 /// handlers directly. Grouped events take one `{matcher, hooks:[…]}` per matcher, so
-/// handlers sharing a matcher stack inside one group rather than repeating it. A CC
-/// hook with no matcher means "every tool", which in the grouped shape can only be
-/// said as `agy`'s own `*` wildcard.
+/// handlers sharing a matcher stack inside one group rather than repeating it.
+///
+/// A CC hook with no matcher means "every tool", which the grouped shape can only say
+/// through the matcher field; `*` is the value `agy`'s own `PostToolUse` doc example
+/// uses. Its wildcard semantics are not separately proven, and an omitted `matcher`
+/// key's meaning is not proven either, so the documented spelling wins. A matcher the
+/// CC plugin *did* set is passed through verbatim and will not match: CC tool names
+/// (`Bash`) are not `agy` tool names (`run_command`). Same accepted limit as gemini.
 fn render_event(agy_event: &str, hooks: &[&HookBinding]) -> Value {
     if !is_grouped(agy_event) {
         return Value::Array(hooks.iter().map(|h| render_handler(h)).collect());
