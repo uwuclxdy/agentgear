@@ -2,7 +2,9 @@
 //! json renderer with its own key (`servers`, not `mcpServers`) and the Typed
 //! (`{type:"stdio",...}`) shape, so the tests drive that seam directly: exact
 //! written shape, idempotent NoOp, user-entry-preserving removal, probe
-//! classification, and the `${CLAUDE_PLUGIN_ROOT}` portability skip.
+//! classification, and the `${CLAUDE_PLUGIN_ROOT}` portability skip. Also pins
+//! `config_dir_from`'s branch asymmetry (`XDG_CONFIG_HOME` drops the `intellij`
+//! segment, every fallback keeps it) without mutating process env.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -116,6 +118,45 @@ fn probe_classifies_absent_healthy_and_needs_repair() {
     assert!(matches!(mcpjson::probe(&path, super::MCP_KEY, &drifted, super::SHAPE).unwrap(), BackendState::NeedsRepair));
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn xdg_config_home_wins_and_drops_the_intellij_segment() {
+    // The plugin's own resolver checks an absolute `XDG_CONFIG_HOME` FIRST, on every
+    // platform, and that branch has NO `intellij` segment (unlike every fallback).
+    let xdg = PathBuf::from("/scratch/xdg-config");
+    let fallback = PathBuf::from("/scratch/fallback-base");
+    let got = super::config_dir_from(Some(xdg.clone()), Some(fallback));
+    assert_eq!(got, Some(xdg.join("github-copilot")), "XDG branch must not append `intellij`");
+}
+
+#[test]
+fn fallback_base_keeps_the_intellij_segment() {
+    // No `XDG_CONFIG_HOME` -> the platform fallback base, which DOES append `intellij`
+    // (Windows `LOCALAPPDATA`, Unix `$HOME/.config`, both funneled through `config_base()`).
+    let fallback = PathBuf::from("/scratch/fallback-base");
+    let got = super::config_dir_from(None, Some(fallback.clone()));
+    assert_eq!(got, Some(fallback.join("github-copilot").join("intellij")), "fallback branch must append `intellij`");
+}
+
+#[test]
+fn relative_xdg_config_home_is_ignored() {
+    // The real resolver guards on `File(xdgConfigHome).isAbsolute()`; a relative value
+    // must fall through to the platform fallback, same as unset.
+    let fallback = PathBuf::from("/scratch/fallback-base");
+    let got = super::config_dir_from(Some(PathBuf::from("relative/xdg")), Some(fallback.clone()));
+    assert_eq!(got, Some(fallback.join("github-copilot").join("intellij")), "a relative XDG_CONFIG_HOME must be ignored");
+}
+
+#[test]
+fn config_dir_from_precedence_and_none_when_nothing_resolves() {
+    let xdg = PathBuf::from("/scratch/xdg-config");
+    let fallback = PathBuf::from("/scratch/fallback-base");
+
+    // XDG beats the fallback outright when both are present.
+    assert_eq!(super::config_dir_from(Some(xdg.clone()), Some(fallback.clone())), Some(xdg.join("github-copilot")));
+    // neither resolves -> None (matches `mcp_path()`'s error path).
+    assert_eq!(super::config_dir_from(None, None), None);
 }
 
 #[test]

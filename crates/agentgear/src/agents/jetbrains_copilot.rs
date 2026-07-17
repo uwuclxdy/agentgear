@@ -1,7 +1,9 @@
 //! The JetBrains-Copilot backend: GitHub Copilot's JetBrains IDE plugin. MCP-only
 //! in practice — the plugin has no CLI and its only user-writable, file-backed
-//! surface is `<config>/github-copilot/intellij/mcp.json` (root key `servers`,
-//! stdio entries shaped `{type:"stdio",command,args,env}`). Written through the
+//! surface is `<config>/github-copilot/intellij/mcp.json`, except when
+//! `XDG_CONFIG_HOME` is set: the plugin's resolver checks that first, on every
+//! platform, and that branch has **no** `intellij` segment (`mcp_path()`). Root key
+//! `servers`, stdio entries shaped `{type:"stdio",command,args,env}`. Written through the
 //! shared json renderer (`ServerShape::typed()`), so `remove` is exact (only our
 //! server keys) and a second reconcile is a true `NoOp`. Hooks/commands/agents are
 //! repo-level `.github` surfaces (Copilot-CLI / vscode-copilot territory) with no
@@ -45,6 +47,10 @@ impl AgentBackend for JetbrainsCopilotBackend {
         // is `$HOME`-based, so a HOME-redirecting test also redirects detection; on Windows
         // it resolves LocalAppData via SHGetKnownFolderPath (env-independent), so the
         // hermetic test stays Unix-only.
+        //
+        // Stays on this `intellij`-suffixed dir even though `mcp_path()` also honors
+        // `XDG_CONFIG_HOME`: the plugin's own resolver never appends `intellij` on that
+        // branch, so there is no marker under an XDG-only install to key detection on.
         config_base().is_some_and(|b| b.join("github-copilot").join("intellij").is_dir())
     }
 
@@ -81,11 +87,13 @@ impl AgentBackend for JetbrainsCopilotBackend {
 
 // --- paths -------------------------------------------------------------------
 
-/// GitHub Copilot's config root: hardcoded to `~/.config/github-copilot` on every
-/// Unix (macOS included — NOT `~/Library`) and `%LOCALAPPDATA%\github-copilot` on
-/// Windows. Built from `dirs::home_dir()` on Unix rather than `dirs::config_dir()`
-/// (which resolves to `~/Library/Application Support` on macOS and would miss the
-/// real path), so a test redirecting `$HOME` also redirects us.
+/// GitHub Copilot's config root **fallback**: `~/.config` on every Unix (macOS
+/// included — NOT `~/Library`) and `%LOCALAPPDATA%` on Windows — what every
+/// non-`XDG_CONFIG_HOME` branch of the plugin's own resolver joins with
+/// `github-copilot/intellij` (`config_dir_from` below). Built from `dirs::home_dir()`
+/// on Unix rather than `dirs::config_dir()` (which resolves to `~/Library/Application
+/// Support` on macOS and would miss the real path), so a test redirecting `$HOME`
+/// also redirects us.
 #[cfg(not(windows))]
 fn config_base() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".config"))
@@ -96,12 +104,37 @@ fn config_base() -> Option<PathBuf> {
     dirs::data_local_dir()
 }
 
-/// `<config>/github-copilot/intellij/mcp.json` — the JetBrains plugin's only
+/// Pure resolver mirroring the plugin's own `McpConfigurationService.getConfigPath()`
+/// (decompiled, `docs/research/verify-jetbrains-copilot.md`): an absolute
+/// `XDG_CONFIG_HOME` wins outright on every platform, Windows included, and lands
+/// directly under `github-copilot` with **no** `intellij` segment. Unset, empty, or
+/// relative falls back to `fallback_base` (`config_base()`), which every real
+/// fallback branch (Windows `LOCALAPPDATA`, Unix `$HOME/.config`) joins with
+/// `github-copilot/intellij`. Takes the env value as a parameter (rather than
+/// reading it itself) so the branch asymmetry is unit-testable without mutating
+/// process env.
+fn config_dir_from(xdg_config_home: Option<PathBuf>, fallback_base: Option<PathBuf>) -> Option<PathBuf> {
+    xdg_config_home
+        .filter(|p| p.is_absolute())
+        .map(|xdg| xdg.join("github-copilot"))
+        .or_else(|| fallback_base.map(|b| b.join("github-copilot").join("intellij")))
+}
+
+fn config_dir() -> Option<PathBuf> {
+    config_dir_from(env_nonempty("XDG_CONFIG_HOME").map(PathBuf::from), config_base())
+}
+
+fn env_nonempty(var: &str) -> Option<std::ffi::OsString> {
+    std::env::var_os(var).filter(|v| !v.is_empty())
+}
+
+/// `<xdg>/github-copilot/mcp.json` when `XDG_CONFIG_HOME` is set (absolute), else
+/// `<config_base>/github-copilot/intellij/mcp.json` — the JetBrains plugin's only
 /// user-scope MCP file (no project-level file exists).
 fn mcp_path() -> Result<PathBuf> {
-    let base = config_base()
-        .ok_or_else(|| Error::Tree("no config directory (HOME/LOCALAPPDATA unset); cannot locate github-copilot/intellij".into()))?;
-    Ok(base.join("github-copilot").join("intellij").join("mcp.json"))
+    let dir = config_dir()
+        .ok_or_else(|| Error::Tree("no config directory (XDG_CONFIG_HOME/HOME/LOCALAPPDATA unset); cannot locate github-copilot".into()))?;
+    Ok(dir.join("mcp.json"))
 }
 
 /// Server names `reconcile` actually writes (the shared renderer skips non-portable
