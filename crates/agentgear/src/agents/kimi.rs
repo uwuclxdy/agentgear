@@ -55,13 +55,15 @@ impl AgentBackend for KimiBackend {
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
-        // Ownership is defined by our mcp server keys (the canonical "are we here"
-        // signal); the shared probe returns Healthy — never Absent — for an mcp-less
-        // plugin, so a present marker is never dropped. Source::Embedded is the only
-        // steady-state source for a non-CC backend (github unsupported, path is
-        // install-only), mirroring the claude probe keying on compile-time metadata.
+        // Compose the two surfaces (mcp.json + the `[[hooks]]` array in config.toml),
+        // so a stripped hook table behind a healthy mcp.json reads NeedsRepair.
+        // Source::Embedded is the only steady-state source for a non-CC backend (github
+        // unsupported, path install-only).
         let comp = plugin.components(&Source::Embedded)?;
-        mcpjson::probe(&mcp_json(scope)?, &["mcpServers"], &comp.mcp_servers, SHAPE)
+        let base = kimi_base(scope)?;
+        let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)?;
+        let hooks = probe_hooks(&base.join("config.toml"), &comp.hooks)?;
+        Ok(report::compose([mcp, hooks].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -113,10 +115,6 @@ fn kimi_base(scope: &Scope) -> Result<PathBuf> {
         Scope::User => kimi_home(),
         Scope::Project { path } => Ok(path.join(".kimi-code")),
     }
-}
-
-fn mcp_json(scope: &Scope) -> Result<PathBuf> {
-    Ok(kimi_base(scope)?.join("mcp.json"))
 }
 
 // --- hooks -------------------------------------------------------------------
@@ -197,6 +195,34 @@ fn reconcile_hooks(config: &Path, hooks: &[HookBinding]) -> Result<bool> {
         }
         Ok(())
     })
+}
+
+/// Classify the `[[hooks]]` surface for `probe`, mirroring `reconcile_hooks`'s
+/// writable filter (portable AND a mapped kimi event) and its `hook_present`
+/// deep-equal check. `None` when nothing is writable; a missing config.toml where we
+/// would write is `Absent`; all our tables present -> `Healthy`; some -> `NeedsRepair`.
+fn probe_hooks(config: &Path, hooks: &[HookBinding]) -> Result<Option<BackendState>> {
+    let writable: Vec<(&'static str, &HookBinding)> =
+        hooks.iter().filter(|h| hook_is_portable(h)).filter_map(|h| map_event(&h.event).map(|e| (e, h))).collect();
+    if writable.is_empty() {
+        return Ok(None);
+    }
+    let text = match fs::read_to_string(config) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Some(BackendState::Absent)),
+        Err(source) => return Err(Error::Io { context: format!("reading {}", config.display()), source }),
+    };
+    let doc: DocumentMut =
+        text.parse().map_err(|e: toml_edit::TomlError| Error::Config { path: config.display().to_string(), detail: e.to_string() })?;
+    let arr = doc.get("hooks").and_then(Item::as_array_of_tables);
+    let present = writable.iter().filter(|(event, hook)| arr.is_some_and(|a| hook_present(a, event, hook))).count();
+    Ok(Some(if present == 0 {
+        BackendState::Absent
+    } else if present == writable.len() {
+        BackendState::Healthy
+    } else {
+        BackendState::NeedsRepair
+    }))
 }
 
 /// Strip exactly our `[[hooks]]` entries (matched by command string), leaving the

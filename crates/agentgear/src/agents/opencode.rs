@@ -47,13 +47,22 @@ impl AgentBackend for OpencodeBackend {
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
-        // Ownership is defined by our mcp server keys (the canonical "are we here"
-        // signal); `probe_mcp` returns Healthy — never Absent — for an mcp-less
-        // plugin, so a present marker is never dropped. Source::Embedded is the only
-        // steady-state source for a non-CC backend (github unsupported, path is
-        // install-only), mirroring the claude probe keying on compile-time metadata.
+        // Compose every surface (mcp + the command/agent markdown files), so a missing
+        // command or agent file behind a healthy mcp map reads NeedsRepair. `probe_mcp`
+        // still carries the Disabled classification for a user-flipped `enabled:false`.
+        // Source::Embedded is the only steady-state source for a non-CC backend (github
+        // unsupported, path install-only).
         let comp = plugin.components(&Source::Embedded)?;
-        probe_mcp(&config_file(scope)?, &comp.mcp_servers)
+        let mcp =
+            if comp.mcp_servers.iter().any(|s| s.is_portable()) { Some(probe_mcp(&config_file(scope)?, &comp.mcp_servers)?) } else { None };
+        let base = surface_base(scope)?;
+        let commands =
+            report::probe_files(&expected_docs(&base, "commands", plugin.name, &comp.commands, |doc| doc.raw.clone()), |_, _| true)?;
+        let agents = report::probe_files(
+            &expected_docs(&base, "agents", plugin.name, &comp.agents, |doc| render_agent_md(doc).into_bytes()),
+            |_, _| true,
+        )?;
+        Ok(report::compose([mcp, commands, agents].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -133,6 +142,14 @@ fn doc_path(base: &Path, subdir: &str, plugin: &str, doc: &MarkdownDoc) -> PathB
     let stem =
         doc.rel.strip_prefix(subdir).unwrap_or(&doc.rel).trim_start_matches('/').strip_suffix(".md").unwrap_or(&doc.rel).replace('/', "-");
     base.join(subdir).join(format!("{plugin}-{stem}.md"))
+}
+
+/// The `(path, rendered bytes)` files `probe` compares against disk for a surface
+/// dir, keyed off the same `doc_path` + render `reconcile` writes.
+fn expected_docs(
+    base: &Path, subdir: &str, plugin: &str, docs: &[MarkdownDoc], render: impl Fn(&MarkdownDoc) -> Vec<u8>,
+) -> Vec<(PathBuf, Vec<u8>)> {
+    docs.iter().map(|doc| (doc_path(base, subdir, plugin, doc), render(doc))).collect()
 }
 
 /// Server names `reconcile_mcp` actually writes (non-portable ones are skipped).

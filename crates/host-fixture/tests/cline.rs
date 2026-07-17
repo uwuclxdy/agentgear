@@ -330,3 +330,38 @@ fn cline_never_touches_foreign_hook_on_mapped_event() {
     let after_uninstall = fs::read_to_string(&env.our_hook).unwrap();
     assert_eq!(after_uninstall, foreign, "foreign UserPromptSubmit hook was deleted on uninstall");
 }
+
+/// The headline probe-widening regression: a HEALTHY mcp install whose HOOK surface
+/// went missing must self-heal (repair the hook), not read Healthy and no-op. Pre-fix
+/// `probe` keyed on the mcp servers alone, so a deleted hook script behind an intact
+/// `cline_mcp_settings.json` was invisible — the whole point of composing every
+/// surface a backend writes into the state self_heal reconciles on.
+#[test]
+fn cline_self_heal_repairs_a_missing_hook_behind_healthy_mcp() {
+    let env = Env::new("self-heal-repair-hook");
+
+    // full install: mcp + the UserPromptSubmit hook + the workflow, plus the marker.
+    let (ok, out) = env.fixture(&["setup", "--agent", "cline"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert!(env.our_hook.exists(), "hook not installed by setup");
+    assert!(env.settings().contains("ez-fixture"), "mcp not installed by setup");
+
+    // Break ONLY the hook surface, leaving the healthy mcp settings + workflow in place.
+    fs::remove_file(&env.our_hook).unwrap();
+
+    // self-heal now sees the drift (mcp Healthy + hook Absent = NeedsRepair) and
+    // repairs the hook. Pre-fix this was a silent NoOp that left the hook missing.
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal failed: {out}");
+    assert_ne!(out, "NoOp", "self-heal ignored a missing hook behind a healthy mcp install, got {out}");
+
+    assert!(env.our_hook.exists(), "self-heal did not rewrite the missing hook");
+    let hk = fs::read_to_string(&env.our_hook).unwrap();
+    assert!(hk.contains("agentgear-managed:ez-fixture-plugin"), "repaired hook missing ownership tag:\n{hk}");
+    assert!(hk.contains("host_fixture check-restart"), "repaired hook does not invoke the CC command:\n{hk}");
+
+    // marker kept: a second self-heal (all surfaces now healthy) is a true NoOp — a
+    // dropped marker would instead re-adopt (a non-NoOp).
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "post-repair self-heal should no-op (marker kept), got {out}");
+}

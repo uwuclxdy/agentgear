@@ -54,13 +54,21 @@ impl AgentBackend for CopilotCliBackend {
     }
 
     fn probe(&self, plugin: &Plugin, _scope: &Scope) -> Result<BackendState> {
-        // Ownership is defined by our mcp server keys (the canonical "are we here"
-        // signal); `probe_mcp` returns Healthy — never Absent — for an mcp-less
-        // plugin, so a present marker is never dropped. Source::Embedded is the only
-        // steady-state source for a non-CC backend (github unsupported, path is
-        // install-only), mirroring the claude probe keying on compile-time metadata.
+        // Compose every surface (bespoke mcp, the plugin-owned hooks file, agent
+        // files), so a missing hooks file or agent behind a healthy mcp-config.json
+        // reads NeedsRepair. User-scope only, so scope is unused. Source::Embedded is
+        // the only steady-state source for a non-CC backend (github unsupported, path
+        // install-only).
         let comp = plugin.components(&Source::Embedded)?;
-        probe_mcp(&mcp_config()?, &comp.mcp_servers)
+        let home = copilot_home()?;
+        let mcp = if comp.mcp_servers.iter().any(|s| s.is_portable()) {
+            Some(probe_mcp(&home.join("mcp-config.json"), &comp.mcp_servers)?)
+        } else {
+            None
+        };
+        let hooks = probe_hooks(&hooks_file(&home, plugin.name), &comp.hooks)?;
+        let agents = report::probe_files(&expected_agents(&home.join("agents"), plugin.name, &comp.agents), |_, _| true)?;
+        Ok(report::compose([mcp, hooks, agents].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, _scope: &Scope) -> Result<Outcome> {
@@ -114,10 +122,6 @@ fn copilot_home_opt() -> Option<PathBuf> {
 
 fn copilot_home() -> Result<PathBuf> {
     copilot_home_opt().ok_or_else(|| Error::Tree("no home directory (HOME and COPILOT_HOME unset); cannot locate ~/.copilot".into()))
-}
-
-fn mcp_config() -> Result<PathBuf> {
-    Ok(copilot_home()?.join("mcp-config.json"))
 }
 
 /// The single hooks file we own outright: `<home>/hooks/<plugin>.json`. Copilot
@@ -321,6 +325,23 @@ fn reconcile_hooks(path: &Path, hooks: &[HookBinding]) -> Result<bool> {
         return Ok(false);
     }
     write_file_idem(path, &render_hooks_file(&writable)?)
+}
+
+/// Classify the plugin-owned hooks file for `probe`: `None` when nothing is writable
+/// (so the surface contributes no verdict), else the byte-match state of the one file
+/// we render. Uses the same `render_hooks_file` bytes `reconcile` writes.
+fn probe_hooks(path: &Path, hooks: &[HookBinding]) -> Result<Option<BackendState>> {
+    let writable = writable_hooks(hooks);
+    if writable.is_empty() {
+        return Ok(None);
+    }
+    report::probe_files(&[(path.to_path_buf(), render_hooks_file(&writable)?)], |_, _| true)
+}
+
+/// The `(path, rendered bytes)` agent files `probe` compares against disk, keyed off
+/// the same `agent_file` + `render_agent` `reconcile` writes.
+fn expected_agents(agents_dir: &Path, plugin: &str, agents: &[MarkdownDoc]) -> Vec<(PathBuf, Vec<u8>)> {
+    agents.iter().map(|doc| (agents_dir.join(agent_file(plugin, doc)), render_agent(plugin, doc).into_bytes())).collect()
 }
 
 /// Delete our owned hooks file. Gated on the same `writable_hooks` set as the writer:

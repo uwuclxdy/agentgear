@@ -68,14 +68,16 @@ impl AgentBackend for GooseBackend {
         Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user"] }
     }
 
-    fn probe(&self, plugin: &Plugin, _scope: &Scope) -> Result<BackendState> {
-        // Ownership is defined by our extension keys (the canonical "are we here"
-        // signal); `probe_mcp` returns Healthy — never Absent — for a plugin with no
-        // portable servers, so a present marker is never dropped. Source::Embedded is
-        // the only steady-state source for a non-CC backend (github unsupported, path
-        // install-only), mirroring the claude probe keying on compile-time metadata.
+    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
+        // Compose the two surfaces (mcp extensions + the plugin-owned hooks.json), so
+        // a missing hooks file behind healthy extensions reads NeedsRepair. `probe_mcp`
+        // still carries the Disabled classification for a user-flipped `enabled:false`.
+        // Source::Embedded is the only steady-state source for a non-CC backend (github
+        // unsupported, path install-only).
         let comp = plugin.components(&Source::Embedded)?;
-        probe_mcp(&config_yaml()?, &comp.mcp_servers)
+        let mcp = if comp.mcp_servers.iter().any(is_writable) { Some(probe_mcp(&config_yaml()?, &comp.mcp_servers)?) } else { None };
+        let hooks = probe_hooks(&hooks_json_path(scope, plugin.name)?, &comp.hooks)?;
+        Ok(report::compose([mcp, hooks].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -387,6 +389,16 @@ fn reconcile_hooks(hooks_json: &Path, hooks: &[HookBinding]) -> Result<bool> {
     match build_hooks_json(hooks)? {
         Some(bytes) => write_file_idem(hooks_json, &bytes),
         None => Ok(false),
+    }
+}
+
+/// Classify the plugin-owned `hooks.json` for `probe`: `None` when there is nothing
+/// to write (so the surface contributes no verdict), else the byte-match state of the
+/// one file we render. Uses the same `build_hooks_json` bytes `reconcile` writes.
+fn probe_hooks(hooks_json: &Path, hooks: &[HookBinding]) -> Result<Option<BackendState>> {
+    match build_hooks_json(hooks)? {
+        Some(bytes) => report::probe_files(&[(hooks_json.to_path_buf(), bytes)], |_, _| true),
+        None => Ok(None),
     }
 }
 

@@ -55,14 +55,19 @@ impl AgentBackend for DevinBackend {
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
-        // Ownership is defined by our mcp server keys (the canonical "are we here"
-        // signal); the shared probe returns Healthy — never Absent — for an mcp-less
-        // plugin, so a present marker is never dropped. Source::Embedded is the only
-        // steady-state source for a non-CC backend (github unsupported, path is
-        // install-only), mirroring the claude probe keying on compile-time metadata.
+        // Compose every surface (mcp + hooks in config.json, skill + subagent dirs), so
+        // a dropped hook group or missing SKILL.md/AGENT.md behind healthy mcp keys reads
+        // NeedsRepair. Source::Embedded is the only steady-state source for a non-CC
+        // backend (github unsupported, path install-only).
         let comp = plugin.components(&Source::Embedded)?;
-        let config = config_base(scope)?.join("config.json");
-        mcpjson::probe(&config, &["mcpServers"], &comp.mcp_servers, SHAPE)
+        let base = config_base(scope)?;
+        let config = base.join("config.json");
+        let mcp = mcpjson::probe_surface(&config, &["mcpServers"], &comp.mcp_servers, SHAPE)?;
+        let hooks = report::probe_json_entries(&config, &hook_entries(&comp.hooks))?;
+        let commands =
+            report::probe_files(&expected_docs(&base, "skills", "SKILL.md", "commands/", plugin.name, &comp.commands), |_, _| true)?;
+        let agents = report::probe_files(&expected_docs(&base, "agents", "AGENT.md", "agents/", plugin.name, &comp.agents), |_, _| true)?;
+        Ok(report::compose([mcp, hooks, commands, agents].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -179,6 +184,27 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
         "Stop" => Some("Stop"),
         _ => None,
     }
+}
+
+/// The `(array key_path, rendered group)` pairs `probe` checks are present under
+/// `hooks.<event>`, mirroring `reconcile_hooks`'s writable filter exactly.
+fn hook_entries(hooks: &[HookBinding]) -> Vec<(Vec<String>, Value)> {
+    hooks
+        .iter()
+        .filter(|h| hook_is_portable(h))
+        .filter_map(|h| map_event(&h.event).map(|event| (vec!["hooks".to_string(), event.to_string()], render_hook_group(h))))
+        .collect()
+}
+
+/// The `(path, rendered bytes)` `SKILL.md`/`AGENT.md` files `probe` compares against
+/// disk, keyed off the same `namespaced` dir + `render_doc` `reconcile` writes.
+fn expected_docs(base: &Path, subdir: &str, file: &str, prefix: &str, plugin: &str, docs: &[MarkdownDoc]) -> Vec<(PathBuf, Vec<u8>)> {
+    docs.iter()
+        .map(|doc| {
+            let path = base.join(subdir).join(namespaced(plugin, &doc.rel, prefix)).join(file);
+            (path, render_doc(plugin, &doc.rel, prefix, doc).into_bytes())
+        })
+        .collect()
 }
 
 /// Add-if-absent our hook groups under each mapped event in the config's `hooks`

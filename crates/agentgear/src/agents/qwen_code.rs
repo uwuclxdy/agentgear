@@ -55,14 +55,30 @@ impl AgentBackend for QwenCodeBackend {
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
-        // Ownership is defined by our mcp server keys (the canonical "are we here"
-        // signal); the shared probe returns Healthy — never Absent — for an mcp-less
-        // plugin, so a present marker is never dropped. Source::Embedded is the only
-        // steady-state source for a non-CC backend (github unsupported, path is
-        // install-only), mirroring the claude probe keying on compile-time metadata.
+        // Compose every surface (mcp + hooks in settings.json, command + agent files),
+        // so a dropped hook group or missing command/agent behind healthy mcp keys reads
+        // NeedsRepair. Source::Embedded is the only steady-state source for a non-CC
+        // backend (github unsupported, path install-only).
         let comp = plugin.components(&Source::Embedded)?;
-        let settings = settings_path(scope)?;
-        mcpjson::probe(&settings, &["mcpServers"], &comp.mcp_servers, SHAPE)
+        let base = qwen_dir(scope)?;
+        let settings = base.join("settings.json");
+        let mcp = mcpjson::probe_surface(&settings, &["mcpServers"], &comp.mcp_servers, SHAPE)?;
+        let hooks = report::probe_json_entries(&settings, &hook_entries(&comp.hooks))?;
+        let cmd_root = base.join("commands").join(plugin.name);
+        let commands = report::probe_files(
+            &comp.commands.iter().map(|doc| (cmd_root.join(command_rel(doc)), doc.raw.clone())).collect::<Vec<_>>(),
+            |_, _| true,
+        )?;
+        let agent_root = base.join("agents");
+        let agents = report::probe_files(
+            &comp
+                .agents
+                .iter()
+                .map(|doc| (agent_root.join(agent_file(plugin.name, doc)), render_agent(plugin.name, doc).into_bytes()))
+                .collect::<Vec<_>>(),
+            |_, _| true,
+        )?;
+        Ok(report::compose([mcp, hooks, commands, agents].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -141,10 +157,6 @@ fn qwen_dir(scope: &Scope) -> Result<PathBuf> {
     }
 }
 
-fn settings_path(scope: &Scope) -> Result<PathBuf> {
-    Ok(qwen_dir(scope)?.join("settings.json"))
-}
-
 // --- hooks -------------------------------------------------------------------
 
 /// Map a CC hook event to qwen-code's. qwen-code's event set is a superset of CC's
@@ -163,6 +175,16 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
         "Notification" => Some("Notification"),
         _ => None,
     }
+}
+
+/// The `(array key_path, rendered group)` pairs `probe` checks are present under
+/// `hooks.<event>`, mirroring `reconcile_hooks`'s writable filter exactly.
+fn hook_entries(hooks: &[HookBinding]) -> Vec<(Vec<String>, Value)> {
+    hooks
+        .iter()
+        .filter(|h| hook_is_portable(h))
+        .filter_map(|h| map_event(&h.event).map(|event| (vec!["hooks".to_string(), event.to_string()], render_hook_group(h))))
+        .collect()
 }
 
 /// Add-if-absent our hook groups under each mapped event in `settings.json`'s

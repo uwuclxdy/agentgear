@@ -47,13 +47,30 @@ impl AgentBackend for CodexBackend {
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
-        // Ownership is defined by our mcp server keys (the canonical "are we here"
-        // signal); `mcptoml::probe` returns Healthy — never Absent — for an mcp-less
-        // plugin, so a present marker is never dropped. Source::Embedded is the only
-        // steady-state source for a non-CC backend (github unsupported, path is
-        // install-only), mirroring the claude probe keying on compile-time metadata.
+        // Compose every surface (mcp toml, hooks.json, prompt + agent files), so a
+        // dropped hook group or missing prompt/agent behind a healthy `[mcp_servers]`
+        // reads NeedsRepair. (A codex hook is inert until trusted via `/hooks`, but the
+        // FILE presence is still what reconcile converges.) Source::Embedded is the only
+        // steady-state source for a non-CC backend (github unsupported, path install-only).
         let comp = plugin.components(&Source::Embedded)?;
-        mcptoml::probe(&codex_base(scope)?.join("config.toml"), &comp.mcp_servers)
+        let base = codex_base(scope)?;
+        let mcp = mcptoml::probe_surface(&base.join("config.toml"), &comp.mcp_servers)?;
+        let hooks = report::probe_json_entries(&base.join("hooks.json"), &hook_entries(&comp.hooks))?;
+        let prompts = base.join("prompts");
+        let commands = report::probe_files(
+            &comp.commands.iter().map(|doc| (prompt_path(&prompts, plugin.name, doc), doc.raw.clone())).collect::<Vec<_>>(),
+            |_, _| true,
+        )?;
+        let agents = base.join("agents");
+        let agent_files = report::probe_files(
+            &comp
+                .agents
+                .iter()
+                .map(|doc| (agent_path(&agents, plugin.name, doc), render_agent_toml(plugin.name, doc).into_bytes()))
+                .collect::<Vec<_>>(),
+            |_, _| true,
+        )?;
+        Ok(report::compose([mcp, hooks, commands, agent_files].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -231,6 +248,16 @@ const CODEX_EVENTS: &[&str] = &[
 
 fn map_event(cc_event: &str) -> Option<&'static str> {
     CODEX_EVENTS.iter().copied().find(|e| *e == cc_event)
+}
+
+/// The `(array key_path, rendered group)` pairs `probe` checks are present under
+/// `hooks.<event>`, mirroring `reconcile_hooks`'s writable filter exactly.
+fn hook_entries(hooks: &[HookBinding]) -> Vec<(Vec<String>, Value)> {
+    hooks
+        .iter()
+        .filter(|h| hook_is_portable(h))
+        .filter_map(|h| map_event(&h.event).map(|event| (vec!["hooks".to_string(), event.to_string()], render_hook_group(h))))
+        .collect()
 }
 
 /// Add-if-absent our hook groups into codex's `hooks.json` (CC's exact shape, event

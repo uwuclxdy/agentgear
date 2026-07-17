@@ -89,6 +89,16 @@ pub(crate) fn probe(path: &Path, servers: &[McpServer]) -> Result<BackendState> 
     })
 }
 
+/// The composition-aware form of [`probe`]: `None` when the plugin declares no
+/// portable server, so the mcp surface contributes no verdict to
+/// [`super::report::compose`]; otherwise `Some(probe(...))`.
+pub(crate) fn probe_surface(path: &Path, servers: &[McpServer]) -> Result<Option<BackendState>> {
+    if !servers.iter().any(McpServer::is_portable) {
+        return Ok(None);
+    }
+    Ok(Some(probe(path, servers)?))
+}
+
 /// Remove exactly our server keys from `[mcp_servers]`, leaving others.
 /// Conservatively leaves an emptied table in place rather than dropping the file.
 pub(crate) fn remove(path: &Path, names: &[&str]) -> Result<Outcome> {

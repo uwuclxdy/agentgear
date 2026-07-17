@@ -42,14 +42,18 @@ impl AgentBackend for GeminiBackend {
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
-        // Ownership is defined by our mcp server keys (the canonical "are we here"
-        // signal); the shared probe returns Healthy — never Absent — for an mcp-less
-        // plugin, so a present marker is never dropped. Source::Embedded is the only
-        // steady-state source for a non-CC backend (github unsupported, path is
-        // install-only), mirroring the claude probe keying on compile-time metadata.
+        // Compose every surface (mcp + hooks in settings.json, command TOML files), so
+        // a missing command file or hook group behind a healthy mcp map reads
+        // NeedsRepair. Source::Embedded is the only steady-state source for a non-CC
+        // backend (github unsupported, path install-only).
         let comp = plugin.components(&Source::Embedded)?;
-        let settings = settings_path(scope)?;
-        mcpjson::probe(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())
+        let base = gemini_dir(scope)?;
+        let settings = base.join("settings.json");
+        let mcp = mcpjson::probe_surface(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
+        let hooks = report::probe_json_entries(&settings, &hook_entries(&comp.hooks))?;
+        let cmd_root = base.join("commands").join(plugin.name);
+        let commands = report::probe_files(&expected_commands(&cmd_root, &comp.commands), |_, _| true)?;
+        Ok(report::compose([mcp, hooks, commands].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -106,10 +110,6 @@ fn gemini_dir(scope: &Scope) -> Result<PathBuf> {
     }
 }
 
-fn settings_path(scope: &Scope) -> Result<PathBuf> {
-    Ok(gemini_dir(scope)?.join("settings.json"))
-}
-
 /// `commands/hello.md` -> `hello.toml`, preserving any subdir so gemini's `:`
 /// namespacing (and our exact removal) stays intact.
 fn command_rel(doc: &MarkdownDoc) -> String {
@@ -135,6 +135,22 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
         "Notification" => Some("Notification"),
         _ => None,
     }
+}
+
+/// The `(array key_path, rendered group)` pairs `probe` checks are present under
+/// `hooks.<event>`, mirroring `reconcile_hooks`'s writable filter exactly.
+fn hook_entries(hooks: &[HookBinding]) -> Vec<(Vec<String>, Value)> {
+    hooks
+        .iter()
+        .filter(|h| hook_is_portable(h))
+        .filter_map(|h| map_event(&h.event).map(|event| (vec!["hooks".to_string(), event.to_string()], render_hook_group(h))))
+        .collect()
+}
+
+/// The `(path, rendered bytes)` command TOML files `probe` compares against disk,
+/// keyed off the same `command_rel` + `render_command_toml` `reconcile` writes.
+fn expected_commands(cmd_root: &Path, commands: &[MarkdownDoc]) -> Vec<(PathBuf, Vec<u8>)> {
+    commands.iter().map(|doc| (cmd_root.join(command_rel(doc)), render_command_toml(doc).into_bytes())).collect()
 }
 
 /// Add-if-absent our hook groups under each mapped event, leaving the user's own

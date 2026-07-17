@@ -52,14 +52,16 @@ impl AgentBackend for AntigravityCliBackend {
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
-        // Ownership is defined by our mcp server keys (the canonical "are we here"
-        // signal); the shared probe returns Healthy — never Absent — for an mcp-less
-        // plugin, so a present marker is never dropped. Source::Embedded is the only
-        // steady-state source for a non-CC backend (github unsupported, path is
-        // install-only), mirroring the gemini/claude probe keying on compile-time metadata.
+        // Compose every surface this backend writes (mcp + the plugin-keyed hook
+        // subtree), so a broken hook tree behind a healthy mcp entry reads as
+        // NeedsRepair and a partial deletion never collapses to Absent (dropping the
+        // marker, orphaning the surviving surface). Source::Embedded is the only
+        // steady-state source for a non-CC backend (github unsupported, path install-only).
         let comp = plugin.components(&Source::Embedded)?;
-        let mcp = mcp_path(scope)?;
-        mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, SHAPE)
+        let mcp = mcpjson::probe_surface(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, SHAPE)?;
+        // phase 3 (§6): enabled:false -> Disabled here
+        let hooks = report::probe_json_subtree(&hooks_path(scope)?, &[plugin.name], render_hook_tree(&comp.hooks))?;
+        Ok(report::compose([mcp, hooks].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -184,29 +186,39 @@ fn render_event(agy_event: &str, hooks: &[&HookBinding]) -> Value {
     )
 }
 
-/// Write our whole hook subtree under the top-level `<plugin>` key
-/// (`{"<plugin>":{"<Event>":[entry,...]}}`). We own that key, so a wholesale set
-/// is exact and idempotent: `json_edit` skips the write when the rebuilt subtree
-/// deep-equals the existing one. Non-portable hooks and events with no Antigravity
-/// analog are dropped before we touch the file; when nothing survives, `json_edit`
-/// is not entered so no empty `hooks.json` is created.
-fn reconcile_hooks(path: &Path, plugin: &str, hooks: &[HookBinding]) -> Result<bool> {
+/// Our whole hook subtree (`{"<Event>":[entry,...]}`) — the value that lands under
+/// the top-level `<plugin>` key. `None` when nothing survives (all non-portable, or
+/// no Antigravity analog), so no empty subtree is ever written. `probe` and
+/// `reconcile` both build it here, so they stay in lockstep.
+fn render_hook_tree(hooks: &[HookBinding]) -> Option<Value> {
     let writable: Vec<(&'static str, &HookBinding)> =
         hooks.iter().filter(|h| hook_is_portable(h)).filter_map(|h| map_event(&h.event).map(|event| (event, h))).collect();
     if writable.is_empty() {
-        return Ok(false);
+        return None;
     }
     let mut by_event: BTreeMap<&'static str, Vec<&HookBinding>> = BTreeMap::new();
     for (event, hook) in writable {
         by_event.entry(event).or_default().push(hook);
     }
+    let mut events: Map<String, Value> = Map::new();
+    for (event, group) in &by_event {
+        events.insert((*event).to_string(), render_event(event, group));
+    }
+    Some(Value::Object(events))
+}
+
+/// Write our whole hook subtree under the top-level `<plugin>` key
+/// (`{"<plugin>":{"<Event>":[entry,...]}}`). We own that key, so a wholesale set
+/// is exact and idempotent: `json_edit` skips the write when the rebuilt subtree
+/// deep-equals the existing one. When nothing survives, `json_edit` is not entered
+/// so no empty `hooks.json` is created.
+fn reconcile_hooks(path: &Path, plugin: &str, hooks: &[HookBinding]) -> Result<bool> {
+    let Some(tree) = render_hook_tree(hooks) else {
+        return Ok(false);
+    };
     json_edit(path, |root| {
-        let mut events: Map<String, Value> = Map::new();
-        for (event, group) in &by_event {
-            events.insert((*event).to_string(), render_event(event, group));
-        }
         if let Value::Object(map) = root {
-            map.insert(plugin.to_string(), Value::Object(events));
+            map.insert(plugin.to_string(), tree);
         }
         Ok(())
     })

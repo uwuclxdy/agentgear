@@ -212,6 +212,17 @@ pub(crate) fn probe(path: &Path, key_path: &[&str], servers: &[McpServer], shape
     })
 }
 
+/// The composition-aware form of [`probe`]: `None` when this shape writes nothing
+/// (no portable+renderable server), so the mcp surface contributes no verdict to
+/// [`super::report::compose`]; otherwise `Some(probe(...))`. Keeps
+/// `compose([Some(mcp)]) == mcp` for a plugin whose only surface is mcp.
+pub(crate) fn probe_surface(path: &Path, key_path: &[&str], servers: &[McpServer], shape: ServerShape) -> Result<Option<BackendState>> {
+    if writable(servers, shape).is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(probe(path, key_path, servers, shape)?))
+}
+
 /// Remove exactly our server keys under `key_path`, leaving others. Ownership is
 /// the same writable filter reconcile uses, so a server we declared but never
 /// wrote (non-portable, or unsupported by this dialect) can never shadow-delete a

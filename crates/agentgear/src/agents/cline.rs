@@ -61,15 +61,17 @@ impl AgentBackend for ClineBackend {
         Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user", "project"] }
     }
 
-    fn probe(&self, plugin: &Plugin, _scope: &Scope) -> Result<BackendState> {
-        // Ownership is defined by our mcp server keys (the canonical "are we here"
-        // signal); the shared probe returns Healthy — never Absent — for an mcp-less
-        // plugin, so a present marker is never dropped. Source::Embedded is the only
-        // steady-state source for a non-CC backend (github unsupported, path is
-        // install-only). MCP is global regardless of scope, so scope is unused here.
+    fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
+        // Compose every surface (global mcp, scope-aware file hooks + workflows), so a
+        // deleted hook script or workflow behind a healthy mcp file reads NeedsRepair.
+        // MCP is global regardless of scope; hooks/workflows are scope-aware.
+        // Source::Embedded is the only steady-state source for a non-CC backend (github
+        // unsupported, path install-only).
         let comp = plugin.components(&Source::Embedded)?;
-        let settings = mcp_settings_path()?;
-        mcpjson::probe(&settings, &["mcpServers"], &comp.mcp_servers, SHAPE)
+        let mcp = mcpjson::probe_surface(&mcp_settings_path()?, &["mcpServers"], &comp.mcp_servers, SHAPE)?;
+        let hooks = probe_hooks(&hooks_dir(scope)?, plugin.name, &comp.hooks)?;
+        let commands = probe_workflows(&workflows_dir(scope)?, plugin.name, &comp.commands)?;
+        Ok(report::compose([mcp, hooks, commands].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -296,6 +298,34 @@ fn reconcile_hooks(dir: &Path, plugin: &str, hooks: &[HookBinding]) -> Result<bo
         }
     }
     Ok(changed)
+}
+
+/// The per-event `(path, rendered script)` files `reconcile_hooks` would write,
+/// grouped exactly as it groups them (one file per event, all handlers folded in).
+fn expected_hooks(dir: &Path, plugin: &str, hooks: &[HookBinding]) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut by_event: BTreeMap<&'static str, Vec<&HookBinding>> = BTreeMap::new();
+    for hook in hooks.iter().filter(|h| hook_is_portable(h)) {
+        if let Some(event) = map_event(&hook.event) {
+            by_event.entry(event).or_default().push(hook);
+        }
+    }
+    by_event.into_iter().map(|(event, group)| (dir.join(event), render_hook_script(plugin, &group).into_bytes())).collect()
+}
+
+/// Classify the file-per-event hook surface for `probe`. A same-named file WITHOUT
+/// our ownership tag is the user's (reconcile never overwrites it), so it reads as
+/// not-ours and contributes nothing — never our drift.
+fn probe_hooks(dir: &Path, plugin: &str, hooks: &[HookBinding]) -> Result<Option<BackendState>> {
+    let tag = ownership_tag(plugin);
+    report::probe_files(&expected_hooks(dir, plugin, hooks), |_, existing| std::str::from_utf8(existing).is_ok_and(|s| s.contains(&tag)))
+}
+
+/// Classify the workflow (command) file surface for `probe`: plugin-prefixed files we
+/// own by name, so a byte mismatch is our drift (`|_, _| true`).
+fn probe_workflows(wf_root: &Path, plugin: &str, commands: &[MarkdownDoc]) -> Result<Option<BackendState>> {
+    let expected: Vec<(PathBuf, Vec<u8>)> =
+        commands.iter().map(|doc| (wf_root.join(workflow_file(plugin, doc)), workflow_body(doc).into_bytes())).collect();
+    report::probe_files(&expected, |_, _| true)
 }
 
 /// Delete exactly our hook scripts (by ownership tag) for each mapped event; leave

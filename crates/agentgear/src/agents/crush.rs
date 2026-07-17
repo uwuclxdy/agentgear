@@ -58,13 +58,15 @@ impl AgentBackend for CrushBackend {
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
-        // Ownership is defined by our mcp server keys (the canonical "are we here"
-        // signal); the shared probe returns Healthy — never Absent — for an mcp-less
-        // plugin, so a present marker is never dropped. Source::Embedded is the only
-        // steady-state source for a non-CC backend (github unsupported, path is
-        // install-only), mirroring the gemini/claude probe keying on compile-time metadata.
+        // Compose the two surfaces sharing crush.json (mcp + PreToolUse hooks): a
+        // dropped hook entry behind a healthy mcp map now reads NeedsRepair instead of
+        // Healthy. Source::Embedded is the only steady-state source for a non-CC
+        // backend (github unsupported, path install-only).
         let comp = plugin.components(&Source::Embedded)?;
-        mcpjson::probe(&config_file(scope)?, &["mcp"], &comp.mcp_servers, ServerShape::typed())
+        let config = config_file(scope)?;
+        let mcp = mcpjson::probe_surface(&config, &["mcp"], &comp.mcp_servers, ServerShape::typed())?;
+        let hooks = report::probe_json_entries(&config, &hook_entries(&comp.hooks))?;
+        Ok(report::compose([mcp, hooks].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -129,6 +131,17 @@ fn portable_names(servers: &[McpServer]) -> Vec<&str> {
 /// has no crush analog and is skipped rather than written under a guessed name.
 fn map_event(cc_event: &str) -> Option<&'static str> {
     cc_event.eq_ignore_ascii_case("PreToolUse").then_some("PreToolUse")
+}
+
+/// The `(array key_path, rendered entry)` pairs `probe` checks are present under
+/// `hooks.<event>`, mirroring `reconcile_config`'s writable-hook filter exactly
+/// (portable AND a mapped crush event) so probe and reconcile can never disagree.
+fn hook_entries(hooks: &[HookBinding]) -> Vec<(Vec<String>, Value)> {
+    hooks
+        .iter()
+        .filter(|h| hook_is_portable(h))
+        .filter_map(|h| map_event(&h.event).map(|event| (vec!["hooks".to_string(), event.to_string()], render_hook_entry(h))))
+        .collect()
 }
 
 /// A crush hook entry is a flat `{command, matcher?}` object directly in the event

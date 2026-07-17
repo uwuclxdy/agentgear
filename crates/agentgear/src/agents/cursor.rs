@@ -48,14 +48,23 @@ impl AgentBackend for CursorBackend {
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
-        // Ownership is defined by our mcp server keys (the canonical "are we here"
-        // signal); the shared probe returns Healthy — never Absent — for an mcp-less
-        // plugin, so a present marker is never dropped. Source::Embedded is the only
-        // steady-state source for a non-CC backend (github unsupported, path is
-        // install-only), mirroring the gemini/claude probe keying on compile-time metadata.
+        // Compose every surface (mcp.json, hooks.json, command + agent files), so a
+        // dropped hook entry or missing command/agent behind a healthy mcp.json reads
+        // NeedsRepair. Source::Embedded is the only steady-state source for a non-CC
+        // backend (github unsupported, path install-only).
         let comp = plugin.components(&Source::Embedded)?;
-        let mcp = mcp_path(scope)?;
-        mcpjson::probe(&mcp, &["mcpServers"], &comp.mcp_servers, ServerShape::typed())
+        let base = cursor_dir(scope)?;
+        let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::typed())?;
+        let hooks = report::probe_json_entries(&base.join("hooks.json"), &hook_entries(&comp.hooks))?;
+        let commands = report::probe_files(
+            &expected_docs(&base.join("commands"), plugin.name, "commands/", &comp.commands, |doc| command_body(doc).into_bytes()),
+            |_, _| true,
+        )?;
+        let agents = report::probe_files(
+            &expected_docs(&base.join("agents"), plugin.name, "agents/", &comp.agents, |doc| render_agent(plugin.name, doc).into_bytes()),
+            |_, _| true,
+        )?;
+        Ok(report::compose([mcp, hooks, commands, agents].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -117,10 +126,6 @@ fn cursor_dir(scope: &Scope) -> Result<PathBuf> {
     }
 }
 
-fn mcp_path(scope: &Scope) -> Result<PathBuf> {
-    Ok(cursor_dir(scope)?.join("mcp.json"))
-}
-
 // --- hooks -------------------------------------------------------------------
 
 /// Map a CC hook event to cursor's nearest lifecycle analog. The two verified in
@@ -140,6 +145,24 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
         "SubagentStop" => Some("subagentStop"),
         _ => None,
     }
+}
+
+/// The `(array key_path, rendered entry)` pairs `probe` checks are present under
+/// `hooks.<event>`, mirroring `reconcile_hooks`'s writable filter exactly.
+fn hook_entries(hooks: &[HookBinding]) -> Vec<(Vec<String>, Value)> {
+    hooks
+        .iter()
+        .filter(|h| hook_is_portable(h))
+        .filter_map(|h| map_event(&h.event).map(|event| (vec!["hooks".to_string(), event.to_string()], render_hook_entry(h))))
+        .collect()
+}
+
+/// The `(path, rendered bytes)` files `probe` compares against disk for a surface
+/// dir; the file name is `<plugin>-<flat stem>.md`, matching `command_file`/`agent_file`.
+fn expected_docs(
+    dir: &Path, plugin: &str, prefix: &str, docs: &[MarkdownDoc], render: impl Fn(&MarkdownDoc) -> Vec<u8>,
+) -> Vec<(PathBuf, Vec<u8>)> {
+    docs.iter().map(|doc| (dir.join(format!("{plugin}-{}.md", flat_stem(&doc.rel, prefix))), render(doc))).collect()
 }
 
 /// Cursor hook entries are flat `{command, matcher?}` objects directly in the

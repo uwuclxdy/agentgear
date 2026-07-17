@@ -62,13 +62,17 @@ impl AgentBackend for VscodeCopilotBackend {
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope) -> Result<BackendState> {
-        // Ownership is our mcp server keys. Source::Embedded is the only steady-state
-        // source for a non-CC backend (github unsupported, path install-only); the
-        // shared probe returns Healthy — never Absent — for a plugin with no portable
-        // servers, so a present marker is never dropped.
+        // Compose every surface (mcp under `servers`, the plugin-owned hooks file,
+        // agent files), so a deleted hook file or agent behind a healthy mcp.json reads
+        // NeedsRepair. Project-scope only (`project_root` rejects User). Source::Embedded
+        // is the only steady-state source for a non-CC backend (github unsupported, path
+        // install-only).
         let root = project_root(scope)?;
         let comp = plugin.components(&Source::Embedded)?;
-        mcpjson::probe(&mcp_path(root), MCP_KEY, &comp.mcp_servers, SHAPE)
+        let mcp = mcpjson::probe_surface(&mcp_path(root), MCP_KEY, &comp.mcp_servers, SHAPE)?;
+        let hooks = probe_hooks(&hooks_path(root, plugin.name), &comp.hooks)?;
+        let agents = report::probe_files(&expected_agents(&agents_dir(root), plugin.name, &comp.agents), |_, _| true)?;
+        Ok(report::compose([mcp, hooks, agents].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -217,6 +221,27 @@ fn reconcile_hooks(path: &Path, hooks: &[HookBinding]) -> Result<bool> {
         }
         None => remove_file_idem(path),
     }
+}
+
+/// Classify the plugin-owned hooks file for `probe`: `None` when the plugin declares
+/// no portable+mappable hook (reconcile deletes/never-writes the file), else the
+/// byte-match state of the one file we render, from the same `render_hooks_file` bytes.
+fn probe_hooks(path: &Path, hooks: &[HookBinding]) -> Result<Option<BackendState>> {
+    match render_hooks_file(hooks) {
+        Some(value) => {
+            let mut bytes =
+                serde_json::to_vec_pretty(&value).map_err(|source| Error::Json { what: "vscode-copilot hooks".into(), source })?;
+            bytes.push(b'\n');
+            report::probe_files(&[(path.to_path_buf(), bytes)], |_, _| true)
+        }
+        None => Ok(None),
+    }
+}
+
+/// The `(path, rendered bytes)` agent files `probe` compares against disk, keyed off
+/// the same `agent_file` + `render_agent` `reconcile` writes.
+fn expected_agents(dir: &Path, plugin: &str, agents: &[MarkdownDoc]) -> Vec<(PathBuf, Vec<u8>)> {
+    agents.iter().map(|doc| (dir.join(agent_file(plugin, doc)), render_agent(plugin, doc).into_bytes())).collect()
 }
 
 // --- agents ------------------------------------------------------------------
