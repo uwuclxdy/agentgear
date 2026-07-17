@@ -48,7 +48,7 @@ system; a dash means agentgear skips it rather than writing it under a guessed n
 | goose | Y | Y | Y | Y |
 | crush | - | - | Y | - |
 | droid | Y | Y | Y | Y |
-| augment\*\* | Y | - | Y | Y |
+| augment | Y | Y (`PromptSubmit`) | Y | Y |
 | antigravity-cli | - | Y (`PreInvocation`) | Y | Y |
 
 crush is the one harness that skips most of this plugin's surface outright. It
@@ -63,9 +63,6 @@ Every name written is one the harness's own docs or binary carry, though, so a
 `Y` never means a guessed event. (kiro left this table 2026-07-17: its only hook
 surface is a user-owned per-agent config, so the kiro backend now declares hooks
 unsupported.)
-
-\*\* augment currently drops `UserPromptSubmit` outright (`docs/todo.md` §0: it
-has a live `PromptSubmit` analog the backend does not map yet).
 
 ## Tests
 

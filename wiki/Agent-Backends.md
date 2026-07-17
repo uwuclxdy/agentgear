@@ -79,19 +79,19 @@ host running under it writes where the tool never reads.
 ## Hook event mapping
 
 Most hook-capable backends reuse Claude Code's PascalCase event names, so agentgear maps them 1:1
-where the analog exists and skips events with no analog. Four backends rename the events:
+where the analog exists and skips events with no analog. Five backends rename the events:
 
-| CC event | gemini | cursor | copilot-cli | antigravity-cli |
-|---|---|---|---|---|
-| SessionStart | SessionStart | sessionStart | sessionStart | agentSpawn |
-| SessionEnd | SessionEnd | sessionEnd | sessionEnd | — |
-| UserPromptSubmit | BeforeAgent | beforeSubmitPrompt | userPromptSubmitted | userPromptSubmit |
-| PreToolUse | BeforeTool | preToolUse | preToolUse | preToolUse |
-| PostToolUse | AfterTool | postToolUse | postToolUse | postToolUse |
-| Stop | — | stop | agentStop | stop |
-| SubagentStop | — | subagentStop | subagentStop | — |
-| PreCompact | PreCompress | preCompact | preCompact | — |
-| Notification | Notification | — | notification | — |
+| CC event | gemini | cursor | copilot-cli | antigravity-cli | augment |
+|---|---|---|---|---|---|
+| SessionStart | SessionStart | sessionStart | sessionStart | — | SessionStart |
+| SessionEnd | SessionEnd | sessionEnd | sessionEnd | — | SessionEnd |
+| UserPromptSubmit | BeforeAgent | beforeSubmitPrompt | userPromptSubmitted | PreInvocation | PromptSubmit |
+| PreToolUse | BeforeTool | preToolUse | preToolUse | PreToolUse | PreToolUse |
+| PostToolUse | AfterTool | postToolUse | postToolUse | PostToolUse | PostToolUse |
+| Stop | — | stop | agentStop | Stop | Stop |
+| SubagentStop | — | subagentStop | subagentStop | — | — |
+| PreCompact | PreCompress | preCompact | preCompact | — | — |
+| Notification | Notification | — | notification | — | Notification |
 
 Per-backend hook notes:
 
