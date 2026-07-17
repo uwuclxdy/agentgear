@@ -17,15 +17,16 @@
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
-use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem};
+use super::cchooks::{hook_is_portable, render_hook_group};
+use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem, yaml_scalar};
 use super::mcpjson::{self, ServerShape};
+use super::report;
 use super::{AgentBackend, BackendState};
-use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer};
+use crate::components::{HookBinding, MarkdownDoc};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
@@ -154,26 +155,6 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
     }
 }
 
-/// A `${CLAUDE_PLUGIN_ROOT}` reference only expands inside Claude Code's own hook
-/// runner; droid expands actual shell env vars but never sets that token, so such a
-/// command would spawn the literal, unexpanded string. Mirrors `McpServer::is_portable`
-/// (applied locally: `HookBinding` has no such method in the shared components IR).
-fn hook_is_portable(hook: &HookBinding) -> bool {
-    !hook.command.contains("${CLAUDE_PLUGIN_ROOT}")
-}
-
-fn render_hook_group(hook: &HookBinding) -> Value {
-    let mut group = Map::new();
-    if let Some(matcher) = &hook.matcher {
-        group.insert("matcher".into(), Value::from(matcher.clone()));
-    }
-    let mut handler = Map::new();
-    handler.insert("type".into(), Value::from("command"));
-    handler.insert("command".into(), Value::from(hook.command.clone()));
-    group.insert("hooks".into(), Value::Array(vec![Value::Object(handler)]));
-    Value::Object(group)
-}
-
 /// Add-if-absent our hook groups under each mapped event in the `hooks.json` wrapper,
 /// leaving the user's own groups in place. Idempotent: a group already present
 /// (deep-equal) is not re-added. Non-portable hooks and events with no droid analog are
@@ -263,33 +244,6 @@ fn yaml_value(value: &Value) -> String {
     }
 }
 
-/// A YAML scalar: bare when it cannot be misparsed as a flow/indicator token, else a
-/// double-quoted string with the minimal escapes.
-fn yaml_scalar(s: &str) -> String {
-    let needs_quote = s.is_empty()
-        || s.starts_with(|c: char| c.is_ascii_whitespace())
-        || s.ends_with(|c: char| c.is_ascii_whitespace())
-        || s.contains(['"', '\\', '\n', '\r', '\t', ':', '#', '[', ']', '{', '}', ',', '&', '*', '!', '|', '>', '\'', '%', '@', '`'])
-        || matches!(s.to_ascii_lowercase().as_str(), "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "~");
-    if !needs_quote {
-        return s.to_string();
-    }
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
 // --- report ------------------------------------------------------------------
 
 fn report_checks(backend: &DroidBackend, plugin: &Plugin, source: &Source) -> Vec<DoctorCheck> {
@@ -316,100 +270,24 @@ fn report_checks(backend: &DroidBackend, plugin: &Plugin, source: &Source) -> Ve
     };
     let mcp = base.join("mcp.json");
 
-    let root = match fs::read(&mcp) {
-        Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
-            Ok(v) => {
-                checks.push(DoctorCheck { name: "mcp config file", status: CheckStatus::Ok(format!("{} parses", mcp.display())) });
-                Some(v)
-            }
-            Err(e) => {
-                checks.push(DoctorCheck {
-                    name: "mcp config file",
-                    status: CheckStatus::Fail {
-                        problem: format!("{} does not parse: {e}", mcp.display()),
-                        fix: "fix the JSON syntax or remove the file".into(),
-                    },
-                });
-                None
-            }
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            checks.push(DoctorCheck {
-                name: "mcp config file",
-                status: CheckStatus::Warn(format!("{} does not exist yet (run setup)", mcp.display())),
-            });
-            None
-        }
-        Err(e) => {
-            checks
-                .push(DoctorCheck { name: "mcp config file", status: CheckStatus::Warn(format!("could not read {}: {e}", mcp.display())) });
-            None
-        }
+    let root = report::read_json_config(&mut checks, "mcp config file", &mcp);
+
+    let Some(comp) = report::components(&mut checks, plugin, source) else {
+        return checks;
     };
 
-    let comp = match plugin.components(source) {
-        Ok(comp) => comp,
-        Err(e) => {
-            checks.push(DoctorCheck {
-                name: "plugin components",
-                status: CheckStatus::Fail {
-                    problem: format!("could not read the plugin tree: {e}"),
-                    fix: "rebuild the host binary".into(),
-                },
-            });
-            return checks;
-        }
-    };
-
-    checks.push(check_mcp_registered(&comp.mcp_servers, root.as_ref()));
-    checks.push(check_mcp_command(&comp.mcp_servers));
+    checks.push(report::check_mcp_registered(
+        &comp.mcp_servers,
+        root.as_ref(),
+        &["mcpServers"],
+        "not in mcp.json",
+        "run the host's `setup`",
+    ));
+    checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_docs_present("commands", "commands/", &comp.commands, plugin.name, &base));
     checks.push(check_docs_present("droids", "agents/", &comp.agents, plugin.name, &base));
 
     checks
-}
-
-fn check_mcp_registered(servers: &[McpServer], root: Option<&Value>) -> DoctorCheck {
-    let name = "mcp server registered";
-    let portable: Vec<&str> = servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect();
-    if portable.is_empty() {
-        return DoctorCheck { name, status: CheckStatus::Ok("no portable mcp servers to register".into()) };
-    }
-    let obj = root.and_then(|r| r.get("mcpServers")).and_then(Value::as_object);
-    let missing: Vec<&str> = portable.iter().copied().filter(|n| obj.is_none_or(|o| !o.contains_key(*n))).collect();
-    if missing.is_empty() {
-        DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", portable.join(", "))) }
-    } else {
-        DoctorCheck {
-            name,
-            status: CheckStatus::Fail {
-                problem: format!("mcp server(s) not in mcp.json: {}", missing.join(", ")),
-                fix: "run the host's `setup`".into(),
-            },
-        }
-    }
-}
-
-fn check_mcp_command(servers: &[McpServer]) -> DoctorCheck {
-    let name = "mcp command on PATH";
-    let missing: Vec<String> = servers
-        .iter()
-        .filter(|s| s.is_portable() && matches!(s.kind, McpKind::Stdio))
-        .map(|s| s.command.clone())
-        // Only a bare executable name is a PATH lookup; a path/variable command can't be checked generically.
-        .filter(|c| !c.is_empty() && !c.contains('/') && !c.contains('\\') && !c.contains('$') && which::which(c).is_err())
-        .collect();
-    if missing.is_empty() {
-        DoctorCheck { name, status: CheckStatus::Ok("all referenced mcp commands resolve".into()) }
-    } else {
-        DoctorCheck {
-            name,
-            status: CheckStatus::Fail {
-                problem: format!("mcp command(s) not on PATH: {}", missing.join(", ")),
-                fix: "install the missing binaries into a PATH directory".into(),
-            },
-        }
-    }
 }
 
 fn check_docs_present(subdir: &str, prefix: &str, docs: &[MarkdownDoc], plugin: &str, base: &Path) -> DoctorCheck {

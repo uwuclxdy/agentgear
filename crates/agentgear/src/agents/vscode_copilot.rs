@@ -20,10 +20,12 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
+use super::cchooks::hook_is_portable;
 use super::confedit::{remove_file_idem, write_file_idem};
 use super::mcpjson::{self, RemoteShape, ServerShape};
+use super::report;
 use super::{AgentBackend, BackendState};
-use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer};
+use crate::components::{HookBinding, MarkdownDoc, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
@@ -171,14 +173,6 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
     }
 }
 
-/// A `${CLAUDE_PLUGIN_ROOT}` reference only expands inside Claude Code's own hook
-/// runner; VS Code has no equivalent substitution, so such a command would spawn as
-/// the literal, unexpanded token. Mirrors `McpServer::is_portable` (applied locally
-/// since `HookBinding` has no such method in the shared IR).
-fn hook_is_portable(hook: &HookBinding) -> bool {
-    !hook.command.contains("${CLAUDE_PLUGIN_ROOT}")
-}
-
 /// A VS Code hook entry: a flat `{type:"command", command}` object placed directly in
 /// the event array. CC's `matcher` is dropped — VS Code's native hook entry has no
 /// matcher field and ignores the value regardless, so hooks fire on every occurrence
@@ -275,6 +269,27 @@ fn render_agent(plugin: &str, doc: &MarkdownDoc) -> String {
 
 // --- report ------------------------------------------------------------------
 
+fn check_mcp_registered(servers: &[McpServer], root: Option<&Value>) -> DoctorCheck {
+    let name = "mcp server registered";
+    let portable = portable_names(servers);
+    if portable.is_empty() {
+        return DoctorCheck { name, status: CheckStatus::Ok("no portable mcp servers to register".into()) };
+    }
+    let obj = root.and_then(|r| r.get("servers")).and_then(Value::as_object);
+    let missing: Vec<&str> = portable.iter().copied().filter(|n| obj.is_none_or(|o| !o.contains_key(*n))).collect();
+    if missing.is_empty() {
+        DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", portable.join(", "))) }
+    } else {
+        DoctorCheck {
+            name,
+            status: CheckStatus::Fail {
+                problem: format!("mcp server(s) not in mcp.json: {}", missing.join(", ")),
+                fix: "run the host's `setup` in the project root".into(),
+            },
+        }
+    }
+}
+
 /// `doctor` has no explicit project context, so a project-scoped backend reports
 /// against the current working directory (the natural "am I set up in this repo"
 /// question). Absent config there is a warning, not a failure.
@@ -330,68 +345,15 @@ fn report_checks(backend: &VscodeCopilotBackend, plugin: &Plugin, source: &Sourc
         }
     };
 
-    let comp = match plugin.components(source) {
-        Ok(comp) => comp,
-        Err(e) => {
-            checks.push(DoctorCheck {
-                name: "plugin components",
-                status: CheckStatus::Fail {
-                    problem: format!("could not read the plugin tree: {e}"),
-                    fix: "rebuild the host binary".into(),
-                },
-            });
-            return checks;
-        }
+    let Some(comp) = report::components(&mut checks, plugin, source) else {
+        return checks;
     };
 
     checks.push(check_mcp_registered(&comp.mcp_servers, parsed.as_ref()));
-    checks.push(check_mcp_command(&comp.mcp_servers));
+    checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_agents_present(&comp.agents, &agents_dir(&root), plugin.name));
 
     checks
-}
-
-fn check_mcp_registered(servers: &[McpServer], root: Option<&Value>) -> DoctorCheck {
-    let name = "mcp server registered";
-    let portable = portable_names(servers);
-    if portable.is_empty() {
-        return DoctorCheck { name, status: CheckStatus::Ok("no portable mcp servers to register".into()) };
-    }
-    let obj = root.and_then(|r| r.get("servers")).and_then(Value::as_object);
-    let missing: Vec<&str> = portable.iter().copied().filter(|n| obj.is_none_or(|o| !o.contains_key(*n))).collect();
-    if missing.is_empty() {
-        DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", portable.join(", "))) }
-    } else {
-        DoctorCheck {
-            name,
-            status: CheckStatus::Fail {
-                problem: format!("mcp server(s) not in mcp.json: {}", missing.join(", ")),
-                fix: "run the host's `setup` in the project root".into(),
-            },
-        }
-    }
-}
-
-fn check_mcp_command(servers: &[McpServer]) -> DoctorCheck {
-    let name = "mcp command on PATH";
-    let missing: Vec<String> = servers
-        .iter()
-        .filter(|s| s.is_portable() && matches!(s.kind, McpKind::Stdio))
-        .map(|s| s.command.clone())
-        // Only a bare executable name is a PATH lookup; a path/variable command can't be checked generically.
-        .filter(|c| !c.is_empty() && !c.contains('/') && !c.contains('\\') && !c.contains('$') && which::which(c).is_err())
-        .collect();
-    if missing.is_empty() {
-        DoctorCheck { name, status: CheckStatus::Ok("all referenced mcp commands resolve".into()) }
-    } else {
-        DoctorCheck {
-            name,
-            status: CheckStatus::Fail {
-                problem: format!("mcp command(s) not on PATH: {}", missing.join(", ")),
-                fix: "install the missing binaries into a PATH directory".into(),
-            },
-        }
-    }
 }
 
 fn check_agents_present(agents: &[MarkdownDoc], dir: &Path, plugin: &str) -> DoctorCheck {

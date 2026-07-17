@@ -33,7 +33,9 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use serde_norway::{Mapping, Value as Yaml};
 
+use super::cchooks::{hook_is_portable, render_hook_group};
 use super::confedit::{write_file_idem, yaml_edit};
+use super::report;
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, McpKind, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -356,27 +358,6 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
     GOOSE_EVENTS.iter().copied().find(|e| *e == cc_event)
 }
 
-/// A `${CLAUDE_PLUGIN_ROOT}` reference only expands inside Claude Code, so a hook
-/// carrying it would spawn the literal token under goose. Mirrors
-/// `McpServer::is_portable`; applied locally since `HookBinding` has no such method.
-/// (goose expands its own `${PLUGIN_ROOT}` inside hooks.json, but rewriting CC's
-/// token to goose's is a translation the portability rule deliberately skips.)
-fn hook_is_portable(hook: &HookBinding) -> bool {
-    !hook.command.contains("${CLAUDE_PLUGIN_ROOT}")
-}
-
-fn render_hook_group(hook: &HookBinding) -> Value {
-    let mut group = Map::new();
-    if let Some(matcher) = &hook.matcher {
-        group.insert("matcher".into(), Value::from(matcher.clone()));
-    }
-    let mut handler = Map::new();
-    handler.insert("type".into(), Value::from("command"));
-    handler.insert("command".into(), Value::from(hook.command.clone()));
-    group.insert("hooks".into(), Value::Array(vec![Value::Object(handler)]));
-    Value::Object(group)
-}
-
 /// Build the full `hooks.json` bytes from our portable, goose-named hooks (CC's
 /// exact shape). `None` when there is nothing to write, so an empty plugin dir is
 /// never created. We own the whole dir, so this is a wholesale render (no merge);
@@ -475,22 +456,12 @@ fn report_checks(backend: &GooseBackend, plugin: &Plugin, source: &Source) -> Ve
         }
     };
 
-    let comp = match plugin.components(source) {
-        Ok(comp) => comp,
-        Err(e) => {
-            checks.push(DoctorCheck {
-                name: "plugin components",
-                status: CheckStatus::Fail {
-                    problem: format!("could not read the plugin tree: {e}"),
-                    fix: "rebuild the host binary".into(),
-                },
-            });
-            return checks;
-        }
+    let Some(comp) = report::components(&mut checks, plugin, source) else {
+        return checks;
     };
 
     checks.push(check_mcp_registered(&comp.mcp_servers, root.as_ref()));
-    checks.push(check_mcp_command(&comp.mcp_servers));
+    checks.push(report::check_mcp_command(&comp.mcp_servers));
     match hooks_json_path(&Scope::User, plugin.name) {
         Ok(hooks_json) => checks.push(check_hooks_present(&comp.hooks, &hooks_json)),
         Err(e) => checks.push(DoctorCheck { name: "translated hooks present", status: CheckStatus::Warn(e.to_string()) }),
@@ -515,28 +486,6 @@ fn check_mcp_registered(servers: &[McpServer], root: Option<&Yaml>) -> DoctorChe
             status: CheckStatus::Fail {
                 problem: format!("mcp extension(s) not under `extensions` in config.yaml: {}", missing.join(", ")),
                 fix: "run the host's `setup`".into(),
-            },
-        }
-    }
-}
-
-fn check_mcp_command(servers: &[McpServer]) -> DoctorCheck {
-    let name = "mcp command on PATH";
-    let missing: Vec<String> = servers
-        .iter()
-        .filter(|s| s.is_portable() && matches!(s.kind, McpKind::Stdio))
-        .map(|s| s.command.clone())
-        // Only a bare executable name is a PATH lookup; a path/variable command can't be checked generically.
-        .filter(|c| !c.is_empty() && !c.contains('/') && !c.contains('\\') && !c.contains('$') && which::which(c).is_err())
-        .collect();
-    if missing.is_empty() {
-        DoctorCheck { name, status: CheckStatus::Ok("all referenced mcp commands resolve".into()) }
-    } else {
-        DoctorCheck {
-            name,
-            status: CheckStatus::Fail {
-                problem: format!("mcp command(s) not on PATH: {}", missing.join(", ")),
-                fix: "install the missing binaries into a PATH directory".into(),
             },
         }
     }
