@@ -10,7 +10,7 @@ use std::process::ExitCode;
 use agentgear::{PluginHost, Scope, Source};
 
 #[derive(PluginHost)]
-#[plugin(name = "ez-fixture-plugin", agents = [
+#[plugin(name = "ez-fixture-plugin", instructions_fn = fixture_instructions, agents = [
     "claude", "codex", "opencode", "gemini", "cursor", "cline", "devin",
     "qwen-code", "copilot-cli", "vscode-copilot", "jetbrains-copilot",
     "kimi", "kiro", "zed", "omp", "openclaw", "kilo",
@@ -18,6 +18,12 @@ use agentgear::{PluginHost, Scope, Source};
     "goose", "amp", "crush", "droid", "augment",
 ])]
 struct FixtureHost;
+
+/// Host-authored always-loaded guidance, exercising the `instructions` surface
+/// (only opencode writes it today; other backends ignore `Plugin.instructions`).
+fn fixture_instructions() -> Option<String> {
+    Some("ez-fixture always-loaded guidance line.".to_string())
+}
 
 /// Parse `setup`/`install` flags: `--path <dir>` selects `Source::Path`, else the
 /// embedded blob; each `--agent <id>` narrows install to those backends (none = all).

@@ -3,9 +3,12 @@
 //! split `command`/`args`), written under the top-level `mcp` object of
 //! `~/.config/opencode/opencode.json` via `confedit::json_edit`. Commands copy
 //! through as markdown (opencode's command format is CC-shaped); agents translate
-//! into opencode subagent markdown (injecting `mode: subagent`). Every file we
-//! emit is plugin-name-prefixed and every mcp key is our own server name, so
-//! `remove` is exact and a second reconcile is a true `NoOp`.
+//! into opencode subagent markdown (injecting `mode: subagent`). The host's
+//! always-loaded guidance ([`Plugin::instructions`]) is written to a dedicated
+//! `<plugin>-instructions.md` and its path registered in opencode's top-level
+//! `instructions` array. Every file we emit is plugin-name-prefixed and every mcp
+//! key is our own server name, so `remove` is exact and a second reconcile is a
+//! true `NoOp`.
 //!
 //! Skipped surfaces (see `docs/harness/opencode.md`): hooks (opencode has no
 //! declarative shell-hook config — only an in-process JS/TS plugin API whose
@@ -43,7 +46,7 @@ impl AgentBackend for OpencodeBackend {
     fn capabilities(&self) -> Capabilities {
         // `hooks:false` — opencode's only hook surface is JS/TS plugins, not the
         // shell-command config CC-style hooks translate to (see the module doc).
-        // mcp + commands + agents translate; hooks + skills are skipped.
+        // mcp + commands + agents + instructions translate; hooks + skills are skipped.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -51,7 +54,7 @@ impl AgentBackend for OpencodeBackend {
             commands: true,
             agents: true,
             skills: false,
-            instructions: false,
+            instructions: true,
             scopes: &["user", "project"],
         }
     }
@@ -72,7 +75,20 @@ impl AgentBackend for OpencodeBackend {
             &expected_docs(&base, "agents", plugin.name, &comp.agents, |doc| render_agent_md(doc).into_bytes()),
             |_, _| true,
         )?;
-        Ok(report::compose([mcp, commands, agents].into_iter().flatten()))
+        // The instructions surface has two halves: the plugin-prefixed guidance file
+        // (its own name is the ownership marker, so `is_ours` is unconditional like
+        // commands/agents) and our path's membership in the shared `instructions[]`.
+        let (instr_file, instr_reg) = match &plugin.instructions {
+            Some(text) => (
+                report::probe_files(&[(instructions_file(scope, plugin.name)?, render_instructions(text))], |_, _| true)?,
+                report::probe_json_entries(
+                    &config_file(scope)?,
+                    &[(vec!["instructions".to_string()], Value::from(instructions_registration(scope, plugin.name)?))],
+                )?,
+            ),
+            None => (None, None),
+        };
+        Ok(report::compose([mcp, commands, agents, instr_file, instr_reg].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -90,6 +106,10 @@ impl AgentBackend for OpencodeBackend {
         for doc in &comp.agents {
             changed |= write_file_idem(&doc_path(&base, "agents", plugin.name, doc), render_agent_md(doc).as_bytes())?;
         }
+        if let Some(text) = &plugin.instructions {
+            changed |= write_file_idem(&instructions_file(scope, plugin.name)?, &render_instructions(text))?;
+            changed |= reconcile_instructions_entry(&config, &instructions_registration(scope, plugin.name)?)?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -105,6 +125,10 @@ impl AgentBackend for OpencodeBackend {
         }
         for doc in &comp.agents {
             changed |= remove_file_idem(&doc_path(&base, "agents", plugin.name, doc))?;
+        }
+        if plugin.instructions.is_some() {
+            changed |= remove_file_idem(&instructions_file(scope, plugin.name)?)?;
+            changed |= remove_instructions_entry(&config, &instructions_registration(scope, plugin.name)?)?;
         }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
@@ -285,6 +309,71 @@ fn probe_mcp(config: &Path, servers: &[McpServer]) -> Result<BackendState> {
     })
 }
 
+// --- instructions ------------------------------------------------------------
+
+/// The dedicated always-loaded guidance file we own, plugin-name-prefixed so it is
+/// identifiably ours and `remove` is exact: `<base>/<plugin>-instructions.md`
+/// (`~/.config/opencode` user, `<project>/.opencode` project).
+fn instructions_file(scope: &Scope, plugin: &str) -> Result<PathBuf> {
+    Ok(surface_base(scope)?.join(format!("{plugin}-instructions.md")))
+}
+
+/// The path string registered in opencode.json's `instructions[]`. User scope uses
+/// the file's absolute path — the global config is per-user, never committed, so a
+/// machine path is safe and resolves unambiguously wherever opencode runs. Project
+/// scope uses the root-relative `.opencode/...` path so a committed project config
+/// stays portable. Both `reconcile` and `probe` route through here (mirror-filter).
+fn instructions_registration(scope: &Scope, plugin: &str) -> Result<String> {
+    match scope {
+        Scope::User => Ok(instructions_file(scope, plugin)?.to_string_lossy().into_owned()),
+        Scope::Project { .. } => Ok(format!(".opencode/{plugin}-instructions.md")),
+    }
+}
+
+/// The guidance file's bytes: the host text with a guaranteed trailing newline, the
+/// exact render `probe` compares against disk.
+fn render_instructions(text: &str) -> Vec<u8> {
+    let mut out = text.to_string();
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.into_bytes()
+}
+
+/// Append our guidance file to opencode's top-level `instructions[]` if absent,
+/// leaving the user's own entries. A non-array `instructions` value (malformed —
+/// opencode's own schema rejects it too) is left untouched rather than clobbered; the
+/// probe then reads that surface `Absent` and self_heal stays a benign `NoOp` (it
+/// cannot force the key without clobbering a user value), never converging but never
+/// churning either.
+fn reconcile_instructions_entry(config: &Path, entry: &str) -> Result<bool> {
+    json_edit(config, |root| {
+        let obj = json_obj_at(root, &[]);
+        let list = obj.entry("instructions".to_string()).or_insert_with(|| Value::Array(Vec::new()));
+        if let Value::Array(arr) = list
+            && !arr.iter().any(|e| e.as_str() == Some(entry))
+        {
+            arr.push(Value::from(entry));
+        }
+        Ok(())
+    })
+}
+
+/// Strip exactly our path from `instructions[]`, keeping the user's entries. Leaves
+/// an emptied array in place rather than dropping the key (never touch what a user
+/// may have authored), the same conservative stance as `remove_mcp`.
+fn remove_instructions_entry(config: &Path, entry: &str) -> Result<bool> {
+    if !config.exists() {
+        return Ok(false);
+    }
+    json_edit(config, |root| {
+        if let Some(arr) = root.get_mut("instructions").and_then(Value::as_array_mut) {
+            arr.retain(|e| e.as_str() != Some(entry));
+        }
+        Ok(())
+    })
+}
+
 // --- agents ------------------------------------------------------------------
 
 /// Render a CC agent doc as opencode subagent markdown. CC agents are always
@@ -355,6 +444,43 @@ fn report_checks(backend: &OpencodeBackend, plugin: &Plugin, source: &Source) ->
     };
     checks.push(check_docs_present("translated commands present", &comp.commands, &base, "commands", plugin.name));
     checks.push(check_docs_present("translated agents present", &comp.agents, &base, "agents", plugin.name));
+
+    if plugin.instructions.is_some() {
+        checks.push(match instructions_file(&Scope::User, plugin.name) {
+            Ok(f) if f.exists() => {
+                DoctorCheck { name: "instructions file present", status: CheckStatus::Ok(format!("{} present", f.display())) }
+            }
+            Ok(f) => DoctorCheck {
+                name: "instructions file present",
+                status: CheckStatus::Fail { problem: format!("{} missing", f.display()), fix: "run the host's `setup`".into() },
+            },
+            Err(e) => DoctorCheck { name: "instructions file present", status: CheckStatus::Warn(e.to_string()) },
+        });
+        // The file is inert unless its path is in `instructions[]`; the registration is
+        // the load-bearing half, so check it separately (mirrors the mcp-registered check).
+        let name = "instructions registered";
+        checks.push(match instructions_registration(&Scope::User, plugin.name) {
+            Ok(reg) => {
+                let registered = root
+                    .as_ref()
+                    .and_then(|r| r.get("instructions"))
+                    .and_then(Value::as_array)
+                    .is_some_and(|a| a.iter().any(|e| e.as_str() == Some(reg.as_str())));
+                if registered {
+                    DoctorCheck { name, status: CheckStatus::Ok("registered in opencode.json `instructions[]`".into()) }
+                } else {
+                    DoctorCheck {
+                        name,
+                        status: CheckStatus::Fail {
+                            problem: "guidance file not registered in opencode.json `instructions[]`".into(),
+                            fix: "run the host's `setup`".into(),
+                        },
+                    }
+                }
+            }
+            Err(e) => DoctorCheck { name, status: CheckStatus::Warn(e.to_string()) },
+        });
+    }
 
     checks
 }

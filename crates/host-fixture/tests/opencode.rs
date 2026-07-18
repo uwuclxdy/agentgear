@@ -18,11 +18,13 @@ use std::process::Command;
 
 const BIN: &str = env!("CARGO_BIN_EXE_host_fixture");
 
-/// A foreign mcp server + an unrelated top-level key that MUST outlive our install
-/// and uninstall untouched. The mcp shape mirrors opencode's own (`command` array,
-/// `type:"local"`) so the fixture reads like a real user config.
+/// A foreign mcp server, a foreign `instructions[]` entry, and an unrelated
+/// top-level key that MUST all outlive our install and uninstall untouched. The mcp
+/// shape mirrors opencode's own (`command` array, `type:"local"`) so the fixture
+/// reads like a real user config.
 const SEED_CONFIG: &str = r#"{
   "theme": "dark",
+  "instructions": ["their-rules.md"],
   "mcp": {
     "theirs": { "type": "local", "command": ["their-server"], "enabled": true }
   }
@@ -100,6 +102,7 @@ fn opencode_full_lifecycle() {
     let env = Env::new("full-lifecycle");
     let cmd_file = env.opencode.join("commands").join("ez-fixture-plugin-hello.md");
     let agent_file = env.opencode.join("agents").join("ez-fixture-plugin-ez-helper.md");
+    let instr_file = env.opencode.join("ez-fixture-plugin-instructions.md");
 
     // install: translates mcp + commands + agents into opencode's config.
     let (ok, out) = env.fixture(&["setup", "--agent", "opencode"]);
@@ -149,8 +152,20 @@ fn opencode_full_lifecycle() {
     assert!(agent.contains("fixture subagent"), "agent description not translated:\n{agent}");
     assert!(agent.contains("fixture helper agent"), "agent body not translated:\n{agent}");
 
+    // instructions: the host guidance lands in a dedicated plugin-prefixed file, and
+    // its absolute path is appended to `instructions[]` after the user's own entry.
+    assert!(instr_file.exists(), "instructions file not written: {}", instr_file.display());
+    let instr = fs::read_to_string(&instr_file).unwrap();
+    assert!(instr.contains("ez-fixture always-loaded guidance"), "guidance text missing:\n{instr}");
+    let reg = instr_file.to_string_lossy().into_owned();
+    assert_eq!(
+        parsed["instructions"],
+        serde_json::json!(["their-rules.md", reg]),
+        "our path should append to `instructions[]` after the user's, neither clobbered:\n{c}"
+    );
+
     // safety: everything we wrote is under the throwaway temp root.
-    for p in [env.opencode.join("opencode.json"), cmd_file.clone(), agent_file.clone()] {
+    for p in [env.opencode.join("opencode.json"), cmd_file.clone(), agent_file.clone(), instr_file.clone()] {
         assert!(p.starts_with(&env.root), "backend wrote outside the temp root: {}", p.display());
     }
 
@@ -168,6 +183,13 @@ fn opencode_full_lifecycle() {
     assert!(c.contains("\"theme\"") && c.contains("dark"), "uninstall removed the seeded top-level key:\n{c}");
     assert!(!cmd_file.exists(), "our command file survived uninstall: {}", cmd_file.display());
     assert!(!agent_file.exists(), "our agent file survived uninstall: {}", agent_file.display());
+    assert!(!instr_file.exists(), "our instructions file survived uninstall: {}", instr_file.display());
+    let after: serde_json::Value = serde_json::from_str(&c).unwrap();
+    assert_eq!(
+        after["instructions"],
+        serde_json::json!(["their-rules.md"]),
+        "uninstall should drop only our path, keeping the user's instructions entry:\n{c}"
+    );
 
     // the post-uninstall config still parses: a clean re-install lands again
     // (json_edit would error on an unparseable opencode.json).
