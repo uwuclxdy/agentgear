@@ -74,7 +74,16 @@ impl AgentBackend for CursorBackend {
     fn capabilities(&self) -> Capabilities {
         // Whole surface translates (mcp + hooks + commands + agents + skills); the
         // cc-registry `loadClaude` coverage is a runtime retire gate, not a capability.
-        Capabilities { plugins: false, mcp: true, hooks: true, commands: true, agents: true, skills: true, scopes: &["user", "project"] }
+        Capabilities {
+            plugins: false,
+            mcp: true,
+            hooks: true,
+            commands: true,
+            agents: true,
+            skills: true,
+            instructions: false,
+            scopes: &["user", "project"],
+        }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

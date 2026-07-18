@@ -23,6 +23,10 @@ fn derive_metadata_is_wired() {
     assert_eq!(descriptor.name, "hello-mcp");
     assert_eq!(descriptor.id(), "hello-mcp@hello-mcp");
     assert_eq!(descriptor.version, env!("CARGO_PKG_VERSION"));
+    // `#[plugin(instructions_fn = session_instructions)]` splices the override into the
+    // derive-owned impl, so the descriptor carries the host's guidance verbatim.
+    assert_eq!(descriptor.instructions, hello_mcp::session_instructions());
+    assert_eq!(descriptor.instructions.as_deref(), Some("hello from the minimal agentgear host"));
 }
 
 #[test]

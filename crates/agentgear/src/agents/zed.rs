@@ -44,7 +44,16 @@ impl AgentBackend for ZedBackend {
 
     fn capabilities(&self) -> Capabilities {
         // mcp + skills: zed has no config-file hook/command/subagent surface to translate.
-        Capabilities { plugins: false, mcp: true, hooks: false, commands: false, agents: false, skills: true, scopes: &["user", "project"] }
+        Capabilities {
+            plugins: false,
+            mcp: true,
+            hooks: false,
+            commands: false,
+            agents: false,
+            skills: true,
+            instructions: false,
+            scopes: &["user", "project"],
+        }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

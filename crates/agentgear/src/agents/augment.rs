@@ -54,7 +54,16 @@ impl AgentBackend for AugmentBackend {
         // settings.json` (workspace `.augment/` is documented for hooks/commands but
         // not confirmed to honor mcp), and we write the whole config into one file.
         // mcp + hooks + commands + agents translate; skills are skipped.
-        Capabilities { plugins: false, mcp: true, hooks: true, commands: true, agents: true, skills: false, scopes: &["user"] }
+        Capabilities {
+            plugins: false,
+            mcp: true,
+            hooks: true,
+            commands: true,
+            agents: true,
+            skills: false,
+            instructions: false,
+            scopes: &["user"],
+        }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

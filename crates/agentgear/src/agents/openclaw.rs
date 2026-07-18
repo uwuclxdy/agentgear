@@ -63,7 +63,16 @@ impl AgentBackend for OpenclawBackend {
         // a config flag, not a shell command we can write. User scope only: the brief
         // documents no project-level config file. mcp + skills translate; hooks/
         // commands/subagents have no config-writable surface.
-        Capabilities { plugins: false, mcp: true, hooks: false, commands: false, agents: false, skills: true, scopes: &["user"] }
+        Capabilities {
+            plugins: false,
+            mcp: true,
+            hooks: false,
+            commands: false,
+            agents: false,
+            skills: true,
+            instructions: false,
+            scopes: &["user"],
+        }
     }
 
     fn probe(&self, plugin: &Plugin, _scope: &Scope, source: &Source) -> Result<BackendState> {

@@ -62,7 +62,16 @@ impl AgentBackend for VscodeCopilotBackend {
         // Project-scope only: the sole documented, unambiguous config lives in the
         // repo (`.vscode/`, `.github/`). The fan-out skips this backend at user scope.
         // mcp + hooks + agents translate; commands + skills are skipped (harness doc).
-        Capabilities { plugins: false, mcp: true, hooks: true, commands: false, agents: true, skills: false, scopes: &["project"] }
+        Capabilities {
+            plugins: false,
+            mcp: true,
+            hooks: true,
+            commands: false,
+            agents: true,
+            skills: false,
+            instructions: false,
+            scopes: &["project"],
+        }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

@@ -54,7 +54,16 @@ impl AgentBackend for KimiBackend {
     fn capabilities(&self) -> Capabilities {
         // No user-level command/agent file surface exists (kimi's slash-command analog
         // is a `SKILL.md` subdir, not a flat `.md`); mcp + hooks + skills translate.
-        Capabilities { plugins: false, mcp: true, hooks: true, commands: false, agents: false, skills: true, scopes: &["user"] }
+        Capabilities {
+            plugins: false,
+            mcp: true,
+            hooks: true,
+            commands: false,
+            agents: false,
+            skills: true,
+            instructions: false,
+            scopes: &["user"],
+        }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

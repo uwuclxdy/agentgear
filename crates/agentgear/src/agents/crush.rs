@@ -69,7 +69,16 @@ impl AgentBackend for CrushBackend {
     fn capabilities(&self) -> Capabilities {
         // mcp + hooks (PreToolUse) + commands + skills translate; agents have no
         // file-writable subagent surface (issue #1807).
-        Capabilities { plugins: false, mcp: true, hooks: true, commands: true, agents: false, skills: true, scopes: &["user", "project"] }
+        Capabilities {
+            plugins: false,
+            mcp: true,
+            hooks: true,
+            commands: true,
+            agents: false,
+            skills: true,
+            instructions: false,
+            scopes: &["user", "project"],
+        }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

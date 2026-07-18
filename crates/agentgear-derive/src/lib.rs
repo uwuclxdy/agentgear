@@ -28,6 +28,11 @@ struct Attrs {
     github_repo: Option<String>,
     agents: Vec<String>,
     embed: bool,
+    /// A path to a `fn() -> Option<String>` the emitted impl calls from
+    /// `PluginHost::instructions` (the only override seam, since the derive owns the
+    /// sole impl block). Spliced verbatim like `version`; `None` inherits the trait
+    /// default (`None`, no instructions surface).
+    instructions_fn: Option<TokenStream2>,
     span: proc_macro2::Span,
 }
 
@@ -42,6 +47,18 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let version = &attrs.version;
     let agents = &attrs.agents;
     let default_source = default_source_tokens(&attrs)?;
+
+    // Override `PluginHost::instructions` only when the host set `instructions_fn`;
+    // otherwise the emitted impl omits the method and inherits the trait default
+    // (`None`). The attr is a path to a `fn() -> Option<String>`, called verbatim.
+    let instructions_method = match &attrs.instructions_fn {
+        Some(path) => quote! {
+            fn instructions() -> ::core::option::Option<::std::string::String> {
+                #path()
+            }
+        },
+        None => quote! {},
+    };
 
     // `embed = true` (default): bake the build.rs blob via `include_bytes!` of the
     // `AGENTGEAR_BLOB` path. `embed = false`: an empty slice (`Source::Embedded`
@@ -64,6 +81,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             fn embedded_blob() -> &'static [u8] {
                 #embedded_blob_body
             }
+
+            #instructions_method
         }
 
         // Fires only if the host forgot its build.rs, which would also lose the
@@ -89,6 +108,7 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
     let mut github_repo: Option<String> = None;
     let mut agents: Option<Vec<String>> = None;
     let mut embed: Option<bool> = None;
+    let mut instructions_fn: Option<TokenStream2> = None;
 
     let attr = input
         .attrs
@@ -113,6 +133,12 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
             "github_repo" => github_repo = Some(lit_str(&pair.value)?),
             "agents" => agents = Some(str_array(&pair.value)?),
             "embed" => embed = Some(lit_bool(&pair.value)?),
+            "instructions_fn" => {
+                // A fn path (e.g. `guidance::session_block_opt`), spliced through
+                // verbatim and called from the emitted `instructions()`.
+                let value = &pair.value;
+                instructions_fn = Some(quote! { #value });
+            }
             other => return Err(syn::Error::new_spanned(&pair.path, format!("unknown `plugin` key `{other}`"))),
         }
     }
@@ -128,7 +154,7 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
     }
     let embed = embed.unwrap_or(true);
 
-    Ok(Attrs { name, marketplace, version, tree, default_source, github_repo, agents, embed, span })
+    Ok(Attrs { name, marketplace, version, tree, default_source, github_repo, agents, embed, instructions_fn, span })
 }
 
 fn default_source_tokens(attrs: &Attrs) -> syn::Result<TokenStream2> {

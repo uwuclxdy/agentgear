@@ -70,7 +70,16 @@ impl AgentBackend for GooseBackend {
         // project variant, but v1 stays user-scope-primary so probe/remove key on
         // one coherent surface. mcp + hooks + skills translate; commands/agents are
         // skipped (goose's recipe format, module doc).
-        Capabilities { plugins: false, mcp: true, hooks: true, commands: false, agents: false, skills: true, scopes: &["user"] }
+        Capabilities {
+            plugins: false,
+            mcp: true,
+            hooks: true,
+            commands: false,
+            agents: false,
+            skills: true,
+            instructions: false,
+            scopes: &["user"],
+        }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

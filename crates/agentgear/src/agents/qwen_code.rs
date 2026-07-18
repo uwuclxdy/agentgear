@@ -54,7 +54,16 @@ impl AgentBackend for QwenCodeBackend {
 
     fn capabilities(&self) -> Capabilities {
         // Claude-Code-shaped fork: mcp + hooks + commands + agents + skills all translate.
-        Capabilities { plugins: false, mcp: true, hooks: true, commands: true, agents: true, skills: true, scopes: &["user", "project"] }
+        Capabilities {
+            plugins: false,
+            mcp: true,
+            hooks: true,
+            commands: true,
+            agents: true,
+            skills: true,
+            instructions: false,
+            scopes: &["user", "project"],
+        }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

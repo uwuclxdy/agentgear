@@ -44,7 +44,16 @@ impl AgentBackend for OpencodeBackend {
         // `hooks:false` — opencode's only hook surface is JS/TS plugins, not the
         // shell-command config CC-style hooks translate to (see the module doc).
         // mcp + commands + agents translate; hooks + skills are skipped.
-        Capabilities { plugins: false, mcp: true, hooks: false, commands: true, agents: true, skills: false, scopes: &["user", "project"] }
+        Capabilities {
+            plugins: false,
+            mcp: true,
+            hooks: false,
+            commands: true,
+            agents: true,
+            skills: false,
+            instructions: false,
+            scopes: &["user", "project"],
+        }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

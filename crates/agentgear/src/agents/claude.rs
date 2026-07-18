@@ -25,8 +25,19 @@ impl AgentBackend for ClaudeBackend {
 
     fn capabilities(&self) -> Capabilities {
         // Plugin-native: the `claude plugin` install copies the whole CC tree, so
-        // every surface is served natively.
-        Capabilities { plugins: true, mcp: true, hooks: true, commands: true, agents: true, skills: true, scopes: &["user", "project"] }
+        // every surface is served natively. `instructions` stays false: it is the
+        // non-CC context-file surface, and CC receives host guidance via the MCP
+        // `instructions` channel instead.
+        Capabilities {
+            plugins: true,
+            mcp: true,
+            hooks: true,
+            commands: true,
+            agents: true,
+            skills: true,
+            instructions: false,
+            scopes: &["user", "project"],
+        }
     }
 
     /// The classification self_heal keys on: disabled beats broken beats stale.

@@ -15,7 +15,7 @@ const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/plugi
 
 fn test_plugin() -> Plugin {
     // `blob` is unused by the helpers under test (they take entries/blob directly).
-    Plugin { name: "ez-test-plugin", marketplace: "ez-test-mkt", version: "0.1.0", agents: &["claude"], blob: &[] }
+    Plugin { name: "ez-test-plugin", marketplace: "ez-test-mkt", version: "0.1.0", agents: &["claude"], instructions: None, blob: &[] }
 }
 
 fn fixture_blob() -> Vec<u8> {

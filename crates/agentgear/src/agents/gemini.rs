@@ -42,7 +42,16 @@ impl AgentBackend for GeminiBackend {
 
     fn capabilities(&self) -> Capabilities {
         // mcp + hooks + commands + agents translate; skills have no stable surface.
-        Capabilities { plugins: false, mcp: true, hooks: true, commands: true, agents: true, skills: false, scopes: &["user", "project"] }
+        Capabilities {
+            plugins: false,
+            mcp: true,
+            hooks: true,
+            commands: true,
+            agents: true,
+            skills: false,
+            instructions: false,
+            scopes: &["user", "project"],
+        }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

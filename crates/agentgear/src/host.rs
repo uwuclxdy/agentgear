@@ -111,13 +111,18 @@ pub enum Outcome {
 /// truth behind the README's supported-agents matrix.
 #[derive(Debug, Clone)]
 pub struct Capabilities {
-    /// Native plugin install (copies the whole CC tree); implies every surface.
+    /// Native plugin install (copies the whole CC tree); implies every surface
+    /// except `instructions`, which is a non-CC context-file surface (a CC host
+    /// delivers its guidance through the MCP `instructions` channel, not a file).
     pub plugins: bool,
     pub mcp: bool,
     pub hooks: bool,
     pub commands: bool,
     pub agents: bool,
     pub skills: bool,
+    /// Host-authored always-loaded guidance written to the harness's native
+    /// context channel (a dedicated instructions file + any registration).
+    pub instructions: bool,
     pub scopes: &'static [&'static str],
 }
 
@@ -129,6 +134,9 @@ pub struct Plugin {
     pub marketplace: &'static str,
     pub version: &'static str,
     pub agents: &'static [&'static str],
+    /// Host-authored always-loaded guidance ([`PluginHost::instructions`]); each
+    /// non-CC backend writes it to its native context channel. `None` writes nothing.
+    pub instructions: Option<String>,
     /// The plugin tree baked in as a compressed `.tar.br` (empty when the derive's
     /// `embed` attr is off). Decompressed by `materialize` for [`Source::Embedded`].
     pub(crate) blob: &'static [u8],
@@ -141,6 +149,7 @@ impl std::fmt::Debug for Plugin {
             .field("marketplace", &self.marketplace)
             .field("version", &self.version)
             .field("agents", &self.agents)
+            .field("instructions", &self.instructions)
             .finish_non_exhaustive()
     }
 }
@@ -179,12 +188,21 @@ pub trait PluginHost {
     /// off; [`Source::Embedded`] then errors at materialize.
     fn embedded_blob() -> &'static [u8];
 
+    /// Host-authored always-loaded guidance merged into each non-CC harness's native
+    /// instructions channel. `None` (the default) writes no instructions surface. A
+    /// deriving host supplies it with `#[plugin(instructions_fn = <path>)]`, since the
+    /// derive owns the sole `impl PluginHost` block and this is the only override seam.
+    fn instructions() -> Option<String> {
+        None
+    }
+
     fn descriptor() -> Plugin {
         Plugin {
             name: Self::NAME,
             marketplace: Self::MARKETPLACE,
             version: Self::VERSION,
             agents: Self::AGENTS,
+            instructions: Self::instructions(),
             blob: Self::embedded_blob(),
         }
     }

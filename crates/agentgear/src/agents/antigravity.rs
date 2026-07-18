@@ -47,7 +47,16 @@ impl AgentBackend for AntigravityBackend {
     fn capabilities(&self) -> Capabilities {
         // MCP-only, user-scope-only: hooks/commands/agents/skills have no verified
         // desktop-IDE file surface (see the module doc + `docs/harness/antigravity.md`).
-        Capabilities { plugins: false, mcp: true, hooks: false, commands: false, agents: false, skills: false, scopes: &["user"] }
+        Capabilities {
+            plugins: false,
+            mcp: true,
+            hooks: false,
+            commands: false,
+            agents: false,
+            skills: false,
+            instructions: false,
+            scopes: &["user"],
+        }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
