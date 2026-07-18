@@ -15,8 +15,15 @@ pub enum Error {
     #[error("`claude` version {found} is below the required floor {floor}; upgrade with `npm install -g @anthropic-ai/claude-code`")]
     ClaudeTooOld { found: String, floor: &'static str },
 
-    #[error("`claude {args}` failed with exit {code}:\n{stderr}")]
-    Cli { args: String, code: i32, stderr: String },
+    #[error("`copilot` CLI not found on PATH; install it with `npm install -g @github/copilot`")]
+    CopilotNotFound,
+
+    #[error("copilot >= 1.0.71 required for plugin management (found {found}); run `copilot update`")]
+    CopilotTooOld { found: String },
+
+    #[error("`{bin} {args}` failed with exit {code}:\n{stderr}")]
+    #[non_exhaustive]
+    Cli { bin: &'static str, args: String, code: i32, stderr: String },
 
     #[error("could not parse {what} as JSON: {source}")]
     Json {

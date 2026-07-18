@@ -78,7 +78,6 @@ macro_rules! cfg_config_backends {
             feature = "cline",
             feature = "devin",
             feature = "qwen-code",
-            feature = "copilot-cli",
             feature = "vscode-copilot",
             feature = "jetbrains-copilot",
             feature = "kimi",

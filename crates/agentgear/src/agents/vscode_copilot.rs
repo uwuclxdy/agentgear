@@ -1,8 +1,10 @@
 //! The VS Code Copilot backend: GitHub Copilot Chat running inside VS Code. A
-//! **project-scoped** translate into the repo's own files — there is no coherent
-//! user-scope target (the profile-nested `mcp.json` path is OS/variant-ambiguous,
-//! see `docs/harness/vscode-copilot.md`), so the orchestration skips this backend at
-//! user scope and the lifecycle methods reject `Scope::User` rather than guess a path.
+//! **project-scoped** translate into the repo's own files. User scope is skipped not
+//! because its path is unknown — it is `<userDataDir>/User/mcp.json` — but because
+//! *which* VS Code profile is active is VS Code-internal state not derivable from
+//! disk, so a default-profile write is silently wrong under a non-default profile
+//! (see `docs/harness/vscode-copilot.md`); the orchestration skips this backend at
+//! user scope and the lifecycle methods reject `Scope::User` rather than guess.
 //!
 //! MCP goes through the shared json renderer into `<project>/.vscode/mcp.json` under
 //! the root key `servers` (NOT CC's `mcpServers`), `ServerShape::typed()` (VS Code
@@ -116,15 +118,18 @@ impl AgentBackend for VscodeCopilotBackend {
 
 // --- paths -------------------------------------------------------------------
 
-/// The project directory whose `.vscode`/`.github` files this backend owns. There
-/// is no user-scope surface, so `Scope::User` is an error rather than a guessed
-/// path (the fan-out already skips user scope; this guard is defensive).
+/// The project directory whose `.vscode`/`.github` files this backend owns. User
+/// scope is refused rather than guessed: the path itself is known
+/// (`<userDataDir>/User/mcp.json`), but which VS Code profile is active is
+/// VS Code-internal state not derivable from disk, so a default-profile write would
+/// silently miss a user on a non-default profile (the fan-out already skips user
+/// scope; this guard is defensive).
 fn project_root(scope: &Scope) -> Result<&Path> {
     match scope {
         Scope::Project { path } => Ok(path),
-        Scope::User => {
-            Err(Error::Tree("vscode-copilot is project-scoped; it has no user-scope config surface (install into a project scope)".into()))
-        }
+        Scope::User => Err(Error::Tree(
+            "vscode-copilot is project-scoped: its user-scope mcp.json path is known (<userDataDir>/User/mcp.json) but the active VS Code profile is not derivable from disk, so a user-scope write could target the wrong profile — install into a project scope".into(),
+        )),
     }
 }
 
