@@ -7,12 +7,10 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use crate::cli::{ClaudeCli, MIN_CLAUDE_VERSION, parse_version};
+use crate::cli::{CLAUDE_FLOOR, ClaudeCli, MIN_CLAUDE_VERSION, parse_version};
 use crate::error::Result;
 use crate::host::{Plugin, Scope, Source, data_root};
 use crate::materialize::{dir_hash, tree_hash};
-
-const FLOOR: (u64, u64, u64) = (2, 1, 196);
 
 #[derive(Debug, Clone)]
 pub struct DoctorReport {
@@ -164,7 +162,7 @@ fn check_claude_version(cli: &ClaudeCli) -> DoctorCheck {
         Err(e) => return DoctorCheck { name, status: CheckStatus::Warn(format!("could not read `claude --version`: {e}")) },
     };
     match parse_version(&raw) {
-        Some(v) if v < FLOOR => DoctorCheck {
+        Some(v) if v < CLAUDE_FLOOR => DoctorCheck {
             name,
             status: CheckStatus::Fail {
                 problem: format!("`claude` {raw} is below the required floor {MIN_CLAUDE_VERSION}"),
