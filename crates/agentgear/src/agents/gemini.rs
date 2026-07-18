@@ -138,10 +138,11 @@ fn command_rel(doc: &MarkdownDoc) -> String {
 
 // --- hooks -------------------------------------------------------------------
 
-/// Map a CC hook event to gemini's nearest lifecycle analog. The two verified in
-/// the brief are `SessionStart` (identity) and `UserPromptSubmit` -> `BeforeAgent`;
-/// the tool/compact events map by position. Events with no clean gemini counterpart
-/// (`Stop`, `SubagentStop`) are skipped rather than written under a guessed name.
+/// Map a CC hook event to gemini's nearest lifecycle analog. `SessionStart` is
+/// identity, `UserPromptSubmit` -> `BeforeAgent`, tool/compact map by position.
+/// `Stop` and the subagent pair (`SubagentStart`/`SubagentStop`) return `None`:
+/// gemini's 11-event `HookEventName` enum carries no subagent event, and its lone
+/// agent-lifecycle analog `AfterAgent` would over-fire on every main-agent turn.
 fn map_event(cc_event: &str) -> Option<&'static str> {
     match cc_event {
         "SessionStart" => Some("SessionStart"),

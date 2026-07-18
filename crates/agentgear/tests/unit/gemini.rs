@@ -13,6 +13,17 @@ fn scratch(name: &str) -> std::path::PathBuf {
 }
 
 #[test]
+fn subagent_events_are_unmapped() {
+    // gemini's 11-event HookEventName enum (verify-gemini #19) has no subagent
+    // event; the lone agent-lifecycle analog AfterAgent would over-fire on the
+    // main agent, so both refuse rather than write a hook that never fires right.
+    assert_eq!(super::map_event("SubagentStart"), None);
+    assert_eq!(super::map_event("SubagentStop"), None);
+    // control: a mapped event still resolves, so the refusal above is not vacuous.
+    assert_eq!(super::map_event("SessionStart"), Some("SessionStart"));
+}
+
+#[test]
 fn hook_portability_matches_mcp_server_rule() {
     let portable = HookBinding { event: "SessionStart".into(), matcher: None, command: "host_fixture self-heal".into() };
     let rooted = HookBinding { event: "SessionStart".into(), matcher: None, command: "${CLAUDE_PLUGIN_ROOT}/hooks/self-heal.sh".into() };
