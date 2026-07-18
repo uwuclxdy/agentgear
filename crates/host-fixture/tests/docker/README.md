@@ -38,3 +38,8 @@ owned by that harness's workflow, disjoint from every other file:
   builder's real config.
 - CI wires one matrix leg per harness calling `run.sh <harness>` (foundation adds
   the job; each Dockerfile lands with its backend).
+- a real tool-call round-trip is out of reach today: every backed CLI routes MCP tool
+  invocation through the model in an agent session (auth-gated + non-deterministic),
+  and none ships a `mcp call` verb. The native `mcp list` above is the deepest
+  auth-free proof of ingestion. The `ez-fixture` server advertises a `ping` tool
+  (`host_fixture mcp`) for the day a CLI ships `mcp call`.
