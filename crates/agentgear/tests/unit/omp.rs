@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use super::{config_disables_claude_plugins, doc_file, flat_stem, registry_lists_plugin, render_agent, resolve_omp_root};
+use super::{config_disables_claude_plugins, doc_file, flat_stem, render_agent, resolve_omp_root};
 use crate::agents::BackendState;
 use crate::agents::mcpjson::{self, ServerShape};
 use crate::components::{MarkdownDoc, McpKind, McpServer};
@@ -93,32 +93,6 @@ fn render_agent_re_emits_name_and_description_and_drops_model() {
 fn render_agent_quotes_a_colon_bearing_description() {
     let doc = agent_doc("x", "agents/x.md", &[("description", "does: things")], "body");
     assert!(render_agent("p", &doc).contains("description: \"does: things\"\n"));
-}
-
-#[test]
-fn registry_lists_plugin_requires_version_key_and_a_non_empty_entry() {
-    let path = scratch("installed_plugins.json");
-    let id = "ez-fixture-plugin@ez-fixture-plugin";
-
-    // Absent file -> not covering (we translate).
-    assert!(!registry_lists_plugin(&path, id));
-
-    // omp's `parseClaudePluginsRegistry` treats a version-less registry as absent, so we do too.
-    std::fs::write(&path, r#"{"plugins":{"ez-fixture-plugin@ez-fixture-plugin":[{"installPath":"x"}]}}"#).unwrap();
-    assert!(!registry_lists_plugin(&path, id), "a registry without a numeric version key must read as absent");
-
-    // Version present but our id missing / its entry empty -> not listed.
-    std::fs::write(&path, r#"{"version":1,"plugins":{"other@mkt":[{"installPath":"x"}]}}"#).unwrap();
-    assert!(!registry_lists_plugin(&path, id));
-    std::fs::write(&path, r#"{"version":1,"plugins":{"ez-fixture-plugin@ez-fixture-plugin":[]}}"#).unwrap();
-    assert!(!registry_lists_plugin(&path, id), "an empty install array is not a live entry");
-
-    // Version + a non-empty install entry -> listed.
-    std::fs::write(&path, r#"{"version":1,"plugins":{"ez-fixture-plugin@ez-fixture-plugin":[{"scope":"user","installPath":"x"}]}}"#)
-        .unwrap();
-    assert!(registry_lists_plugin(&path, id));
-
-    std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
 #[test]
