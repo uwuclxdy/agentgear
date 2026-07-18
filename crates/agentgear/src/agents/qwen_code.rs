@@ -177,6 +177,7 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
         "SessionStart" => Some("SessionStart"),
         "SessionEnd" => Some("SessionEnd"),
         "Stop" => Some("Stop"),
+        "SubagentStart" => Some("SubagentStart"),
         "SubagentStop" => Some("SubagentStop"),
         "PreCompact" => Some("PreCompact"),
         "Notification" => Some("Notification"),

@@ -62,6 +62,25 @@ fn reconcile_hooks_writes_cc_nested_shape_with_identity_events_and_is_idempotent
     fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
+/// `SubagentStart` is a CC hook event and qwen-code's own `HookEventName` enum
+/// contains it verbatim (verify-qwen-code #6), so the identity map must carry it
+/// through like every other shared event. Guards the `map_event` arm: without it, a
+/// CC plugin's `SubagentStart` hook is silently dropped even though qwen runs it.
+#[test]
+fn subagent_start_maps_identically() {
+    let path = scratch("settings.json");
+    let sub = HookBinding { event: "SubagentStart".into(), matcher: None, command: "host_fixture note".into() };
+
+    assert!(reconcile_hooks(&path, std::slice::from_ref(&sub)).unwrap(), "SubagentStart hook must be written");
+    let v: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        v["hooks"]["SubagentStart"][0]["hooks"][0]["command"], "host_fixture note",
+        "SubagentStart must map 1:1 and land under hooks.SubagentStart:\n{v}"
+    );
+
+    fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
 #[test]
 fn reconcile_hooks_skips_non_portable_and_remove_leaves_a_same_name_survivor() {
     let path = scratch("settings.json");
