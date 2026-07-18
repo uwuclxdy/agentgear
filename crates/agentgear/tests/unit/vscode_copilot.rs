@@ -162,6 +162,10 @@ fn hook_portability_and_event_mapping() {
     // `SessionEnd` is absent from the `vscode` vocabulary but present in the parser's
     // canonical set, which our `.github/hooks` file resolves against, so it lands.
     assert_eq!(map_event("SessionEnd"), Some("SessionEnd"));
+    // `SubagentStart` is a CC event too, and sits in VS Code's canonical superset `mk`
+    // (`docs/research/verify-vscode-copilot.md` #10) right beside `SessionEnd`; codex and
+    // kimi map it, and our `.github/hooks` file resolves it via the same fallback.
+    assert_eq!(map_event("SubagentStart"), Some("SubagentStart"));
     // Genuinely outside every VS Code vocabulary -> skipped, never guessed.
     assert_eq!(map_event("Notification"), None);
 }

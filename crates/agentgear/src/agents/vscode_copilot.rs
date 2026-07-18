@@ -10,8 +10,9 @@
 //! the root key `servers` (NOT CC's `mcpServers`), `ServerShape::typed()` (VS Code
 //! wants an explicit `"type":"stdio"`). Hooks land in a file we own entirely,
 //! `<project>/.github/hooks/<plugin>.json`, with CC event names mapped to VS Code's
-//! (identity for the 7 shared events; `SessionEnd`/`Notification` have no analog and
-//! are skipped). CC agent defs become `<project>/.github/agents/<plugin>-<name>.agent.md`.
+//! (identity for the 9 CC events VS Code's canonical set shares; only `Notification`
+//! has no analog and is skipped). CC agent defs become
+//! `<project>/.github/agents/<plugin>-<name>.agent.md`.
 //! Everything we write is keyed by our server names or prefixed with the plugin name,
 //! so `remove` is exact and a second reconcile is a true `NoOp`. Commands, skills,
 //! and the user-scope profile config are skipped (see the harness doc).
@@ -165,10 +166,10 @@ fn portable_names(servers: &[McpServer]) -> Vec<&str> {
 /// vocabularies; a `.github/hooks` file like ours parses as the `copilot` format,
 /// whose resolver tries the camelCase map first and then falls back to accepting any
 /// name from the canonical 10-event set verbatim. That set shares CC's PascalCase
-/// spelling, so the map is identity for the 8 CC events it contains. `SessionEnd` is
-/// among them (it is absent only from the narrower `vscode` vocabulary, which is why
-/// it once looked analog-less). `Notification` is in no vocabulary at all and stays
-/// skipped, never written under a guess.
+/// spelling, so the map is identity for the 9 CC events it contains. `SessionEnd` and
+/// `SubagentStart` are among them (both absent only from the narrower `vscode`
+/// vocabulary, which is why they once looked analog-less). `Notification` is in no
+/// vocabulary at all and stays skipped, never written under a guess.
 fn map_event(cc_event: &str) -> Option<&'static str> {
     match cc_event {
         "SessionStart" => Some("SessionStart"),
@@ -177,6 +178,7 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
         "PreToolUse" => Some("PreToolUse"),
         "PostToolUse" => Some("PostToolUse"),
         "PreCompact" => Some("PreCompact"),
+        "SubagentStart" => Some("SubagentStart"),
         "SubagentStop" => Some("SubagentStop"),
         "Stop" => Some("Stop"),
         _ => None,
