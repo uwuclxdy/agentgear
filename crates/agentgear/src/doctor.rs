@@ -7,6 +7,9 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
+// `agents::claude` is feature-gated, so the marketplace-health check it backs is too;
+// under `--no-default-features` the whole claude slice compiles as dead code.
+#[cfg(feature = "claude")]
 use crate::agents::claude::{MarketplaceHealth, find_marketplace, marketplace_health};
 use crate::cli::{CLAUDE_FLOOR, ClaudeCli, MIN_CLAUDE_VERSION, parse_version};
 use crate::error::Result;
@@ -129,6 +132,7 @@ pub(crate) fn claude_report(plugin: &Plugin, source: &Source) -> DoctorReport {
 
     if let Some(cli) = cli {
         check_registered(&cli, plugin, &mut checks);
+        #[cfg(feature = "claude")]
         checks.push(check_marketplace(&cli, plugin, source));
         checks.push(check_validate(plugin, source));
     }
@@ -212,6 +216,7 @@ fn check_registered(cli: &ClaudeCli, plugin: &Plugin, checks: &mut Vec<DoctorChe
 
 /// The plugin entry survives a removed or path-moved marketplace: CC keeps serving
 /// its cache copy, so this is a Warn, not a Fail. Only the next `update` is at risk.
+#[cfg(feature = "claude")]
 fn check_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: &Source) -> DoctorCheck {
     let name = "marketplace registered";
     let marketplace = match find_marketplace(cli, &Scope::User, plugin.marketplace) {
