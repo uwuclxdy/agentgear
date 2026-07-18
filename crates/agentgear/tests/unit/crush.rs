@@ -1,8 +1,9 @@
 //! crush backend unit tests: the one-file mcp+hooks reconcile shape, an idempotent
 //! re-reconcile (NoOp), exact removal that preserves a pre-seeded user entry, the
-//! `PreToolUse`-only event map, and the shared `${CLAUDE_PLUGIN_ROOT}` portability
+//! `PreToolUse`-only event map, the shared `${CLAUDE_PLUGIN_ROOT}` portability
 //! filter for both servers and hooks (a non-portable entry is never written and so
-//! must never be a removal candidate either).
+//! must never be a removal candidate either), and the commands render (crush's
+//! loader does not split frontmatter, so only the parsed body may land on disk).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -10,8 +11,8 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::mcpjson::{self, ServerShape};
-use super::{BackendState, HookBinding, McpKind, McpServer};
-use super::{hook_is_portable, map_event, portable_names, reconcile_config, remove_config};
+use super::{BackendState, HookBinding, MarkdownDoc, McpKind, McpServer};
+use super::{command_rel, hook_is_portable, map_event, portable_names, reconcile_config, remove_config, render_command};
 
 fn scratch(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("ez-crush-unit-{:016x}", fastrand::u64(..)));
@@ -41,6 +42,20 @@ fn stdio(name: &str, command: &str, args: &[&str]) -> McpServer {
 
 fn pre_tool_hook(command: &str, matcher: Option<&str>) -> HookBinding {
     HookBinding { event: "PreToolUse".into(), matcher: matcher.map(str::to_string), command: command.into() }
+}
+
+/// A parsed command doc: `body` mirrors what `PluginComponents::parse` already
+/// strips the CC frontmatter down to; `raw` keeps the original fenced bytes so a
+/// mutation that renders from `raw` instead of `body` is exposed by the assertions
+/// below (a real, un-mutated frontmatter-copy bug would leak `raw`'s fence and key).
+fn command_doc(rel: &str, body: &str) -> MarkdownDoc {
+    MarkdownDoc {
+        name: rel.rsplit('/').next().unwrap_or(rel).trim_end_matches(".md").to_string(),
+        rel: rel.to_string(),
+        frontmatter: BTreeMap::new(),
+        body: body.to_string(),
+        raw: format!("---\ndescription: fixture command\n---\n\n{body}\n").into_bytes(),
+    }
 }
 
 #[test]
@@ -216,4 +231,23 @@ fn probe_classifies_absent_healthy_needsrepair() {
     std::fs::write(&path, serde_json::to_vec_pretty(&root).unwrap()).unwrap();
     assert!(matches!(mcpjson::probe(&path, &["mcp"], &servers, ServerShape::typed()).unwrap(), BackendState::NeedsRepair));
     cleanup(&path);
+}
+
+#[test]
+fn render_command_drops_frontmatter_writes_body_only() {
+    // crush's own loader (`internal/commands/commands.go`) does not split
+    // frontmatter — the whole file becomes the literal prompt text — so a render
+    // that ever forwarded `doc.raw` (the fenced source) instead of `doc.body` would
+    // leak the CC frontmatter block into a real crush session.
+    let doc = command_doc("commands/hello.md", "Say hello.");
+    let rendered = render_command(&doc);
+    assert_eq!(rendered, "Say hello.\n", "body only, trimmed, single trailing newline");
+    assert!(!rendered.starts_with("---"), "a leading frontmatter fence must never reach the command file");
+    assert!(!rendered.contains("description:"), "a frontmatter key must never reach the command file");
+}
+
+#[test]
+fn command_rel_strips_commands_prefix_keeps_subdir() {
+    assert_eq!(command_rel(&command_doc("commands/hello.md", "x")), "hello.md");
+    assert_eq!(command_rel(&command_doc("commands/sub/deep.md", "x")), "sub/deep.md");
 }
