@@ -49,6 +49,12 @@ per-surface translation); every column reads native for both.
 | amp | ✓ | — | — | — | — |
 | pi | — (no native mcp surface) | — | — | — | — |
 
+A sixth surface, **instructions** (a host's always-loaded guidance text, from
+`PluginHost::instructions`), sits outside these five IR surfaces. It rides the plugin descriptor,
+which the components IR has no field for. Only `opencode` writes it today (a dedicated file
+registered in its `instructions[]` array); `claude` receives the same text through the MCP
+`initialize.instructions` field instead.
+
 ## Config locations
 
 The user-scope config each backend writes. Most honor a home/config-dir env override; the notable

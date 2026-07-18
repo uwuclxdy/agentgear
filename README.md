@@ -140,14 +140,17 @@ Grouped by what each surface translates:
 | mcp, commands, agents, skills | `kilo` |
 | mcp, hooks, agents | `vscode-copilot` |
 | mcp, hooks, commands | `cline` |
-| mcp, commands, agents | `opencode`, `omp` |
+| mcp, commands, agents, instructions | `opencode` |
+| mcp, commands, agents | `omp` |
 | mcp, hooks, skills | `kimi`, `goose` |
 | mcp, hooks | `antigravity-cli` |
 | mcp, skills | `kiro`, `zed`, `openclaw` |
 | mcp only | `jetbrains-copilot`, `antigravity`, `amp` |
 | detect-only, no surface | `pi` |
 
-Skills translate on 13 of 25 backends now (see above). `vscode-copilot` writes at project scope only; `copilot-cli` is user-scope only (no `--scope` on the `copilot` CLI); the rest are user-scope-primary. Codex's hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI; kimi's fire as soon as they are written. Per-agent config paths and skipped-surface reasons are on the [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) wiki page; for a side-by-side view of how each tool handles config paths, MCP shapes, hook events, and Claude-Code-config interop, see [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison).
+Skills translate on 13 of 25 backends now (see above). Instructions (always-loaded host guidance
+from `PluginHost::instructions`) translate on `opencode` only so far, written to a dedicated file
+whose path is registered in opencode's `instructions[]`. `vscode-copilot` writes at project scope only; `copilot-cli` is user-scope only (no `--scope` on the `copilot` CLI); the rest are user-scope-primary. Codex's hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI; kimi's fire as soon as they are written. Per-agent config paths and skipped-surface reasons are on the [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) wiki page; for a side-by-side view of how each tool handles config paths, MCP shapes, hook events, and Claude-Code-config interop, see [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison).
 
 ## Status
 
