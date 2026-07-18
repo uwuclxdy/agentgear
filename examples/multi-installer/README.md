@@ -25,13 +25,13 @@ prints its detection state plus what it can host, real output from a scratch
 
 ```console
 $ multi-installer status
-id                 detected mcp      hooks    plugins  scopes
-claude             no       yes      yes      yes      user, project
-codex              yes      yes      yes      no       user, project
-gemini             yes      yes      yes      no       user, project
-cursor             no       yes      yes      no       user, project
+id                 detected mcp      hooks    plugins  commands agents   skills   scopes
+claude             no       yes      yes      yes      yes      yes      yes      user, project
+codex              yes      yes      yes      no       yes      yes      no       user, project
+gemini             yes      yes      yes      no       yes      yes      no       user, project
+cursor             no       yes      yes      no       yes      yes      yes      user, project
 ...
-pi                 no       no       no       no       user
+pi                 no       no       no       no       no       no       no       user
 ```
 
 `setup --agent <id>` narrows the fan-out to that one backend, even when other

@@ -1,14 +1,15 @@
 # Harness comparison
 
-Side-by-side reference for the 25 backends agentgear ships: Claude Code plus 24 config-merge
-agents. Every cell was checked against the real shipping binary (or the tool's shipped extension
-source, for the IDE-bound ones) on 2026-07-16, with positive and negative controls before any
-parse was trusted.
+Side-by-side reference for the 25 backends agentgear ships: Claude Code, copilot-cli, and 23
+config-merge agents. Every cell was checked against the real shipping binary (or the tool's
+shipped extension source, for the IDE-bound ones) on 2026-07-16 (copilot-cli's native rewrite
+2026-07-18), with positive and negative controls before any parse was trusted.
 
 "Translated" means agentgear read-modify-writes the tool's own config file so the plugin's
-components land in that tool's native shape. Claude Code is the exception: it gets the full plugin
-lifecycle through `claude plugin`, no config merge. A backend writes only when it detects the tool
-installed and the tool has a surface at the target scope.
+components land in that tool's native shape. Claude Code and copilot-cli are the exception: both
+get the full plugin lifecycle through their own CLI (`claude plugin` / `copilot plugin`), no
+config merge. A backend writes only when it detects the tool installed and the tool has a surface
+at the target scope.
 
 Where a row says **known limitation**, the tool never reads what agentgear currently writes, or
 reads it in the wrong shape. Those are real user-visible gaps today, with fixes queued. They are
@@ -16,36 +17,37 @@ called out rather than hidden.
 
 ## Support overview
 
-What each backend translates. `—` means the surface is skipped, with the reason. Skills have no
-backend on any tool yet.
+What each backend translates. `—` means the surface is skipped, with the reason. `claude` and
+`copilot-cli` are plugin-native (the whole tree ships through the tool's own plugin CLI, not a
+per-surface translation); every column reads native for both.
 
-| harness | mcp | hooks | commands | agents |
-|---|---|---|---|---|
-| claude | ✓ | ✓ | ✓ | ✓ |
-| codex | ✓ | ✓ (inert until trusted in `/hooks`) | ✓ | ✓ |
-| cursor | ✓ | ✓ | ✓ | ✓ |
-| devin | ✓ | ✓ | ✓ | ✓ |
-| qwen-code | ✓ | ✓ | ✓ | ✓ |
-| droid | ✓ | ✓ | ✓ | ✓ |
-| augment | ✓ | ✓ | ✓ | ✓ |
-| gemini | ✓ | ✓ | ✓ | — (agent surface not translated) |
-| cline | ✓ | ✓ (project only; user dir wrong, known limitation) | ✓ (workflows) | — (surface unimplemented) |
-| copilot-cli | ✓ | ✓ | — (only surface is project-scoped) | ✓ |
-| vscode-copilot | ✓ | ✓ | — (out of scope) | ✓ |
-| kimi | ✓ | ✓ | — (slash-command analog is a skill) | — (built-in sub-agents only) |
-| kiro | ✓ | — (kiro hosts hooks only inside user-owned agent configs; no target agentgear can own) | — | — |
-| antigravity-cli | ✓ | ✓ (user-scope path + events wrong, known limitation) | — | — |
-| goose | ✓ | ✓ | — | — |
-| crush | ✓ | ✓ | — (TUI-only, not loaded by `crush run`) | — |
-| opencode | ✓ | — (JS/TS plugin API only) | ✓ | ✓ |
-| omp | ✓ | — (TS extension API only) | ✓ | ✓ |
-| kilo | ✓ | — (no hooks key in the schema) | ✓ | ✓ |
-| jetbrains-copilot | ✓ | — | — | — |
-| zed | ✓ | — | — | — |
-| openclaw | ✓ | — (JS/TS module hooks only) | — | — |
-| antigravity | ✓ | — | — | — |
-| amp | ✓ | — | — | — |
-| pi | — (no native mcp surface) | — | — | — |
+| harness | mcp | hooks | commands | agents | skills |
+|---|---|---|---|---|---|
+| claude | native | native | native | native | native |
+| copilot-cli | native | native | native | native | native |
+| cursor | ✓ | ✓ | ✓ | ✓ | ✓ |
+| devin | ✓ | ✓ | ✓ | ✓ | ✓ |
+| qwen-code | ✓ | ✓ | ✓ | ✓ | ✓ |
+| droid | ✓ | ✓ | ✓ | ✓ | ✓ |
+| codex | ✓ | ✓ (inert until trusted in `/hooks`) | ✓ | ✓ | — (no skills surface) |
+| gemini | ✓ | ✓ | ✓ | ✓ | — (no stable surface) |
+| augment | ✓ | ✓ | ✓ | ✓ | — (not translated) |
+| crush | ✓ | ✓ | ✓ (TUI-only, not loaded by `crush run`) | — (no file-writable surface, issue #1807) | ✓ |
+| kilo | ✓ | — (no hooks key in the schema) | ✓ | ✓ | ✓ |
+| vscode-copilot | ✓ | ✓ | — (out of scope) | ✓ | — (out of scope) |
+| cline | ✓ | ✓ (project only; user dir wrong, known limitation) | ✓ (workflows) | — (surface unimplemented) | — (surface unimplemented) |
+| opencode | ✓ | — (JS/TS plugin API only) | ✓ | ✓ | — (not translated) |
+| omp | ✓ | — (TS extension API only) | ✓ | ✓ | — (not translated) |
+| kimi | ✓ | ✓ | — (slash-command analog is a skill) | — (built-in sub-agents only) | ✓ |
+| goose | ✓ | ✓ | — | — | ✓ |
+| kiro | ✓ | — (kiro hosts hooks only inside user-owned agent configs; no target agentgear can own) | — | — | ✓ |
+| antigravity-cli | ✓ | ✓ (user-scope path + events wrong, known limitation) | — | — | — |
+| zed | ✓ | — | — | — | ✓ |
+| openclaw | ✓ | — (JS/TS module hooks only) | — | — | ✓ |
+| jetbrains-copilot | ✓ | — | — | — | — |
+| antigravity | ✓ | — | — | — | — |
+| amp | ✓ | — | — | — | — |
+| pi | — (no native mcp surface) | — | — | — | — |
 
 ## Config locations
 
@@ -56,13 +58,13 @@ the working tree.
 | harness | user config file |
 |---|---|
 | claude | `<config>/plugins/` (via `claude plugin`; `CLAUDE_CONFIG_DIR`) |
+| copilot-cli | `~/.copilot/installed-plugins/<mkt>/<plugin>/` (via `copilot plugin`; native, whole tree copied) |
 | amp | `~/.config/amp/settings.json` |
 | antigravity | `~/.gemini/config/mcp_config.json` |
 | antigravity-cli | `~/.gemini/config/mcp_config.json` |
 | augment | `~/.augment/settings.json` |
 | cline | `~/.cline/data/settings/cline_mcp_settings.json` (mcp); `~/Documents/Cline/` (hooks, workflows) |
 | codex | `~/.codex/config.toml` |
-| copilot-cli | `~/.copilot/mcp-config.json` |
 | crush | `~/.config/crush/crush.json` |
 | cursor | `~/.cursor/mcp.json` |
 | devin | `~/.config/devin/config.json` |
@@ -90,13 +92,13 @@ some reject the shape and void the file. Per-tool fixes are queued.
 | harness | remote verdict |
 |---|---|
 | claude | native, no translation (Claude Code reads the tree itself) |
+| copilot-cli | native, no translation (copilot's own plugin engine reads the tree itself) |
 | amp | faithful. `type` is inert; the tool infers transport from `url` |
 | antigravity | faithful: sse rendered as native `{serverUrl}`; http skipped (no landing) |
 | antigravity-cli | faithful: sse rendered as native `{serverUrl}`; http skipped (no landing) |
 | augment | faithful. byte-matches the tool's own writer |
 | cline | faithful: rendered with cline's literal `streamableHttp`/`sse` transport values |
 | codex | faithful. streamable-HTTP only; sse maps onto the same `url` |
-| copilot-cli | faithful. `tools:["*"]` is required (a bare string voids the file) |
 | crush | faithful. both transports dial-proven |
 | cursor | faithful. `type` genuinely picks the transport |
 | devin | faithful: rendered with devin's native `{url, transport}` form |
@@ -108,7 +110,7 @@ some reject the shape and void the file. Per-tool fixes are queued.
 | kimi | faithful: rendered with kimi's native `{url, transport}` form |
 | kiro | unproven (login-walled). native `{url, headers}`, examples carry no `type` |
 | omp | faithful. matches native exactly |
-| openclaw | faithful, but the tool's own fixer rewrites the transport key → probe churn |
+| openclaw | faithful, canonical: renders `{url,headers,transport}` directly, matching the tool's own post-`doctor --fix` shape. no churn |
 | opencode | faithful. both transports collapse into `remote` |
 | pi | skipped. core pi has no native mcp surface |
 | qwen-code | faithful: rendered with qwen's key-presence form (http `{httpUrl}`, sse `{url}`) |
@@ -120,14 +122,15 @@ some reject the shape and void the file. Per-tool fixes are queued.
 Several tools read Claude Code's own config or plugin trees directly, the exact tree agentgear's
 materializer already produces. Where a tool ingests the full plugin tree natively, translating its
 config is redundant, so agentgear retires the overlapping translation where the native path already
-covers it (omp's agents, once its provider is on and CC's registry lists the plugin). Scope of
-ingestion is the honest limit per tool.
+covers it (omp's agents, once its provider is on and CC's registry lists the plugin; cursor's whole
+translation, once CC's registry lists the plugin). copilot-cli goes further: as of 2026-07-18 this IS the backend's own mechanism, not a redundant
+path beside a translation (see the copilot-cli row in Support overview above). Scope of ingestion
+is the honest limit per tool.
 
 | harness | reads | scope |
 |---|---|---|
 | codex | `codex plugin marketplace add`/`add` parse `.claude-plugin/marketplace.json` + `plugin.json` | full tree. mcp live-merged at read, hooks copied but never fire |
-| copilot-cli | `copilot plugin marketplace add`/`install` read `.claude-plugin/plugin.json` + `marketplace.json` 1:1 | full tree → `~/.copilot/installed-plugins/`. `mcp list` shows `Source: Plugin`. Separately reads project `.claude/agents`, `.claude/skills`, `.claude/settings.json` |
-| cursor | aggregator reads `~/.claude/plugins/installed_plugins.json`, `~/.claude/settings.json` `enabledPlugins`, then loads `.claude-plugin/plugin.json` per install | full tree with `${CLAUDE_PLUGIN_ROOT}` substitution (source-proven, undocumented) |
+| cursor | aggregator reads `~/.claude/plugins/installed_plugins.json`, then loads `.claude-plugin/plugin.json` per install | full tree with `${CLAUDE_PLUGIN_ROOT}` substitution (source-proven, undocumented). agentgear's own translation retires (no-op) whenever CC's registry (HOME-based) lists the plugin; the gate does not check `enabledPlugins`, a documented conservative gap |
 | droid | `droid plugin marketplace add` reads `.claude-plugin/marketplace.json` + `plugin.json` | full tree → `~/.factory/plugins/` (binary-proven end to end) |
 | qwen-code | `qwen extensions install` converts a `.claude-plugin/plugin.json` dir into a qwen extension | full tree, install-time and manual. carries skills through too |
 | omp | first-class `claude-plugins` provider reads `~/.claude/plugins/installed_plugins.json` | agents only. agentgear retires its agent translation when omp's `claude-plugins` provider is on and CC's registry lists the plugin, so no double-register |

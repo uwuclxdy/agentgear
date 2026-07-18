@@ -2,8 +2,9 @@
 
 The crate installs a plugin into a coding agent through an `AgentBackend`. One binary can target
 several agents; `install` loops the configured `agents` list and reconciles each one. 25 backends
-ship: Claude Code plus 24 config-merge backends. All 24 non-CC backends were verified against their
-real shipping binary on 2026-07-16.
+ship: Claude Code, copilot-cli (both plugin-native), and 23 config-merge backends. All 24 non-CC
+backends were verified against their real shipping binary on 2026-07-16 (copilot-cli's native
+rewrite 2026-07-18).
 
 For the side-by-side cross-view (which backend translates what, config paths, remote fidelity,
 native Claude-Code-config interop) see [Harness comparison](Harness-Comparison). This page holds the
@@ -44,11 +45,15 @@ instead of dropping features silently. The trait is unsealed: an external crate 
 
 Two shapes:
 
-- **Claude Code.** The `claude` backend orchestrates the `claude plugin` CLI: materialize the
-  embedded tree, add or update the marketplace source, install or update the plugin, read the result
-  back through `list --json`. Full mcp, hooks, commands, agents, and skills. Details on
+- **Claude Code and copilot-cli.** Both use the target tool's own plugin-management CLI
+  (`claude plugin` / `copilot plugin`): materialize the embedded tree, add or update the
+  marketplace source, install or update the plugin, read the result back through the CLI's own
+  list command. Full mcp, hooks, commands, agents, and skills, since the tool copies the whole
+  tree itself, so there is no per-surface translation. copilot-cli is user-scope only (no
+  `--scope` on the `copilot` CLI) and can't pin a GitHub ref (`owner/repo@ref` is misparsed; only
+  the bare repo registers, tracking copilot's default branch). Claude Code details:
   [How It Works](How-It-Works).
-- **The 24 config-merge agents.** None have a plugin or marketplace concept, so each backend
+- **The 23 config-merge agents.** None have a plugin or marketplace concept, so each backend
   read-modify-writes the tool's own config file: mcp servers keyed by name, hooks/commands/agent
   defs translated under a plugin-name-prefixed path. Only the entries agentgear wrote get touched,
   so the user's own config survives. A backend writes only when `detect()` finds the tool installed
@@ -82,19 +87,24 @@ host running under it writes where the tool never reads.
 ## Hook event mapping
 
 Most hook-capable backends reuse Claude Code's PascalCase event names, so agentgear maps them 1:1
-where the analog exists and skips events with no analog. Five backends rename the events:
+where the analog exists and skips events with no analog. Four backends rename the events:
 
-| CC event | gemini | cursor | copilot-cli | antigravity-cli | augment |
-|---|---|---|---|---|---|
-| SessionStart | SessionStart | sessionStart | sessionStart | — | SessionStart |
-| SessionEnd | SessionEnd | sessionEnd | sessionEnd | — | SessionEnd |
-| UserPromptSubmit | BeforeAgent | beforeSubmitPrompt | userPromptSubmitted | PreInvocation | PromptSubmit |
-| PreToolUse | BeforeTool | preToolUse | preToolUse | PreToolUse | PreToolUse |
-| PostToolUse | AfterTool | postToolUse | postToolUse | PostToolUse | PostToolUse |
-| Stop | — | stop | agentStop | Stop | Stop |
-| SubagentStop | — | subagentStop | subagentStop | — | — |
-| PreCompact | PreCompress | preCompact | preCompact | — | — |
-| Notification | Notification | — | notification | — | Notification |
+| CC event | gemini | cursor | antigravity-cli | augment |
+|---|---|---|---|---|
+| SessionStart | SessionStart | sessionStart | — | SessionStart |
+| SessionEnd | SessionEnd | sessionEnd | — | SessionEnd |
+| UserPromptSubmit | BeforeAgent | beforeSubmitPrompt | PreInvocation | PromptSubmit |
+| PreToolUse | BeforeTool | preToolUse | PreToolUse | PreToolUse |
+| PostToolUse | AfterTool | postToolUse | PostToolUse | PostToolUse |
+| Stop | — | stop | Stop | Stop |
+| SubagentStop | — | subagentStop | — | — |
+| PreCompact | PreCompress | preCompact | — | — |
+| Notification | Notification | — | — | Notification |
+
+`copilot-cli` is not in this table: it's plugin-native, so the whole CC `hooks/hooks.json` copies
+into `~/.copilot/installed-plugins/` verbatim, event names included, rather than going through
+`map_event`. Whether the copied raw-shape file actually fires is unconfirmed (no headless
+hooks-list command exists).
 
 Per-backend hook notes:
 
@@ -117,9 +127,9 @@ Per-backend hook notes:
 
 stdio is the verified path on every backend. The rendered server body varies by tool: `{command,
 args, env}` for the json-`mcpServers` family; `type:"stdio"` prefixed for cursor/jetbrains/vscode;
-`type:"local"` with an array command for opencode/kilo; `type:"local"` plus `tools:["*"]` for
-copilot-cli (a bare `"*"` string voids copilot's whole file); a `[mcp_servers.<name>]` inline table
-for codex; a yaml `extensions.<name>` block for goose.
+`type:"local"` with an array command for opencode/kilo; a `[mcp_servers.<name>]` inline table for
+codex; a yaml `extensions.<name>` block for goose. `copilot-cli` renders no mcp shape at all: its
+own plugin engine reads `.claude-plugin/plugin.json` directly.
 
 Remote (http/sse) servers render in each tool's own dialect: the majority take
 `{type, url, headers}`, cline gets its literal `streamableHttp` value, kimi/devin their
