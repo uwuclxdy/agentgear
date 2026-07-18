@@ -58,6 +58,13 @@ pub(crate) enum RemoteShape {
     /// top-level `headers` is silently ignored). The IR carries no headers yet;
     /// when it does, this dialect nests them under `requestInit.headers`.
     TypeUrl,
+    /// `{url, headers:{}, transport:"streamable-http"|"sse"}` — openclaw's own
+    /// canonical form. openclaw accepts the majority `{type,url,headers}` dialect
+    /// too, but `doctor --fix`/`mcp set` rewrite it into this shape on disk, which
+    /// defeats a whole-object probe forever (`docs/research/verify-openclaw.md`
+    /// #2/#4). Rendering it directly makes a post-canonicalization probe read
+    /// `Healthy` instead of churning.
+    UrlHeadersTransport,
 }
 
 #[derive(Clone, Copy)]
@@ -146,6 +153,12 @@ fn remote(shape: RemoteShape, kind: &str, url: &str) -> Option<Value> {
         RemoteShape::TypeUrl => {
             obj.insert("type".into(), Value::from(kind));
             obj.insert("url".into(), Value::from(url));
+        }
+        RemoteShape::UrlHeadersTransport => {
+            obj.insert("url".into(), Value::from(url));
+            obj.insert("headers".into(), Value::Object(Map::new()));
+            let transport = if kind == "http" { "streamable-http" } else { kind };
+            obj.insert("transport".into(), Value::from(transport));
         }
     }
     Some(Value::Object(obj))

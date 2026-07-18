@@ -1,10 +1,15 @@
 //! The openclaw backend: mcp + skills, into openclaw's single user-level config
 //! `~/.openclaw/openclaw.json` plus its global managed skill dir `~/.openclaw/skills`.
 //! MCP goes through the shared json renderer under the two-segment key path
-//! `mcp.servers.<name>` with `ServerShape::plain()` (openclaw's stdio body is exactly
-//! `{command, args, env}`). Every key is our own server name and every skill dir
-//! carries our ownership tag, so `remove` is exact and a second reconcile is a true
-//! `NoOp`.
+//! `mcp.servers.<name>` with `SHAPE` (`ServerShape::plain()`, openclaw's stdio body
+//! is exactly `{command, args, env}`, plus `RemoteShape::UrlHeadersTransport` for the
+//! remote body). openclaw also accepts the majority `{type,url,headers}` remote
+//! dialect, but its own `doctor --fix`/`mcp set` canonicalize that into
+//! `{url,headers,transport}` on disk, which would defeat a whole-object probe
+//! forever; rendering the canonical shape directly keeps a post-canonicalization
+//! probe `Healthy` (`docs/research/verify-openclaw.md` #2/#4). Every key is our own
+//! server name and every skill dir carries our ownership tag, so `remove` is exact
+//! and a second reconcile is a true `NoOp`.
 //!
 //! openclaw exposes no config-writable surface for hooks/commands/subagents (see
 //! `docs/harness/openclaw.md`): hooks are JS/TS plugin code enabled by a flag, never
@@ -21,7 +26,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::mcpjson::{self, ServerShape};
+use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
 use super::skillsdir;
 use super::{AgentBackend, BackendState};
@@ -32,6 +37,12 @@ use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 /// openclaw hosts mcp servers under `mcp.servers.<name>` (a two-segment key path,
 /// unlike the json family's flat `mcpServers`).
 const MCP_KEY: &[&str] = &["mcp", "servers"];
+
+/// Stdio is the majority `{command,args,env}` body; remote renders openclaw's own
+/// canonical `{url,headers,transport}` shape directly so a probe stays `Healthy`
+/// after `doctor --fix`/`mcp set` would otherwise rewrite our render out from
+/// under us (see module doc).
+const SHAPE: ServerShape = ServerShape::plain().with_remote(RemoteShape::UrlHeadersTransport);
 
 pub(crate) struct OpenclawBackend;
 
@@ -61,21 +72,21 @@ impl AgentBackend for OpenclawBackend {
         // NeedsRepair. `source` is the one self_heal resolved for this agent (rehydrated
         // `--path`, else the compile-time default), so probe/reconcile render identical bytes.
         let comp = plugin.components(source)?;
-        let mcp = mcpjson::probe(&config_path()?, MCP_KEY, &comp.mcp_servers, ServerShape::plain())?;
+        let mcp = mcpjson::probe(&config_path()?, MCP_KEY, &comp.mcp_servers, SHAPE)?;
         let skills = skillsdir::probe(&skills_root()?, plugin, &comp.skills)?;
         Ok(report::compose([Some(mcp), skills].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, _scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?;
-        let mut changed = mcpjson::reconcile(&config_path()?, MCP_KEY, &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        let mut changed = mcpjson::reconcile(&config_path()?, MCP_KEY, &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= skillsdir::reconcile(&skills_root()?, plugin, &comp.skills)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
     fn remove(&self, plugin: &Plugin, _scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&Source::Embedded)?;
-        let mut changed = mcpjson::remove(&config_path()?, MCP_KEY, &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        let mut changed = mcpjson::remove(&config_path()?, MCP_KEY, &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= skillsdir::remove(&skills_root()?, plugin, &comp.skills)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }

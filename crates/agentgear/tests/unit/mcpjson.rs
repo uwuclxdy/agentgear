@@ -90,6 +90,18 @@ fn renders_remote_http_url_keyed() {
 }
 
 #[test]
+fn renders_remote_url_headers_transport() {
+    use super::RemoteShape;
+    let shape = ServerShape::plain().with_remote(RemoteShape::UrlHeadersTransport);
+    let http = remote_server("h", McpKind::Http { url: "https://x/mcp".into() });
+    let sse = remote_server("s", McpKind::Sse { url: "https://x/sse".into() });
+    // openclaw's own canonical form: `transport` values are its own vocabulary
+    // (`streamable-http`, not `http`), unlike `TransportKeyed`'s bare kind.
+    assert_eq!(render_server(&http, shape).unwrap(), json!({"url":"https://x/mcp","headers":{},"transport":"streamable-http"}));
+    assert_eq!(render_server(&sse, shape).unwrap(), json!({"url":"https://x/sse","headers":{},"transport":"sse"}));
+}
+
+#[test]
 fn remove_never_touches_a_server_we_could_not_have_written() {
     let path = scratch("settings.json");
     // A user's own entry named like our non-portable server, which reconcile skips.
