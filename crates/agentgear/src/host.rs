@@ -103,13 +103,21 @@ pub enum Outcome {
     Cleared,
 }
 
-/// What an agent backend can host. Lets `setup` report "codex: mcp only" instead
-/// of silently dropping features.
+/// What an agent backend can host. Each surface flag is `true` iff the backend's
+/// `reconcile` actually writes/manages that surface for a plugin declaring it
+/// (a conditionally-gated surface — e.g. one a native registry may already cover —
+/// still counts, since the backend *can* translate it). Lets `setup` report
+/// "codex: mcp only" instead of silently dropping features, and is the runtime
+/// truth behind the README's supported-agents matrix.
 #[derive(Debug, Clone)]
 pub struct Capabilities {
+    /// Native plugin install (copies the whole CC tree); implies every surface.
     pub plugins: bool,
     pub mcp: bool,
     pub hooks: bool,
+    pub commands: bool,
+    pub agents: bool,
+    pub skills: bool,
     pub scopes: &'static [&'static str],
 }
 

@@ -58,7 +58,8 @@ impl AgentBackend for ClineBackend {
 
     fn capabilities(&self) -> Capabilities {
         // `project` covers workflows/hooks (`.clinerules/`); MCP is global-only.
-        Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user", "project"] }
+        // Commands land as workflows; subagents + skills have no cline file surface.
+        Capabilities { plugins: false, mcp: true, hooks: true, commands: true, agents: false, skills: false, scopes: &["user", "project"] }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

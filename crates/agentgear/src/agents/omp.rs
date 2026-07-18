@@ -71,8 +71,10 @@ impl AgentBackend for OmpBackend {
 
     fn capabilities(&self) -> Capabilities {
         // `hooks:false` — omp has no declarative shell-hook config, only an
-        // in-process TS plugin API (see the module doc).
-        Capabilities { plugins: false, mcp: true, hooks: false, scopes: &["user", "project"] }
+        // in-process TS plugin API (see the module doc). mcp + commands + agents
+        // translate; the agent-retire on cc-registry coverage is a runtime gate, not
+        // a capability absence. No skills surface.
+        Capabilities { plugins: false, mcp: true, hooks: false, commands: true, agents: true, skills: false, scopes: &["user", "project"] }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

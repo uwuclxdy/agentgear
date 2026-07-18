@@ -71,5 +71,8 @@ fn capabilities_declare_no_writable_surface() {
     assert!(!caps.mcp, "pi has no native mcp surface");
     assert!(!caps.hooks, "pi has no config-file hook surface");
     assert!(!caps.plugins);
+    assert!(!caps.commands, "pi writes no commands");
+    assert!(!caps.agents, "pi writes no agents");
+    assert!(!caps.skills, "pi writes no skills");
     assert_eq!(caps.scopes, &["user"]);
 }

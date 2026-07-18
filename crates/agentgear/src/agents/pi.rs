@@ -32,10 +32,10 @@ impl AgentBackend for PiBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // Honest: pi exposes no surface this backend writes. mcp/hooks are false and
+        // Honest: pi exposes no surface this backend writes. Every flag is false and
         // the only scope we'd ever key on is user (project `.pi` is trust-gated and
         // we write nothing regardless).
-        Capabilities { plugins: false, mcp: false, hooks: false, scopes: &["user"] }
+        Capabilities { plugins: false, mcp: false, hooks: false, commands: false, agents: false, skills: false, scopes: &["user"] }
     }
 
     fn probe(&self, _plugin: &Plugin, _scope: &Scope, _source: &Source) -> Result<BackendState> {

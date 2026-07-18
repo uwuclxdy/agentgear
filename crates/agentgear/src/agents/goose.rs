@@ -68,8 +68,9 @@ impl AgentBackend for GooseBackend {
         // user-only: MCP (the ownership anchor) lives in the single user
         // `config.yaml`; goose has no project-level extensions file. Hooks do have a
         // project variant, but v1 stays user-scope-primary so probe/remove key on
-        // one coherent surface.
-        Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user"] }
+        // one coherent surface. mcp + hooks + skills translate; commands/agents are
+        // skipped (goose's recipe format, module doc).
+        Capabilities { plugins: false, mcp: true, hooks: true, commands: false, agents: false, skills: true, scopes: &["user"] }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

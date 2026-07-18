@@ -52,10 +52,13 @@ fn main() -> ExitCode {
 const ID_W: usize = 18;
 const FLAG_W: usize = 8;
 
-/// `status`: one row per `MultiInstaller::AGENTS` id — detected + what it can
-/// host (mcp/hooks/plugins) + the scopes it supports.
+/// `status`: one row per `MultiInstaller::AGENTS` id — detected + every surface it
+/// can host (mcp/hooks/plugins/commands/agents/skills) + the scopes it supports.
 fn print_status() {
-    println!("{:<ID_W$} {:<FLAG_W$} {:<FLAG_W$} {:<FLAG_W$} {:<FLAG_W$} scopes", "id", "detected", "mcp", "hooks", "plugins");
+    println!(
+        "{:<ID_W$} {:<FLAG_W$} {:<FLAG_W$} {:<FLAG_W$} {:<FLAG_W$} {:<FLAG_W$} {:<FLAG_W$} {:<FLAG_W$} scopes",
+        "id", "detected", "mcp", "hooks", "plugins", "commands", "agents", "skills"
+    );
     for id in MultiInstaller::AGENTS {
         let Some(backend) = agentgear::backend_for(id) else {
             println!("{id:<ID_W$} <backend not compiled in>");
@@ -63,12 +66,15 @@ fn print_status() {
         };
         let caps = backend.capabilities();
         println!(
-            "{:<ID_W$} {:<FLAG_W$} {:<FLAG_W$} {:<FLAG_W$} {:<FLAG_W$} {}",
+            "{:<ID_W$} {:<FLAG_W$} {:<FLAG_W$} {:<FLAG_W$} {:<FLAG_W$} {:<FLAG_W$} {:<FLAG_W$} {:<FLAG_W$} {}",
             id,
             yn(backend.detect()),
             yn(caps.mcp),
             yn(caps.hooks),
             yn(caps.plugins),
+            yn(caps.commands),
+            yn(caps.agents),
+            yn(caps.skills),
             caps.scopes.join(", "),
         );
     }

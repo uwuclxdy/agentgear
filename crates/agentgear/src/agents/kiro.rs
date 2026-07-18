@@ -41,7 +41,8 @@ impl AgentBackend for KiroBackend {
     fn capabilities(&self) -> Capabilities {
         // hooks:false — kiro hosts hooks only inside user-owned agent configs, and
         // its default agent is a setting we cannot reliably target (module doc).
-        Capabilities { plugins: false, mcp: true, hooks: false, scopes: &["user", "project"] }
+        // mcp + skills translate; commands/agents are skipped.
+        Capabilities { plugins: false, mcp: true, hooks: false, commands: false, agents: false, skills: true, scopes: &["user", "project"] }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

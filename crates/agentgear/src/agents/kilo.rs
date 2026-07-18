@@ -50,7 +50,8 @@ impl AgentBackend for KiloBackend {
 
     fn capabilities(&self) -> Capabilities {
         // `hooks:false` — kilo has no config-file shell-hook surface (kilocode#5827).
-        Capabilities { plugins: false, mcp: true, hooks: false, scopes: &["user", "project"] }
+        // mcp + commands + agents + skills translate.
+        Capabilities { plugins: false, mcp: true, hooks: false, commands: true, agents: true, skills: true, scopes: &["user", "project"] }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

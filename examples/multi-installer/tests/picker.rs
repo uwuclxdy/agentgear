@@ -137,6 +137,23 @@ fn status_lists_every_agent() {
     assert!(codex_row.contains("yes"), "codex should be detected: {codex_row}");
     let zed_row = out.lines().find(|l| l.starts_with("zed ")).expect("zed row missing");
     assert!(zed_row.contains(" no "), "zed should not be detected in a fresh env: {zed_row}");
+
+    // Header carries the surface columns whose values every row below reports.
+    let header = out.lines().next().expect("status header missing");
+    for col in ["mcp", "hooks", "plugins", "commands", "agents", "skills"] {
+        assert!(header.split_whitespace().any(|c| c == col), "status header missing the `{col}` column:\n{out}");
+    }
+
+    // Column order is: id detected mcp hooks plugins commands agents skills scopes.
+    // Pin the capability flags per backend so a wrong `capabilities()` reds here (not
+    // just the detection state). zed advertises skills but no commands; codex the
+    // reverse — commands/agents but no skills — proving both a true and a false flag.
+    let col = |row: &str, i: usize| -> String { row.split_whitespace().nth(i).unwrap_or_default().to_string() };
+    assert_eq!(col(zed_row, 5), "no", "zed commands flag: {zed_row}");
+    assert_eq!(col(zed_row, 7), "yes", "zed skills flag: {zed_row}");
+    assert_eq!(col(codex_row, 5), "yes", "codex commands flag: {codex_row}");
+    assert_eq!(col(codex_row, 6), "yes", "codex agents flag: {codex_row}");
+    assert_eq!(col(codex_row, 7), "no", "codex skills flag: {codex_row}");
 }
 
 #[test]
