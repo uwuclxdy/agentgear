@@ -97,6 +97,7 @@ where the analog exists and skips events with no analog. Four backends rename th
 | PreToolUse | BeforeTool | preToolUse | PreToolUse | PreToolUse |
 | PostToolUse | AfterTool | postToolUse | PostToolUse | PostToolUse |
 | Stop | — | stop | Stop | Stop |
+| SubagentStart | — | subagentStart | — | — |
 | SubagentStop | — | subagentStop | — | — |
 | PreCompact | PreCompress | preCompact | — | — |
 | Notification | Notification | — | — | Notification |
