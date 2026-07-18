@@ -228,10 +228,12 @@ fn markdown_doc(rel: &str, bytes: &[u8]) -> MarkdownDoc {
 }
 
 /// Split a leading `---`-fenced frontmatter block. Parsed yaml-ish: flat
-/// `key: value` lines (enough for CC command/agent headers). No fence -> empty
-/// map + the full text as the body. Walks byte offsets in `rest` directly (not a
-/// reconstructed `line.len() + 1` sum) so a `\r\n`-authored doc slices its body at
-/// the true position instead of leaking the closing fence's bytes into it.
+/// `key: value` lines, plus a literal/folded block scalar (`key: |`/`key: >`,
+/// with an optional `-`/`+`/digit modifier) whose more-indented continuation
+/// lines are joined back in (enough for CC command/agent headers). No fence ->
+/// empty map + the full text as the body. Walks byte offsets in `rest` directly
+/// (not a reconstructed `line.len() + 1` sum) so a `\r\n`-authored doc slices its
+/// body at the true position instead of leaking the closing fence's bytes into it.
 fn split_frontmatter(text: &str) -> (BTreeMap<String, Value>, String) {
     let rest = match text.strip_prefix("---\n").or_else(|| text.strip_prefix("---\r\n")) {
         Some(rest) => rest,
@@ -242,18 +244,73 @@ fn split_frontmatter(text: &str) -> (BTreeMap<String, Value>, String) {
     while pos < rest.len() {
         let nl = rest[pos..].find('\n').map(|i| pos + i);
         let line = rest[pos..nl.unwrap_or(rest.len())].trim_end_matches('\r');
-        let next = nl.map_or(rest.len(), |i| i + 1);
+        let mut next = nl.map_or(rest.len(), |i| i + 1);
         if line.trim() == "---" {
             return (map, rest.get(next..).unwrap_or_default().to_string());
         }
         if let Some((k, v)) = line.split_once(':') {
-            let value = v.trim().trim_matches('"').trim_matches('\'');
-            map.insert(k.trim().to_string(), Value::String(value.to_string()));
+            let key = k.trim().to_string();
+            let raw_value = v.trim();
+            if let Some(strip_trailing_newline) = block_scalar_chomp(raw_value) {
+                let (block, after) = read_block_scalar(rest, next, strip_trailing_newline);
+                map.insert(key, Value::String(block));
+                next = after;
+            } else {
+                let value = raw_value.trim_matches('"').trim_matches('\'');
+                map.insert(key, Value::String(value.to_string()));
+            }
         }
         pos = next;
     }
     // Unterminated fence: treat the whole thing as body, no frontmatter.
     (BTreeMap::new(), text.to_string())
+}
+
+/// `Some(strip)` iff `value` is a YAML block-scalar indicator: `|` (literal) or
+/// `>` (folded — treated the same as `|` here, joined with `\n` rather than real
+/// YAML folding; enough fidelity for a CC command/agent header), with an optional
+/// explicit-indent digit and/or `-`/`+` chomp modifier. `strip` is true for `-`
+/// (drop the trailing newline); the default/`+` (kept as one trailing newline)
+/// collapse to `false` — a reasonable minimum, not real "keep" semantics.
+fn block_scalar_chomp(value: &str) -> Option<bool> {
+    let mut chars = value.chars();
+    match chars.next()? {
+        '|' | '>' => {}
+        _ => return None,
+    }
+    let modifiers = chars.as_str();
+    if modifiers.is_empty() {
+        return Some(false);
+    }
+    modifiers.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '+').then(|| modifiers.contains('-'))
+}
+
+/// Collect a block scalar's continuation lines starting at byte offset `start` in
+/// `rest`: every blank line, or line indented deeper than the `key:` line, joined
+/// with `\n` and stripped of the block's own indent (the first non-blank line's).
+/// Returns the joined value and the byte offset just past the last consumed line.
+fn read_block_scalar(rest: &str, start: usize, strip_trailing_newline: bool) -> (String, usize) {
+    let mut pos = start;
+    let mut lines: Vec<&str> = Vec::new();
+    while pos < rest.len() {
+        let nl = rest[pos..].find('\n').map(|i| pos + i);
+        let line = rest[pos..nl.unwrap_or(rest.len())].trim_end_matches('\r');
+        let indent = line.len() - line.trim_start_matches(' ').len();
+        if !line.trim().is_empty() && indent == 0 {
+            break; // dedented back to (or past) the key line: block over.
+        }
+        lines.push(line);
+        pos = nl.map_or(rest.len(), |i| i + 1);
+    }
+    while lines.last().is_some_and(|l| l.trim().is_empty()) {
+        lines.pop();
+    }
+    if lines.is_empty() {
+        return (String::new(), pos);
+    }
+    let indent = lines.iter().filter(|l| !l.trim().is_empty()).map(|l| l.len() - l.trim_start_matches(' ').len()).min().unwrap_or(0);
+    let joined = lines.iter().map(|l| l.get(indent.min(l.len())..).unwrap_or("")).collect::<Vec<_>>().join("\n");
+    (if strip_trailing_newline { joined } else { format!("{joined}\n") }, pos)
 }
 
 // --- skills ------------------------------------------------------------------

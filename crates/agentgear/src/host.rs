@@ -34,11 +34,18 @@ impl Scope {
         }
     }
 
-    /// Stable key fragment for the stamp marker hash.
+    /// Stable key fragment for the stamp marker hash. A project path is
+    /// canonicalized first so the same project reached via a symlink and via its
+    /// realpath key the same marker instead of double-installing; falls back to
+    /// the raw path when canonicalize fails (e.g. the project dir doesn't exist
+    /// yet).
     pub(crate) fn key(&self) -> String {
         match self {
             Scope::User => "user".to_string(),
-            Scope::Project { path } => format!("project:{}", path.display()),
+            Scope::Project { path } => {
+                let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+                format!("project:{}", resolved.display())
+            }
         }
     }
 }
@@ -224,3 +231,7 @@ pub(crate) fn data_root(plugin: &Plugin) -> Result<PathBuf> {
     let base = dirs::data_dir().ok_or_else(|| crate::error::Error::Tree("no data directory (XDG_DATA_HOME and HOME both unset)".into()))?;
     Ok(base.join(plugin.name))
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/host.rs"]
+mod host_tests;

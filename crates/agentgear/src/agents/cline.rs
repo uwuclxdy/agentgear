@@ -286,10 +286,33 @@ printf '{"cancel": false, "contextModification": "%s"}\n' "$esc"
     let mut cmds = String::new();
     for hook in hooks {
         // `$(...)` strips trailing newlines; `|| true` keeps a nonzero hook from
-        // aborting the reply under `set -e`.
-        let _ = writeln!(cmds, "ctx=\"$ctx$({} 2>/dev/null || true)\"", hook.command);
+        // aborting the reply under `set -e`. `hook.command` is single-quoted into
+        // one `bash -c` argument (not spliced as raw source) so a space, quote,
+        // `$`, `;`, or `#` inside it can never truncate or reinterpret our own
+        // trailing `2>/dev/null || true` — it still runs as shell source, just
+        // isolated from the wrapper around it. `bash`, not `sh`: this wrapper's
+        // own shebang is bash, and `sh` (dash on Debian/Ubuntu) would silently
+        // narrow the hook's dialect and break `[[ ]]`/arrays/`<<<`.
+        let _ = writeln!(cmds, "ctx=\"$ctx$(bash -c {} 2>/dev/null || true)\"", shell_quote(&hook.command));
     }
     TEMPLATE.replace("__TAG__", &ownership_tag(plugin)).replace("__CMDS__", &cmds)
+}
+
+/// POSIX single-quote `s` as one shell word: wrap in `'...'`, escaping an
+/// embedded `'` as `'\''` (close the quote, emit a literal `'`, reopen it). Safe
+/// for any byte sequence, including one containing `$`, `"`, `;`, or `#`.
+fn shell_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// Write our hook script per mapped event (one file per event, all handlers for
@@ -488,3 +511,7 @@ fn check_hooks_present(hooks: &[HookBinding]) -> DoctorCheck {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/cline.rs"]
+mod cline_tests;

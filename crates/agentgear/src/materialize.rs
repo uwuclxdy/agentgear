@@ -24,6 +24,7 @@ use sha2::{Digest, Sha256};
 use crate::error::{Error, IoContext, Result};
 use crate::host::{Plugin, data_root};
 use crate::manifest::{MarketplaceManifest, MarketplacePlugin, PluginManifest};
+use crate::util::hex;
 
 /// The generated file is excluded from tree hashing: it is a derived artifact, so
 /// a source tree (which ships only `plugin.json`) and a materialized tree (which
@@ -406,12 +407,7 @@ fn hash_pairs(files: &mut [(String, &[u8])]) -> String {
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
     }
-    let digest = hasher.finalize();
-    let mut hex = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        hex.push_str(&format!("{byte:02x}"));
-    }
-    hex
+    hex(&hasher.finalize())
 }
 
 #[cfg(all(test, feature = "embed"))]

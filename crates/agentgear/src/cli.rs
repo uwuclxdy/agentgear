@@ -14,7 +14,7 @@ use crate::error::{Error, Result};
 /// Minimum `claude` the crate supports: 2.1.196 is the first with per-entry
 /// `validate` resolving sources against the manifest's own dir (design §concurrency).
 pub(crate) const MIN_CLAUDE_VERSION: &str = "2.1.196";
-const CLAUDE_FLOOR: (u64, u64, u64) = (2, 1, 196);
+pub(crate) const CLAUDE_FLOOR: (u64, u64, u64) = (2, 1, 196);
 
 /// Raw result of one invocation, exit code included so callers that want to
 /// inspect a nonzero exit (e.g. `validate`) can, rather than only erroring.
