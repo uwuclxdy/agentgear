@@ -26,3 +26,24 @@ fn project_scope_key_is_stable_through_a_symlink() {
 
     assert_eq!(via_real, via_link, "a symlinked project path must key the same stamp marker as its realpath");
 }
+
+/// Pin representative surface flags so a wrong `capabilities()` reds a unit test,
+/// not only the multi-installer status output: crush translates commands but has no
+/// subagent surface, openclaw translates skills, codex translates neither skills nor
+/// plugins. Gated on all three features (lit under `--all-features`, the gate).
+#[cfg(all(feature = "crush", feature = "openclaw", feature = "codex"))]
+#[test]
+fn representative_backend_capability_flags() {
+    use crate::agents::AgentBackend;
+
+    let crush = crate::agents::crush::CrushBackend.capabilities();
+    assert!(crush.commands, "crush translates commands");
+    assert!(!crush.agents, "crush has no file-writable subagent surface (#1807)");
+    assert!(crush.skills, "crush translates skills");
+
+    assert!(crate::agents::openclaw::OpenclawBackend.capabilities().skills, "openclaw translates skills");
+
+    let codex = crate::agents::codex::CodexBackend.capabilities();
+    assert!(!codex.skills, "codex has no skills surface");
+    assert!(!codex.plugins, "codex is not plugin-native");
+}

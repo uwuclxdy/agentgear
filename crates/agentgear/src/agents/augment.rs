@@ -53,7 +53,8 @@ impl AgentBackend for AugmentBackend {
         // Scope is user-only: augment documents `mcpServers` only at `~/.augment/
         // settings.json` (workspace `.augment/` is documented for hooks/commands but
         // not confirmed to honor mcp), and we write the whole config into one file.
-        Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user"] }
+        // mcp + hooks + commands + agents translate; skills are skipped.
+        Capabilities { plugins: false, mcp: true, hooks: true, commands: true, agents: true, skills: false, scopes: &["user"] }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

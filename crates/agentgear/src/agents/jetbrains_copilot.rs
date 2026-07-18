@@ -55,7 +55,10 @@ impl AgentBackend for JetbrainsCopilotBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities { plugins: false, mcp: true, hooks: false, scopes: &["user"] }
+        // mcp-only: the JetBrains plugin's sole writable surface is its mcp.json;
+        // hooks/commands/agents/skills are repo-level `.github` surfaces with no
+        // JetBrains-plugin file consumer (module doc).
+        Capabilities { plugins: false, mcp: true, hooks: false, commands: false, agents: false, skills: false, scopes: &["user"] }
     }
 
     fn probe(&self, plugin: &Plugin, _scope: &Scope, source: &Source) -> Result<BackendState> {

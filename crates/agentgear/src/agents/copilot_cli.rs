@@ -48,10 +48,10 @@ impl AgentBackend for CopilotCliBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // Plugin-native like claude: copilot ingests the CC tree wholesale, covering
-        // mcp + hooks natively. User scope only — copilot installs are user-global
-        // with no `--scope`.
-        Capabilities { plugins: true, mcp: true, hooks: true, scopes: &["user"] }
+        // Plugin-native like claude: copilot ingests the CC tree wholesale, so every
+        // surface (mcp + hooks + commands + agents + skills) is served natively. User
+        // scope only — copilot installs are user-global with no `--scope`.
+        Capabilities { plugins: true, mcp: true, hooks: true, commands: true, agents: true, skills: true, scopes: &["user"] }
     }
 
     fn probe(&self, plugin: &Plugin, _scope: &Scope, source: &Source) -> Result<BackendState> {

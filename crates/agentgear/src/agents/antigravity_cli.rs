@@ -48,7 +48,8 @@ impl AgentBackend for AntigravityCliBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user", "project"] }
+        // mcp + hooks only; commands/agents/skills/rules are skipped (research brief).
+        Capabilities { plugins: false, mcp: true, hooks: true, commands: false, agents: false, skills: false, scopes: &["user", "project"] }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

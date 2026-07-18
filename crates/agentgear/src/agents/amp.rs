@@ -54,9 +54,10 @@ impl AgentBackend for AmpBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // `hooks:false` — amp's only hook/command/agent surface is an in-process TS
-        // plugin API, not the declarative config a backend can write (module doc).
-        Capabilities { plugins: false, mcp: true, hooks: false, scopes: &["user"] }
+        // mcp-only — amp's only hook/command/agent surface is an in-process TS plugin
+        // API, not the declarative config a backend can write (module doc); skills are
+        // out of v1 scope.
+        Capabilities { plugins: false, mcp: true, hooks: false, commands: false, agents: false, skills: false, scopes: &["user"] }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {

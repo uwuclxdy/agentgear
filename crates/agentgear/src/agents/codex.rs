@@ -43,7 +43,8 @@ impl AgentBackend for CodexBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        Capabilities { plugins: false, mcp: true, hooks: true, scopes: &["user", "project"] }
+        // mcp + hooks + commands (prompts) + agents translate; no skills surface.
+        Capabilities { plugins: false, mcp: true, hooks: true, commands: true, agents: true, skills: false, scopes: &["user", "project"] }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
