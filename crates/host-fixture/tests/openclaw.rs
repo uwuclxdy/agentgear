@@ -123,6 +123,18 @@ fn openclaw_full_lifecycle() {
         root.get("mcp").and_then(|m| m.get("servers")).and_then(|s| s.get("ez-fixture")).is_some(),
         "server not under mcp.servers.<name>:\n{c}"
     );
+    // remote mcp: openclaw's canonical `{url,headers,transport}` shape, rendered
+    // directly rather than the majority `{type,url,headers}` dialect, so a probe
+    // stays Healthy after openclaw's own `doctor --fix`/`mcp set` would otherwise
+    // rewrite it out from under us (docs/research/verify-openclaw.md #2/#4).
+    assert_eq!(
+        root["mcp"]["servers"]["ez-fixture-http"],
+        serde_json::json!({"url": "http://127.0.0.1:39621/mcp", "headers": {}, "transport": "streamable-http"}),
+    );
+    assert_eq!(
+        root["mcp"]["servers"]["ez-fixture-sse"],
+        serde_json::json!({"url": "http://127.0.0.1:39622/sse", "headers": {}, "transport": "sse"}),
+    );
     // the seeded user config survived our merge.
     assert!(c.contains("theirs") && c.contains("their-server"), "seeded mcp server was clobbered:\n{c}");
     assert!(c.contains("\"theme\"") && c.contains("dark"), "seeded top-level key was clobbered:\n{c}");
