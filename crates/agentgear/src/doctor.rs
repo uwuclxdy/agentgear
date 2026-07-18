@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
+use crate::agents::claude::{MarketplaceHealth, find_marketplace, marketplace_health};
 use crate::cli::{CLAUDE_FLOOR, ClaudeCli, MIN_CLAUDE_VERSION, parse_version};
 use crate::error::Result;
 use crate::host::{Plugin, Scope, Source, data_root};
@@ -80,7 +81,8 @@ impl fmt::Display for DoctorReport {
 
 /// The full health report: one shared "host binary on PATH" check, then every
 /// configured agent's own `report` merged in (design §6). `PluginHost::doctor`
-/// calls this; a claude-only host gets exactly today's six checks in order.
+/// calls this; a claude-only host gets the host-binary check followed by the
+/// claude backend's own report, in order.
 pub(crate) fn doctor(plugin: &Plugin, source: &Source) -> Result<DoctorReport> {
     let mut checks = vec![check_host_binary()];
     for id in plugin.agents {
@@ -127,6 +129,7 @@ pub(crate) fn claude_report(plugin: &Plugin, source: &Source) -> DoctorReport {
 
     if let Some(cli) = cli {
         check_registered(&cli, plugin, &mut checks);
+        checks.push(check_marketplace(&cli, plugin, source));
         checks.push(check_validate(plugin, source));
     }
 
@@ -203,6 +206,33 @@ fn check_registered(cli: &ClaudeCli, plugin: &Plugin, checks: &mut Vec<DoctorChe
                     },
                 });
             }
+        },
+    }
+}
+
+/// The plugin entry survives a removed or path-moved marketplace: CC keeps serving
+/// its cache copy, so this is a Warn, not a Fail. Only the next `update` is at risk.
+fn check_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: &Source) -> DoctorCheck {
+    let name = "marketplace registered";
+    let marketplace = match find_marketplace(cli, &Scope::User, plugin.marketplace) {
+        Ok(m) => m,
+        Err(e) => return DoctorCheck { name, status: CheckStatus::Warn(format!("could not read `marketplace list --json`: {e}")) },
+    };
+    match marketplace_health(marketplace.as_ref(), source) {
+        MarketplaceHealth::Healthy => DoctorCheck { name, status: CheckStatus::Ok(format!("`{}` registered", plugin.marketplace)) },
+        MarketplaceHealth::Absent => DoctorCheck {
+            name,
+            status: CheckStatus::Warn(format!(
+                "marketplace `{}` is not registered; the plugin still runs from its cache copy, but the next `update` cannot re-fetch it",
+                plugin.marketplace
+            )),
+        },
+        MarketplaceHealth::Dangling => DoctorCheck {
+            name,
+            status: CheckStatus::Warn(format!(
+                "marketplace `{}` source path no longer resolves; the plugin still runs from its cache copy, but the next `update` re-materializes it",
+                plugin.marketplace
+            )),
         },
     }
 }

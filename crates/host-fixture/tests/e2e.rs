@@ -220,6 +220,7 @@ fn full_lifecycle() {
     let (ok, report) = env.doctor();
     assert!(ok, "doctor reported unhealthy:\n{report}");
     assert!(report.contains("hashes match"), "doctor missing the tree-hash check:\n{report}");
+    assert!(report.contains("marketplace registered"), "doctor missing the marketplace check:\n{report}");
 
     // uninstall: plugin gone + refcount-gated marketplace removed.
     let (ok, out) = env.fixture("uninstall");

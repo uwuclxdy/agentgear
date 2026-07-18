@@ -79,7 +79,7 @@ pub(crate) fn find_plugin(cli: &ClaudeCli, scope: &Scope, name: &str, marketplac
     Ok(entries.into_iter().find(|e| e.matches(name, marketplace)))
 }
 
-fn find_marketplace(cli: &ClaudeCli, scope: &Scope, marketplace: &str) -> Result<Option<MarketplaceEntry>> {
+pub(crate) fn find_marketplace(cli: &ClaudeCli, scope: &Scope, marketplace: &str) -> Result<Option<MarketplaceEntry>> {
     let entries: Vec<MarketplaceEntry> =
         cli.run_json(&["plugin", "marketplace", "list", "--json"], scope.cwd(), "marketplace list --json")?;
     Ok(entries.into_iter().find(|m| m.name.as_deref() == Some(marketplace)))
@@ -230,13 +230,35 @@ fn marketplace_op(source: &Source, present: Option<&MarketplaceEntry>) -> Market
     }
 }
 
+/// GitHub entries have no local path to dangle (the registry stores `source:
+/// github` + a ref), so a present github entry is always healthy. A missing local
+/// `path` field reads as healthy, matching the tolerant serde model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MarketplaceHealth {
+    Healthy,
+    Absent,
+    Dangling,
+}
+
+pub(crate) fn marketplace_health(marketplace: Option<&MarketplaceEntry>, source: &Source) -> MarketplaceHealth {
+    let Some(m) = marketplace else {
+        return MarketplaceHealth::Absent;
+    };
+    match source {
+        Source::Embedded | Source::Path(_) => {
+            if m.path.as_ref().is_none_or(|p| Path::new(p).exists()) {
+                MarketplaceHealth::Healthy
+            } else {
+                MarketplaceHealth::Dangling
+            }
+        }
+        Source::GitHub { .. } => MarketplaceHealth::Healthy,
+    }
+}
+
 fn structural_ok(entry: &PluginEntry, marketplace: Option<&MarketplaceEntry>, source: &Source) -> bool {
     let files_ok = entry.install_path.as_ref().is_none_or(|p| Path::new(p).exists());
-    let marketplace_ok = match source {
-        // Embedded/path: the local marketplace path must still resolve (not moved/deleted).
-        Source::Embedded | Source::Path(_) => marketplace.is_some_and(|m| m.path.as_ref().is_none_or(|p| Path::new(p).exists())),
-        Source::GitHub { .. } => marketplace.is_some(),
-    };
+    let marketplace_ok = matches!(marketplace_health(marketplace, source), MarketplaceHealth::Healthy);
     files_ok && marketplace_ok
 }
 
