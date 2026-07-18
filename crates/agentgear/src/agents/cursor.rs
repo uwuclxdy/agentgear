@@ -194,8 +194,9 @@ fn cc_registry_covers(plugin: &Plugin) -> bool {
 /// Map a CC hook event to cursor's nearest lifecycle analog. The two verified in
 /// the brief are `SessionStart` -> `sessionStart` and `UserPromptSubmit` ->
 /// `beforeSubmitPrompt` (fires before the prompt is sent); the tool/lifecycle
-/// events map by position. Events with no clean cursor counterpart are skipped
-/// rather than written under a guessed name.
+/// events map by position. Both subagent events map: cursor's agent-hook catalog
+/// carries `subagentStart` and `subagentStop` (verify-cursor #4). Events with no
+/// clean cursor counterpart are skipped rather than written under a guessed name.
 fn map_event(cc_event: &str) -> Option<&'static str> {
     match cc_event {
         "SessionStart" => Some("sessionStart"),
@@ -205,6 +206,7 @@ fn map_event(cc_event: &str) -> Option<&'static str> {
         "PostToolUse" => Some("postToolUse"),
         "PreCompact" => Some("preCompact"),
         "Stop" => Some("stop"),
+        "SubagentStart" => Some("subagentStart"),
         "SubagentStop" => Some("subagentStop"),
         _ => None,
     }
@@ -417,3 +419,7 @@ fn check_docs_present(name: &'static str, docs: &[MarkdownDoc], dir: &Path, plug
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/cursor.rs"]
+mod cursor_tests;
