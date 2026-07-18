@@ -22,6 +22,7 @@ pub enum Error {
     CopilotTooOld { found: String },
 
     #[error("`{bin} {args}` failed with exit {code}:\n{stderr}")]
+    #[non_exhaustive]
     Cli { bin: &'static str, args: String, code: i32, stderr: String },
 
     #[error("could not parse {what} as JSON: {source}")]

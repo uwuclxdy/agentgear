@@ -6,11 +6,16 @@
 //! (`crates/host-fixture/tests/docker/copilot-cli`), which cannot run under
 //! `cargo test`, so nothing here spawns `copilot`.
 
-use super::{BackendState, PresentAction, classify, present_action};
+use super::{BackendState, PresentAction, classify, github_marketplace_source, present_action};
 use crate::cli::{CopilotMarketplace, CopilotPlugin, parse_marketplace_list, parse_plugin_list, parse_version_anywhere};
+use crate::host::Source;
 
 fn plugin(name: &str, mkt: &str, version: Option<&str>) -> CopilotPlugin {
     CopilotPlugin { plugin: name.into(), marketplace: mkt.into(), version: version.map(str::to_string) }
+}
+
+fn github() -> Source {
+    Source::GitHub { repo: "owner/repo", ref_: "v0.1.0" }
 }
 
 // --- plugin list parser ------------------------------------------------------
@@ -74,24 +79,54 @@ fn parse_version_anywhere_finds_the_trailing_version() {
     assert_eq!(parse_version_anywhere("nope"), None);
 }
 
+// --- github marketplace source (unpinnable ref) ------------------------------
+
+#[test]
+fn github_marketplace_source_drops_the_unpinnable_ref() {
+    // `owner/repo@ref` breaks copilot (parsed as a marketplace name; `.git` appended
+    // on clone), so only the bare repo is sent — copilot tracks the default branch.
+    assert_eq!(github_marketplace_source("owner/repo", "v0.1.0"), "owner/repo");
+    assert_eq!(github_marketplace_source("owner/repo", ""), "owner/repo");
+}
+
 // --- reconcile / probe decisions ---------------------------------------------
 
 #[test]
-fn present_action_updates_only_a_stale_install() {
-    assert_eq!(present_action(Some("0.1.0"), "0.2.0"), PresentAction::Update);
-    assert_eq!(present_action(Some("0.2.0"), "0.2.0"), PresentAction::NoOp);
+fn present_action_updates_only_a_stale_non_github_install() {
+    let src = Source::Embedded;
+    assert_eq!(present_action(&src, Some("0.1.0"), "0.2.0"), PresentAction::Update);
+    assert_eq!(present_action(&src, Some("0.2.0"), "0.2.0"), PresentAction::NoOp);
     // a strictly-newer install (a coexisting newer binary) is never downgraded.
-    assert_eq!(present_action(Some("0.3.0"), "0.2.0"), PresentAction::NoOp);
+    assert_eq!(present_action(&src, Some("0.3.0"), "0.2.0"), PresentAction::NoOp);
     // unparseable / missing installed => never churn.
-    assert_eq!(present_action(None, "0.2.0"), PresentAction::NoOp);
-    assert_eq!(present_action(Some("weird"), "0.2.0"), PresentAction::NoOp);
+    assert_eq!(present_action(&src, None, "0.2.0"), PresentAction::NoOp);
+    assert_eq!(present_action(&src, Some("weird"), "0.2.0"), PresentAction::NoOp);
+}
+
+#[test]
+fn present_action_github_present_is_converged_no_version_churn() {
+    // copilot can't pin a ref, so the default-branch version is unrelated to the
+    // baked one — a present github install must NoOp, never `plugin update` each
+    // session even when the versions differ in either direction.
+    assert_eq!(present_action(&github(), Some("0.1.0"), "0.2.0"), PresentAction::NoOp);
+    assert_eq!(present_action(&github(), Some("0.9.0"), "0.2.0"), PresentAction::NoOp);
+    assert_eq!(present_action(&github(), None, "0.2.0"), PresentAction::NoOp);
 }
 
 #[test]
 fn classify_maps_presence_and_version_to_state() {
-    assert!(matches!(classify(None, "0.2.0"), BackendState::Absent));
-    assert!(matches!(classify(Some(&plugin("p", "m", Some("0.1.0"))), "0.2.0"), BackendState::NeedsRepair));
-    assert!(matches!(classify(Some(&plugin("p", "m", Some("0.2.0"))), "0.2.0"), BackendState::Healthy));
+    let src = Source::Embedded;
+    assert!(matches!(classify(&src, None, "0.2.0"), BackendState::Absent));
+    assert!(matches!(classify(&src, Some(&plugin("p", "m", Some("0.1.0"))), "0.2.0"), BackendState::NeedsRepair));
+    assert!(matches!(classify(&src, Some(&plugin("p", "m", Some("0.2.0"))), "0.2.0"), BackendState::Healthy));
     // a strictly-newer install reads Healthy (monotonic — never repair/downgrade it).
-    assert!(matches!(classify(Some(&plugin("p", "m", Some("0.9.0"))), "0.2.0"), BackendState::Healthy));
+    assert!(matches!(classify(&src, Some(&plugin("p", "m", Some("0.9.0"))), "0.2.0"), BackendState::Healthy));
+}
+
+#[test]
+fn classify_github_present_is_healthy_regardless_of_version() {
+    assert!(matches!(classify(&github(), None, "0.2.0"), BackendState::Absent));
+    // a stale-LOOKING version must NOT read NeedsRepair for github (would churn on a
+    // default-branch that simply differs from the baked version).
+    assert!(matches!(classify(&github(), Some(&plugin("p", "m", Some("0.1.0"))), "0.2.0"), BackendState::Healthy));
 }

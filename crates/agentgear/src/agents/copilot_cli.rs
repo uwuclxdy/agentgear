@@ -16,6 +16,16 @@
 //! `plugin enable`/`disable`; no `marketplace update`; `plugin list` carries only a
 //! version column (no install-path/enabled), so probe is presence + monotonic
 //! version only.
+//!
+//! All three sources (embedded/path/github) converge through the same
+//! marketplace-add + `plugin install <plugin>@<marketplace>` path. **github cannot
+//! pin a ref on copilot**: `owner/repo@ref` is parsed as a marketplace name and
+//! `marketplace add` appends `.git` to the whole string, so only the bare `owner/repo`
+//! is sent and copilot `git clone --depth 1` its DEFAULT BRANCH (live-verified
+//! 1.0.71). agentgear's version-pin guarantee therefore cannot hold on
+//! copilot+github — a present github install is treated as converged (probe
+//! `Healthy`, reconcile `NoOp`) rather than churned toward the baked version. This is
+//! a copilot CLI limitation, not an agentgear bug.
 
 use super::{AgentBackend, BackendState};
 use crate::cli::{CopilotCli, CopilotPlugin, MIN_COPILOT_VERSION, copilot_meets_floor, version_lt};
@@ -44,13 +54,14 @@ impl AgentBackend for CopilotCliBackend {
         Capabilities { plugins: true, mcp: true, hooks: true, scopes: &["user"] }
     }
 
-    fn probe(&self, plugin: &Plugin, _scope: &Scope, _source: &Source) -> Result<BackendState> {
-        // CLI-based: copilot's registry is the source of truth, so neither scope
-        // (user-global) nor the resolved `source` enters the probe. `plugin list`
-        // has no install-path/enabled column, so state is presence + monotonic
-        // version only (no `Disabled`, no files-gone break to detect).
+    fn probe(&self, plugin: &Plugin, _scope: &Scope, source: &Source) -> Result<BackendState> {
+        // CLI-based: copilot's registry is the source of truth, so scope (user-global)
+        // never enters the probe. `source` distinguishes only github (unpinnable ref
+        // -> presence-only, never version-churn) from a version-comparable
+        // embedded/path install; `plugin list` has no install-path/enabled column, so
+        // there is no `Disabled` / files-gone state.
         let cli = CopilotCli::locate()?;
-        Ok(classify(find_plugin(&cli, plugin)?.as_ref(), plugin.version))
+        Ok(classify(source, find_plugin(&cli, plugin)?.as_ref(), plugin.version))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, _scope: &Scope) -> Result<Outcome> {
@@ -114,16 +125,13 @@ fn plugin_uninstall(cli: &CopilotCli, id: &str) -> Result<()> {
 
 fn reconcile(plugin: &Plugin, desired: &Desired) -> Result<Outcome> {
     let cli = CopilotCli::locate()?;
-
-    // GitHub has no local tree to materialize + register as a marketplace, so it
-    // takes copilot's direct-install path (best-effort, see `github_install`).
-    if let Source::GitHub { repo, ref_ } = &desired.source {
-        return github_install(&cli, repo, ref_);
-    }
-
     let id = plugin.id();
+
     let Some(entry) = find_plugin(&cli, plugin)? else {
-        // Absent: full install.
+        // Absent: full install. Every source (embedded/path/github) flows through
+        // marketplace-add + `plugin install <plugin>@<marketplace>`; a github source
+        // registers a marketplace under the name in the repo's root marketplace.json,
+        // which is `plugin.marketplace`, so the id keyed on here matches.
         cli.ensure_min_version()?;
         ensure_marketplace(&cli, plugin, &desired.source)?;
         plugin_install(&cli, &id)?;
@@ -131,7 +139,7 @@ fn reconcile(plugin: &Plugin, desired: &Desired) -> Result<Outcome> {
         return Ok(Outcome::Installed);
     };
 
-    match present_action(entry.version.as_deref(), plugin.version) {
+    match present_action(&desired.source, entry.version.as_deref(), plugin.version) {
         PresentAction::NoOp => Ok(Outcome::NoOp),
         PresentAction::Update => {
             cli.ensure_min_version()?;
@@ -143,35 +151,33 @@ fn reconcile(plugin: &Plugin, desired: &Desired) -> Result<Outcome> {
     }
 }
 
-/// Materialize the tree, then add our local marketplace if `marketplace list` does
-/// not already carry it. copilot has no `marketplace update`; the `current` pointer
-/// is stable across versions, so a re-materialize needs no re-add and `plugin
-/// update` re-reads the refreshed tree.
+/// Ensure our marketplace is registered, add-if-absent. Embedded/path materialize a
+/// local tree and add its `current` dir; github adds the bare `repo` (copilot clones
+/// its default branch). copilot has no `marketplace update`; the `current` pointer is
+/// stable across versions, so a re-materialize needs no re-add and `plugin update`
+/// re-reads the refreshed tree.
 fn ensure_marketplace(cli: &CopilotCli, plugin: &Plugin, source: &Source) -> Result<()> {
-    let dir = match source {
-        Source::Embedded => materialize(plugin, TreeSource::Blob(plugin.blob()))?,
+    let add_source = match source {
+        Source::Embedded => materialize(plugin, TreeSource::Blob(plugin.blob()))?.display().to_string(),
         // A path source materializes its on-disk tree the same way embedded does.
-        Source::Path(p) => materialize(plugin, TreeSource::Dir(p))?,
-        // GitHub never reaches here (handled by `github_install`).
-        Source::GitHub { .. } => return Ok(()),
+        Source::Path(p) => materialize(plugin, TreeSource::Dir(p))?.display().to_string(),
+        Source::GitHub { repo, ref_ } => github_marketplace_source(repo, ref_),
     };
     if !marketplace_present(cli, plugin.marketplace)? {
-        marketplace_add(cli, &dir.display().to_string())?;
+        marketplace_add(cli, &add_source)?;
     }
     Ok(())
 }
 
-/// GitHub source: copilot has no local marketplace to register, so it installs
-/// directly. `copilot plugin install owner/repo` is a direct install (deprecated at
-/// 1.0.71 but functional); ref-pinning via `owner/repo@ref` is UNVERIFIED for
-/// copilot and sent best-effort. copilot assigns a direct install its own
-/// marketplace name (not `plugin.marketplace`), so this path is NOT probe-idempotent
-/// — an explicit `install` still converges; self_heal cannot recognize it.
-fn github_install(cli: &CopilotCli, repo: &str, ref_: &str) -> Result<Outcome> {
-    cli.ensure_min_version()?;
-    let spec = if ref_.is_empty() { repo.to_string() } else { format!("{repo}@{ref_}") };
-    plugin_install(cli, &spec)?;
-    Ok(Outcome::Installed)
+/// The `marketplace add` source string for a github source. copilot `git clone
+/// --depth 1` the repo's DEFAULT BRANCH and cannot pin a ref: `owner/repo@ref` is
+/// parsed as a marketplace name, and `marketplace add` appends `.git` to the whole
+/// string (both live-verified 1.0.71), so `_ref` is DROPPED and the bare `repo` is
+/// sent. copilot registers it under the name in the repo's root
+/// `.claude-plugin/marketplace.json` — exactly `plugin.marketplace`, so the install
+/// (`<plugin>@<plugin.marketplace>`), probe, and remove all key on the same id.
+fn github_marketplace_source(repo: &str, _ref: &str) -> String {
+    repo.to_string()
 }
 
 fn verify_present(cli: &CopilotCli, plugin: &Plugin) -> Result<()> {
@@ -182,25 +188,35 @@ fn verify_present(cli: &CopilotCli, plugin: &Plugin) -> Result<()> {
     }
 }
 
-/// Present-plugin decision, monotonic: update only toward a strictly-newer embedded
-/// version. A same-or-newer installed version (e.g. from a coexisting newer binary)
-/// is left untouched, so two binaries never downgrade each other.
 #[derive(Debug, PartialEq, Eq)]
 enum PresentAction {
     NoOp,
     Update,
 }
 
-fn present_action(installed: Option<&str>, embedded: &str) -> PresentAction {
-    if version_lt(installed, embedded) { PresentAction::Update } else { PresentAction::NoOp }
+/// Present-plugin reconcile decision. github can't pin a ref (copilot tracks the
+/// default branch), so its installed version is unrelated to the baked one — a
+/// present github install is always converged (`NoOp`), never churning on `plugin
+/// update`. Other sources are monotonic: update only toward a strictly-newer embedded
+/// version; a same-or-newer install (e.g. a coexisting newer binary) is left
+/// untouched, so two binaries never downgrade each other.
+fn present_action(source: &Source, installed: Option<&str>, embedded: &str) -> PresentAction {
+    match source {
+        Source::GitHub { .. } => PresentAction::NoOp,
+        _ if version_lt(installed, embedded) => PresentAction::Update,
+        _ => PresentAction::NoOp,
+    }
 }
 
-/// Classify presence + version into the self_heal state. copilot's `plugin list`
-/// carries no install-path or enabled column, so this is presence + monotonic
-/// version only (no `Disabled`, no files-gone `NeedsRepair`).
-fn classify(entry: Option<&CopilotPlugin>, embedded: &str) -> BackendState {
+/// Classify presence + version into the self_heal state. github can't pin a ref, so
+/// a present github install is `Healthy` regardless of the baked version (a mismatch
+/// is the default branch drifting, not a repairable break — avoids churn). Other
+/// sources compare monotonic version. copilot's `plugin list` carries no install-path
+/// or enabled column, so there is no `Disabled` / files-gone state.
+fn classify(source: &Source, entry: Option<&CopilotPlugin>, embedded: &str) -> BackendState {
     match entry {
         None => BackendState::Absent,
+        Some(_) if matches!(source, Source::GitHub { .. }) => BackendState::Healthy,
         Some(e) if version_lt(e.version.as_deref(), embedded) => BackendState::NeedsRepair,
         Some(_) => BackendState::Healthy,
     }
