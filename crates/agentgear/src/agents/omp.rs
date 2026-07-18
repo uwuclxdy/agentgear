@@ -18,9 +18,11 @@
 //! twice (our `<plugin>-<stem>` namespacing guarantees distinct names that defeat omp's
 //! exact-name dedup). `cc_registry_covers_agents` gates the agent write/probe on that,
 //! retiring iff BOTH the plugin is listed in CC's `installed_plugins.json` AND omp's own
-//! `claude-plugins` provider is enabled. The registry read is HOME-based (omp ignores
-//! `CLAUDE_CONFIG_DIR`, so a relocated config dir moves the registry off this path and we
-//! translate). Provider-enabled is omp's `isProviderEnabled` =
+//! `claude-plugins` provider is enabled. The registry read itself
+//! (`super::ccregistry::registry_lists_plugin`) is shared with the cursor backend's own
+//! `loadClaude`-coverage gate. It is HOME-based (omp ignores `CLAUDE_CONFIG_DIR`, so a
+//! relocated config dir moves the registry off this path and we translate). Provider-
+//! enabled is omp's `isProviderEnabled` =
 //! `!disabledProviders.has("claude-plugins")` (`src/capability/index.ts:289`),
 //! `disabledProviders` loaded from omp's global `config.yml`, default empty = on. CC's own
 //! enabled/disabled state is NOT consulted: omp surfaces a CC agent from
@@ -43,6 +45,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 
+use super::ccregistry::registry_lists_plugin;
 use super::confedit::{remove_file_idem, write_file_idem, yaml_scalar};
 use super::mcpjson::{self, ServerShape};
 use super::report;
@@ -250,23 +253,6 @@ fn cc_registry_covers_agents(plugin: &Plugin) -> bool {
         return false;
     };
     registry_lists_plugin(&cc.join("plugins").join("installed_plugins.json"), &plugin.id()) && omp_claude_plugins_provider_enabled()
-}
-
-/// True when CC's `installed_plugins.json` lists `id` with at least one install entry.
-/// Mirrors omp's `parseClaudePluginsRegistry`: a numeric top-level `version` key is
-/// mandatory — without it omp treats the whole registry as absent, so we do too. The read
-/// is HOME-based (omp's own path), so a relocated `CLAUDE_CONFIG_DIR` reads as not-listed.
-fn registry_lists_plugin(path: &Path, id: &str) -> bool {
-    let Some(root) = fs::read(path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else {
-        return false;
-    };
-    root.get("version").is_some_and(Value::is_number)
-        && root
-            .get("plugins")
-            .and_then(Value::as_object)
-            .and_then(|m| m.get(id))
-            .and_then(Value::as_array)
-            .is_some_and(|entries| !entries.is_empty())
 }
 
 /// omp's `isProviderEnabled("claude-plugins")` (`src/capability/index.ts:289`) resolved

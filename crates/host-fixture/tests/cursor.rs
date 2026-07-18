@@ -120,6 +120,86 @@ fn fixture_dir() -> OsString {
     Path::new(BIN).parent().map(|d| d.as_os_str().to_os_string()).unwrap_or_default()
 }
 
+/// Seed Claude Code's on-disk plugin registry under `claude_dir` (a `.../.claude`): the
+/// `installed_plugins.json` cursor's default-on `loadClaude` loader reads (numeric
+/// `version` key mandatory, same shape omp's `claude-plugins` provider reads — the two
+/// backends share `registry_lists_plugin`). The plugin id matches the fixture:
+/// `<name>@<marketplace>`, both `ez-fixture-plugin`.
+fn seed_cc_registry(claude_dir: &Path) {
+    const ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+    let plugins = claude_dir.join("plugins");
+    fs::create_dir_all(&plugins).unwrap();
+    let install = claude_dir.join("cache").join("ez-fixture-plugin");
+    let registry = serde_json::json!({
+        "version": 1,
+        "plugins": { ID: [{ "scope": "user", "installPath": install.to_string_lossy() }] },
+    });
+    fs::write(plugins.join("installed_plugins.json"), serde_json::to_vec(&registry).unwrap()).unwrap();
+}
+
+#[test]
+fn cursor_reconcile_noops_when_cc_registry_covers() {
+    // CC's registry lists the plugin, so cursor's own `loadClaude` loader already
+    // surfaces the whole plugin tree (mcp/hooks/skills/rules/agents/commands) off it —
+    // translating any of it ourselves would double-register every surface. The retire
+    // is total (unlike omp's agents-only retire): no cursor file is written at all.
+    let env = Env::new("cc-covers");
+    seed_cc_registry(&env.root.join(".claude"));
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "cursor"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "NoOp", "a CC-registry-covered install must not translate, got {out}");
+
+    // Nothing of ours landed: the seeded user files are untouched, no new surface dirs.
+    assert_eq!(env.mcp(), SEED_MCP, "mcp.json was touched despite CC-registry coverage");
+    assert_eq!(env.hooks(), SEED_HOOKS, "hooks.json was touched despite CC-registry coverage");
+    assert!(!env.cursor.join("commands").exists(), "commands/ written despite CC-registry coverage");
+    assert!(!env.cursor.join("agents").exists(), "agents/ written despite CC-registry coverage");
+    assert!(!env.cursor.join("skills").exists(), "skills/ written despite CC-registry coverage");
+
+    // probe reads Healthy (nothing owned, marker kept), not Absent — self_heal must
+    // never churn a covered install, and must never treat it as "plugin gone."
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "self-heal on a covered install should no-op, got {out}");
+
+    // remove stays unconditional: nothing of ours exists, so uninstall itself no-ops
+    // (there is nothing to clean up), but it must not error.
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "NoOp", "uninstall on a covered (never-translated) install failed: {out}");
+}
+
+#[test]
+fn cursor_translates_when_cc_registry_relocated() {
+    // A relocated `CLAUDE_CONFIG_DIR` moves CC's real registry off cursor's own
+    // HARDCODED `join(HOME, ".claude")` read path (cursor's loader ignores
+    // `CLAUDE_CONFIG_DIR` entirely, ground-truth per `docs/harness/cursor.md`). Our gate
+    // reads the same HOME-based path, so it must also miss the relocated registry and
+    // fall back to full translation — never silently losing cursor's coverage.
+    let env = Env::new("relocated");
+    let alt = env.root.join("altcfg").join(".claude");
+    seed_cc_registry(&alt);
+    assert!(!env.root.join(".claude").exists(), "test setup error: HOME-based .claude must be absent");
+
+    let mut cmd = Command::new(BIN);
+    cmd.args(["setup", "--agent", "cursor"]);
+    env.apply(&mut cmd);
+    cmd.env("CLAUDE_CONFIG_DIR", env.root.join("altcfg"));
+    let out = cmd.output().unwrap();
+    assert!(out.status.success(), "setup failed: {}", String::from_utf8_lossy(&out.stdout));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "Installed",
+        "a relocated CLAUDE_CONFIG_DIR must not read as CC-registry-covered"
+    );
+
+    // Full translation actually landed.
+    assert!(env.mcp().contains("ez-fixture"), "mcp not translated under a relocated CLAUDE_CONFIG_DIR");
+    assert!(
+        env.cursor.join("agents").join("ez-fixture-plugin-ez-helper.md").exists(),
+        "agent file not translated under a relocated CLAUDE_CONFIG_DIR"
+    );
+}
+
 #[test]
 fn cursor_full_lifecycle() {
     let env = Env::new("lifecycle");

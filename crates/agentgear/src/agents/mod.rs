@@ -124,6 +124,12 @@ cfg_config_backends! {
     pub(crate) mod skillsdir;
 }
 
+// The HOME-based Claude Code registry reader, shared by every backend that
+// detects native CC-plugin-tree ingestion already covering it (omp's
+// `claude-plugins` provider, cursor's default-on `loadClaude` loader).
+#[cfg(any(feature = "omp", feature = "cursor"))]
+pub(crate) mod ccregistry;
+
 /// What `probe` classifies a plugin's per-agent state as. Drives self_heal's
 /// marker × state table (never resurrect, never re-enable, repair drift).
 pub enum BackendState {

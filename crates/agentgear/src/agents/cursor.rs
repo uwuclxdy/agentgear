@@ -13,6 +13,30 @@
 //! only ever deletes skills we wrote (see `docs/harness/cursor.md`). Cursor is
 //! GUI-first with no headless config probe, so detection rides on `~/.cursor` (or a
 //! CLI on PATH).
+//!
+//! **The whole translation is retired when cursor already surfaces the plugin itself.**
+//! Cursor's default-on `loadClaude` loader (`docs/research/verify-cursor.md` re-verify
+//! #1) reads CC's own on-disk registry (`$HOME/.claude/plugins/installed_plugins.json`,
+//! HOME-based, hardcoded) and, for each listed+enabled plugin, loads
+//! `.claude-plugin/plugin.json` straight off its `installPath` — mcp, hooks, skills,
+//! rules, agents, commands, the **whole** surface, with `${CLAUDE_PLUGIN_ROOT}`
+//! expansion. So once the `claude` backend has us registered there, translating any of
+//! it ourselves would double-register every surface, not just agents (contrast omp,
+//! which only doubles on agents). `cc_registry_covers` (`super::ccregistry::
+//! registry_lists_plugin`, shared with omp's own gate) retires `probe`/`reconcile`
+//! entirely: no surface is checked or written, `probe` reads `Healthy` (nothing owned,
+//! marker kept — see `report::compose`'s "no surface contributed" rule), and
+//! `reconcile` is a true `NoOp`. `remove` stays unconditional, so a plugin translated
+//! before the `claude` backend was ever installed still tears down cleanly. Unlike omp,
+//! cursor has no own-side enable toggle to also check: the gate is exactly "CC's
+//! registry lists us," matching the shape of omp's "installed" half without omp's
+//! provider half (cursor's `loadClaude` also reads CC's `enabledPlugins`, but per the
+//! `no enable-state guessing` design principle and to keep the two gates one signal, we
+//! deliberately don't model that: translating an extra time on a CC-side-disabled
+//! plugin is the conservative failure, not silently losing cursor's coverage). The
+//! registry read is HOME-based, matching cursor's own hardcoded `join(HOME, ".claude")`
+//! resolution (it ignores `CLAUDE_CONFIG_DIR`), so a relocated config dir moves the
+//! registry off this path and the translation fallback fires.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -20,6 +44,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 use super::cchooks::hook_is_portable;
+use super::ccregistry::registry_lists_plugin;
 use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem};
 use super::mcpjson::{self, ServerShape};
 use super::report;
@@ -51,6 +76,13 @@ impl AgentBackend for CursorBackend {
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
+        // Cursor's own `loadClaude` loader already covers every surface off CC's
+        // registry (see the module doc): we own nothing on disk for this plugin, so
+        // this reads `Healthy` (not `Absent`) exactly like `report::compose` folding
+        // zero contributed surfaces — the marker is kept, self_heal never churns it.
+        if cc_registry_covers(plugin) {
+            return Ok(BackendState::Healthy);
+        }
         // Compose every surface (mcp.json, hooks.json, command + agent files), so a
         // dropped hook entry or missing command/agent behind a healthy mcp.json reads
         // NeedsRepair. `source` is the one self_heal resolved for this agent (rehydrated
@@ -73,6 +105,12 @@ impl AgentBackend for CursorBackend {
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
+        // See the module doc: cursor's `loadClaude` loader already covers every
+        // surface off CC's registry, so translating any of it ourselves would
+        // double-register the whole plugin, not just one surface.
+        if cc_registry_covers(plugin) {
+            return Ok(Outcome::NoOp);
+        }
         let comp = plugin.components(&desired.source)?;
         let base = cursor_dir(scope)?;
 
@@ -131,6 +169,22 @@ fn cursor_dir(scope: &Scope) -> Result<PathBuf> {
             .ok_or_else(|| Error::Tree("no home directory (HOME unset); cannot locate ~/.cursor".into())),
         Scope::Project { path } => Ok(path.join(".cursor")),
     }
+}
+
+// --- cc-registry retire gate --------------------------------------------------
+
+/// True when cursor's own `loadClaude` loader already surfaces this plugin's whole
+/// component tree off Claude Code's on-disk registry, so translating any of it
+/// ourselves would double-register every surface. See the module doc for why this
+/// is a single "installed" check with no omp-style provider half. The read is
+/// HOME-based, matching cursor's own hardcoded `join(HOME, ".claude")` resolution
+/// (unaffected by `CLAUDE_CONFIG_DIR`), so a relocated config dir reads as
+/// not-covered and the translation fallback fires.
+fn cc_registry_covers(plugin: &Plugin) -> bool {
+    let Some(cc) = dirs::home_dir().map(|h| h.join(".claude")) else {
+        return false;
+    };
+    registry_lists_plugin(&cc.join("plugins").join("installed_plugins.json"), &plugin.id())
 }
 
 // --- hooks -------------------------------------------------------------------
@@ -308,6 +362,14 @@ fn report_checks(backend: &CursorBackend, plugin: &Plugin, source: &Source) -> V
             },
         }
     });
+
+    if cc_registry_covers(plugin) {
+        checks.push(DoctorCheck {
+            name: "translation",
+            status: CheckStatus::Ok("covered by Claude Code's own `loadClaude` plugin registry; not translated".into()),
+        });
+        return checks;
+    }
 
     let base = match cursor_dir(&Scope::User) {
         Ok(base) => base,
