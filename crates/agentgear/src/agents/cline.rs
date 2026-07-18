@@ -7,14 +7,16 @@
 //! overrides short-circuit that probe. Cline has no project-level MCP scope, so
 //! MCP is always global.
 //!
-//! CC commands become cline **workflows** (markdown slash-commands) and CC hooks
-//! become cline's file-based **hooks** (a script named exactly after the event).
-//! These are scope-aware: user scope writes cline's global store under
+//! CC commands become cline **workflows** (markdown slash-commands); CC hooks become
+//! cline's file-based **hooks** (a script named after cline's own event). These are
+//! scope-aware: user scope writes cline's global store under
 //! `~/Documents/Cline/{Workflows,Hooks}`; project scope writes the repo's
-//! `.clinerules/{workflows,hooks}`. Only `UserPromptSubmit`/`PreToolUse`/
-//! `PostToolUse` have a 1:1 cline event; CC's `SessionStart` has no session-level
-//! analog (cline hooks are task-level) and is skipped. Subagents have no cline file
-//! surface and are skipped. See `docs/harness/cline.md` for the full mapping.
+//! `.clinerules/{workflows,hooks}`. `UserPromptSubmit`/`PreToolUse`/`PostToolUse`/
+//! `PreCompact` share cline's exact name; CC's session-level `SessionEnd` maps onto
+//! cline's `SessionShutdown` (a once-per-session teardown hook). CC's `SessionStart`
+//! is skipped: cline has no session-level start hook, only the per-task `TaskStart`.
+//! Subagents have no cline file surface and are skipped. See `docs/harness/cline.md`
+//! for the full mapping.
 //!
 //! Ownership: mcp servers are keyed by our server names; workflows are
 //! plugin-prefixed files; hook scripts (whose filename cline forces to the bare
@@ -236,16 +238,24 @@ fn global_store() -> Result<PathBuf> {
 
 // --- hooks -------------------------------------------------------------------
 
-/// Map a CC hook event to cline's nearest shipped (v3.36) file-hook event. Only
-/// three line up 1:1; cline's hooks are **task-level** (`TaskStart`/`TaskResume`/
-/// `TaskCancel`), so CC's session-level `SessionStart`/`SessionEnd` have no analog —
-/// mapping them to `TaskStart` would over-invoke (once per task, not once per
-/// session). Unmapped events are skipped rather than written under a guessed name.
+/// Map a CC hook event to cline's own file-hook event. Four share cline's exact name
+/// (`UserPromptSubmit`/`PreToolUse`/`PostToolUse`/`PreCompact`), and CC's session-level
+/// `SessionEnd` maps onto cline's `SessionShutdown`: primary source (`cline/cline`
+/// `sdk/.../hooks/subprocess.ts` `shutdown()`, called from the memoized terminal
+/// cleanup in `run-agent.ts`/`session-runtime.ts`) fires `session_shutdown` exactly
+/// once per session at teardown with a `reason`, the same shape as `SessionEnd`.
+///
+/// `SessionStart` is the one that stays skipped: cline has NO session-level start hook,
+/// only the per-task `TaskStart` (`agent_start`), so mapping onto it would over-invoke
+/// (once per task, not once per session). Unmapped events are skipped rather than
+/// written under a guessed name.
 fn map_event(cc_event: &str) -> Option<&'static str> {
     match cc_event {
         "UserPromptSubmit" => Some("UserPromptSubmit"),
         "PreToolUse" => Some("PreToolUse"),
         "PostToolUse" => Some("PostToolUse"),
+        "PreCompact" => Some("PreCompact"),
+        "SessionEnd" => Some("SessionShutdown"),
         _ => None,
     }
 }
