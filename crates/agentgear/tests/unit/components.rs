@@ -84,6 +84,21 @@ fn splits_command_and_agent_frontmatter() {
 }
 
 #[test]
+fn block_scalar_frontmatter_value_keeps_its_indented_lines() {
+    // A literal block scalar (`description: |`) must join its indented
+    // continuation lines, not store the bare `|` indicator and drop them.
+    let entries = vec![e("commands/hi.md", "---\ndescription: |\n  first line\n  second line\nother: plain\n---\n\nbody\n")];
+    let c = parse(&entries);
+    let cmd = &c.commands[0];
+    let description = cmd.frontmatter.get("description").and_then(|v| v.as_str()).unwrap_or_default();
+    assert_ne!(description, "|", "block scalar indicator stored verbatim instead of its content");
+    assert!(description.contains("first line"), "block scalar lost its first line: {description:?}");
+    assert!(description.contains("second line"), "block scalar lost its second line: {description:?}");
+    assert_eq!(cmd.frontmatter.get("other").and_then(|v| v.as_str()), Some("plain"), "flat key: value parsing regressed");
+    assert_eq!(cmd.body.trim(), "body");
+}
+
+#[test]
 fn crlf_frontmatter_body_is_clean() {
     // A `\r\n`-authored doc must not leak the closing fence's bytes into the body
     // (the byte-offset walk, not a reconstructed line-length sum).
