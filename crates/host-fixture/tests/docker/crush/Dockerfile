@@ -30,6 +30,8 @@ export HOME=/tmp/crush-home
 CONFIG="$HOME/.config/crush/crush.json"
 SKILL_DIR="$HOME/.config/crush/skills/ez-skill"
 SKILL="$SKILL_DIR/SKILL.md"
+CMD_DIR="$HOME/.config/crush/commands/ez-fixture-plugin"
+CMD="$CMD_DIR/hello.md"
 mkdir -p "$(dirname "$CONFIG")"
 
 # Seed a foreign mcp server + an unrelated key that must survive install/uninstall.
@@ -44,6 +46,9 @@ if ! grep -q 'theirs'     "$CONFIG"; then echo "FAIL: seeded server clobbered on
 if ! grep -q '"options"'  "$CONFIG"; then echo "FAIL: seeded key clobbered on install"; exit 1; fi
 if [ ! -f "$SKILL" ];                then echo "FAIL: translated skill SKILL.md missing"; exit 1; fi
 if ! grep -q 'x-agentgear' "$SKILL"; then echo "FAIL: skill ownership tag missing"; exit 1; fi
+if [ ! -f "$CMD" ];                  then echo "FAIL: translated command file missing"; exit 1; fi
+if grep -q '^---$' "$CMD"; then echo "FAIL: CC frontmatter fence leaked into the command file"; cat "$CMD"; exit 1; fi
+if ! grep -q 'Say hello' "$CMD";     then echo "FAIL: command body not translated"; exit 1; fi
 
 # Confirm the written JSON actually parses (node is present in this stage).
 node -e 'JSON.parse(require("fs").readFileSync(process.env.CONFIG,"utf8"))' \
@@ -66,6 +71,7 @@ if grep -q 'ez-fixture' "$CONFIG"; then echo "FAIL: our server survived uninstal
 if ! grep -q 'theirs'   "$CONFIG"; then echo "FAIL: uninstall removed the seeded server"; exit 1; fi
 if ! grep -q '"options"' "$CONFIG"; then echo "FAIL: uninstall removed the seeded key"; exit 1; fi
 if [ -d "$SKILL_DIR" ]; then echo "FAIL: skill dir survived uninstall"; exit 1; fi
+if [ -d "$CMD_DIR" ]; then echo "FAIL: command dir survived uninstall"; exit 1; fi
 
 echo "crush docker leg: OK"
 TEST

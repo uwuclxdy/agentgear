@@ -8,9 +8,19 @@
 //! server name and every hook is matched by its command string, so `remove` is
 //! exact and a second reconcile is a true `NoOp`.
 //!
+//! - **commands**: real, file-writable, TUI-only surface. crush directory-loads
+//!   `.md` files recursively (`filepath.WalkDir` in `internal/commands/commands.go`) under
+//!   `~/.config/crush/commands` (user) / `<project>/.crush/commands` (project — its
+//!   default `DataDirectory`), so a plugin-named `<plugin>/` subdir namespaces our
+//!   commands (crush's own id becomes `user:<plugin>:<name>`) without colliding with
+//!   the user's own; `remove` drops the whole subtree. crush also reads a second user
+//!   dir, `~/.crush/commands`, unwritten here (same as the skills surface's unwritten
+//!   dirs). The loader does **not** strip YAML frontmatter, so we write the parsed
+//!   `body` only — a verbatim copy would leak CC frontmatter into the prompt text.
+//!
 //! Skipped surfaces (see `docs/harness/crush.md`):
-//! - **commands** and **agents**: crush has no file-writable surface for either yet
-//!   (issues #2219 / #1807 open), so `commands`/`agents` are dropped, not guessed.
+//! - **agents**: no file-writable subagent surface (issue #1807 open), so `agents`
+//!   is still dropped, not guessed.
 //! - **skills**: bare `~/.config/crush/skills/<name>/SKILL.md` (user) /
 //!   `<project>/.crush/skills/<name>/SKILL.md` (project), tagged for ownership. crush
 //!   requires `name`+`description`, which the shared renderer ensures.
@@ -21,24 +31,25 @@
 //! automatically, so a translated hook is live the moment crush next reads the file.
 
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
 use super::cchooks::hook_is_portable;
-use super::confedit::{json_edit, json_obj_at};
+use super::confedit::{json_edit, json_obj_at, write_file_idem};
 use super::mcpjson::{self, ServerShape};
 use super::report;
 use super::skillsdir;
 use super::{AgentBackend, BackendState};
-use crate::components::{HookBinding, McpServer};
+use crate::components::{HookBinding, MarkdownDoc, McpServer};
 // The unit test builds server fixtures with `super::McpKind`; production no longer
 // references it directly (the mcp checks moved to `report`), so the re-export is
 // test-only to avoid an unused-import warning.
 #[cfg(test)]
 use crate::components::McpKind;
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
-use crate::error::{Error, Result};
+use crate::error::{Error, IoContext, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 pub(crate) struct CrushBackend;
@@ -60,23 +71,29 @@ impl AgentBackend for CrushBackend {
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
-        // Compose the two surfaces sharing crush.json (mcp + PreToolUse hooks): a
-        // dropped hook entry behind a healthy mcp map now reads NeedsRepair instead of
-        // Healthy. `source` is the one self_heal resolved for this agent (rehydrated
-        // `--path`, else the compile-time default), so probe and reconcile render
-        // identical bytes.
+        // Compose every surface sharing crush.json (mcp + PreToolUse hooks) plus the
+        // skills and commands dirs: a dropped entry behind an otherwise-healthy
+        // surface now reads NeedsRepair instead of Healthy. `source` is the one
+        // self_heal resolved for this agent (rehydrated `--path`, else the
+        // compile-time default), so probe and reconcile render identical bytes.
         let comp = plugin.components(source)?;
         let config = config_file(scope)?;
         let mcp = mcpjson::probe_surface(&config, &["mcp"], &comp.mcp_servers, ServerShape::typed())?;
         let hooks = report::probe_json_entries(&config, &hook_entries(&comp.hooks))?;
         let skills = skillsdir::probe(&skills_root(scope)?, plugin, &comp.skills)?;
-        Ok(report::compose([mcp, hooks, skills].into_iter().flatten()))
+        let cmd_root = commands_root(scope)?.join(plugin.name);
+        let commands = report::probe_files(&expected_commands(&cmd_root, &comp.commands), |_, _| true)?;
+        Ok(report::compose([mcp, hooks, skills, commands].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?;
         let mut changed = reconcile_config(&config_file(scope)?, &comp.mcp_servers, &comp.hooks)?;
         changed |= skillsdir::reconcile(&skills_root(scope)?, plugin, &comp.skills)?;
+        let cmd_root = commands_root(scope)?.join(plugin.name);
+        for doc in &comp.commands {
+            changed |= write_file_idem(&cmd_root.join(command_rel(doc)), render_command(doc).as_bytes())?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -84,6 +101,13 @@ impl AgentBackend for CrushBackend {
         let comp = plugin.components(&Source::Embedded)?;
         let mut changed = remove_config(&config_file(scope)?, &portable_names(&comp.mcp_servers), &comp.hooks)?;
         changed |= skillsdir::remove(&skills_root(scope)?, plugin, &comp.skills)?;
+        // We own the whole `commands/<plugin>/` subtree (crush walks it recursively),
+        // so a recursive drop is exact and never reaches the user's own commands.
+        let cmd_root = commands_root(scope)?.join(plugin.name);
+        if cmd_root.exists() {
+            fs::remove_dir_all(&cmd_root).io_ctx(|| format!("removing {}", cmd_root.display()))?;
+            changed = true;
+        }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
@@ -131,6 +155,18 @@ fn skills_root(scope: &Scope) -> Result<PathBuf> {
     match scope {
         Scope::User => Ok(crush_config_dir()?.join("skills")),
         Scope::Project { path } => Ok(path.join(".crush").join("skills")),
+    }
+}
+
+/// The commands root for a scope: `~/.config/crush/commands` (user — the first of
+/// crush's two user command dirs, `~/.crush/commands` stays unwritten) or
+/// `<project>/.crush/commands` (project — crush's default `DataDirectory`). crush
+/// directory-loads `.md` files recursively (`filepath.WalkDir`), so a plugin-named
+/// subdir under either root namespaces our commands without a per-file rename.
+fn commands_root(scope: &Scope) -> Result<PathBuf> {
+    match scope {
+        Scope::User => Ok(crush_config_dir()?.join("commands")),
+        Scope::Project { path } => Ok(path.join(".crush").join("commands")),
     }
 }
 
@@ -256,6 +292,33 @@ fn remove_config(config: &Path, server_names: &[&str], hooks: &[HookBinding]) ->
     })
 }
 
+// --- commands ------------------------------------------------------------------
+
+/// `commands/hello.md` -> `hello.md` (extension kept — crush wants raw markdown,
+/// not TOML), preserving any subdir so a nested CC command keeps its own nesting
+/// under our plugin subdir.
+fn command_rel(doc: &MarkdownDoc) -> String {
+    doc.rel.strip_prefix("commands/").unwrap_or(&doc.rel).to_string()
+}
+
+/// Render a CC command doc as a crush command file: body only. crush's loader
+/// (`internal/commands/commands.go`) does not split frontmatter — the whole file
+/// becomes the literal prompt text — so copying `doc.raw` verbatim would leak the
+/// CC `---` frontmatter block into it; `doc.body` already excludes it (the
+/// frontmatter/body split happens at parse time). Deterministic so a re-reconcile
+/// is byte-identical.
+fn render_command(doc: &MarkdownDoc) -> String {
+    let mut out = doc.body.trim().to_string();
+    out.push('\n');
+    out
+}
+
+/// The `(path, rendered bytes)` command files `probe` compares against disk, keyed
+/// off the same `command_rel` + `render_command` `reconcile` writes.
+fn expected_commands(cmd_root: &Path, commands: &[MarkdownDoc]) -> Vec<(PathBuf, Vec<u8>)> {
+    commands.iter().map(|doc| (cmd_root.join(command_rel(doc)), render_command(doc).into_bytes())).collect()
+}
+
 // --- report ------------------------------------------------------------------
 
 fn report_checks(backend: &CrushBackend, plugin: &Plugin, source: &Source) -> Vec<DoctorCheck> {
@@ -273,13 +336,14 @@ fn report_checks(backend: &CrushBackend, plugin: &Plugin, source: &Source) -> Ve
         }
     });
 
-    let config = match config_file(&Scope::User) {
-        Ok(config) => config,
+    let base = match crush_config_dir() {
+        Ok(base) => base,
         Err(e) => {
             checks.push(DoctorCheck { name: "config file", status: CheckStatus::Warn(e.to_string()) });
             return checks;
         }
     };
+    let config = base.join("crush.json");
 
     let root = report::read_json_config(&mut checks, "config file", &config);
 
@@ -296,6 +360,7 @@ fn report_checks(backend: &CrushBackend, plugin: &Plugin, source: &Source) -> Ve
     ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_hooks_present(&comp.hooks, root.as_ref()));
+    checks.push(check_commands_present(&comp.commands, &base.join("commands").join(plugin.name)));
 
     checks
 }
@@ -324,6 +389,25 @@ fn check_hooks_present(hooks: &[HookBinding], root: Option<&Value>) -> DoctorChe
             name,
             status: CheckStatus::Fail {
                 problem: format!("PreToolUse hook(s) missing from crush.json: {}", missing.join(", ")),
+                fix: "run the host's `setup`".into(),
+            },
+        }
+    }
+}
+
+fn check_commands_present(commands: &[MarkdownDoc], cmd_root: &Path) -> DoctorCheck {
+    let name = "translated commands present";
+    if commands.is_empty() {
+        return DoctorCheck { name, status: CheckStatus::Ok("no commands to translate".into()) };
+    }
+    let missing: Vec<String> = commands.iter().map(command_rel).filter(|rel| !cmd_root.join(rel).exists()).collect();
+    if missing.is_empty() {
+        DoctorCheck { name, status: CheckStatus::Ok(format!("{} command file(s) present", commands.len())) }
+    } else {
+        DoctorCheck {
+            name,
+            status: CheckStatus::Fail {
+                problem: format!("command file(s) missing: {}", missing.join(", ")),
                 fix: "run the host's `setup`".into(),
             },
         }

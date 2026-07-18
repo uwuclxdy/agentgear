@@ -1,9 +1,9 @@
 //! Hermetic crush-backend lifecycle, fully isolated from the real
 //! `~/.config/crush`. No docker, no auth, no `crush` binary: the backend only ever
-//! writes crush's single `crush.json`, so we drive `host_fixture setup --agent
-//! crush` against a temp config dir (pinned via `CRUSH_GLOBAL_CONFIG`) and assert
-//! the written `crush.json` by reading it back. `detect()` passes off the
-//! pre-created config dir alone (no `crush` on PATH).
+//! writes crush's single `crush.json` plus the skills/commands dirs alongside it,
+//! so we drive `host_fixture setup --agent crush` against a temp config dir (pinned
+//! via `CRUSH_GLOBAL_CONFIG`) and assert the written files by reading them back.
+//! `detect()` passes off the pre-created config dir alone (no `crush` on PATH).
 //!
 //! Every path the backend touches derives from `CRUSH_GLOBAL_CONFIG`/`HOME`, which
 //! we point at a throwaway temp root — so proving our entries land there (and the
@@ -11,6 +11,9 @@
 //! config. The fixture plugin declares no `PreToolUse` hook (its hooks are
 //! `SessionStart`/`UserPromptSubmit`, neither of which crush defines), so only mcp
 //! translates; the seeded user hook is what verifies the hooks branch of the merge.
+//! The fixture's one command (`commands/hello.md`, CC frontmatter + a body) proves
+//! the frontmatter-drop: crush's own loader does not strip it, so a written command
+//! file must contain the body only, never the source's `---` fence.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -109,6 +112,8 @@ fn crush_full_lifecycle() {
     let config_file = env.crush.join("crush.json");
     let skill_dir = env.crush.join("skills").join("ez-skill");
     let skill = skill_dir.join("SKILL.md");
+    let cmd_dir = env.crush.join("commands").join("ez-fixture-plugin");
+    let cmd_file = cmd_dir.join("hello.md");
 
     // install: translates our mcp server into crush's single crush.json.
     let (ok, out) = env.fixture(&["setup", "--agent", "crush"]);
@@ -151,9 +156,18 @@ fn crush_full_lifecycle() {
     assert!(sk.contains("x-agentgear") && sk.contains("ez-fixture-plugin"), "ownership tag missing:\n{sk}");
     assert!(skill_dir.join("reference.md").exists(), "skill support file not copied through");
 
+    // commands: body-only markdown under commands/<plugin>/ — crush's loader does not
+    // strip frontmatter, so a leaked CC `---` fence would land literally in the prompt.
+    assert!(cmd_file.exists(), "command file not written: {}", cmd_file.display());
+    let cf = fs::read_to_string(&cmd_file).unwrap();
+    assert!(!cf.starts_with("---"), "CC frontmatter fence leaked into the command file:\n{cf}");
+    assert!(!cf.contains("description:"), "CC frontmatter key leaked into the command file:\n{cf}");
+    assert!(cf.contains("Say hello"), "command body missing:\n{cf}");
+
     // safety: everything we wrote is under the throwaway temp root.
     assert!(config_file.starts_with(&env.root), "backend wrote outside the temp root: {}", config_file.display());
     assert!(skill.starts_with(&env.root), "skill written outside the temp root");
+    assert!(cmd_file.starts_with(&env.root), "command file written outside the temp root");
 
     // idempotent: a second identical reconcile is a true NoOp (no write).
     let (ok, out) = env.fixture(&["setup", "--agent", "crush"]);
@@ -169,6 +183,7 @@ fn crush_full_lifecycle() {
     assert!(c.contains("\"theme\"") && c.contains("dark"), "uninstall removed the seeded top-level key:\n{c}");
     assert!(c.contains("their-guard.sh"), "uninstall removed the seeded user PreToolUse hook:\n{c}");
     assert!(!skill_dir.exists(), "our skill dir survived uninstall: {}", skill_dir.display());
+    assert!(!cmd_dir.exists(), "our command dir survived uninstall: {}", cmd_dir.display());
 
     // the post-uninstall config still parses: a clean re-install lands again
     // (json_edit would error on an unparseable crush.json).
