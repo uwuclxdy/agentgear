@@ -101,10 +101,9 @@ fn report(result: agentgear::Result<agentgear::Outcome>) -> ExitCode {
     }
 }
 
-/// A dependency-free newline-delimited JSON-RPC stdio MCP server: answers
-/// `initialize` + `tools/list` (no tools), replies to any other request with an
-/// empty result, ignores notifications, and loops until stdin closes. Ids are
-/// echoed verbatim so a real client accepts the responses.
+/// A dependency-free newline-delimited JSON-RPC stdio MCP server. The loop reads
+/// stdin until EOF and writes each reply; per-line dispatch lives in
+/// `handle_request` so it is unit-testable without spawning the binary.
 fn run_mcp_server() -> ExitCode {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
@@ -114,18 +113,7 @@ fn run_mcp_server() -> ExitCode {
         if line.is_empty() {
             continue;
         }
-        let id = json_id(line);
-        let reply = match json_method(line).as_deref() {
-            Some("initialize") => Some(format!(
-                r#"{{"jsonrpc":"2.0","id":{id},"result":{{"protocolVersion":"2024-11-05","capabilities":{{"tools":{{}}}},"serverInfo":{{"name":"ez-fixture","version":"0.1.0"}}}}}}"#
-            )),
-            Some("tools/list") => Some(format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[]}}}}"#)),
-            // A request (has an id) we don't model still gets a well-formed reply;
-            // a notification (no id) is fire-and-forget.
-            Some(_) if id != "null" => Some(format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{}}}}"#)),
-            _ => None,
-        };
-        if let Some(reply) = reply {
+        if let Some(reply) = handle_request(line) {
             if writeln!(stdout, "{reply}").is_err() {
                 break;
             }
@@ -133,6 +121,29 @@ fn run_mcp_server() -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+/// One MCP request line -> its JSON-RPC reply, or `None` for notifications. Ids
+/// echo verbatim so a real client accepts the responses. The single `ping` tool
+/// returns `pong`, giving the docker legs a deterministic round-trip to assert.
+fn handle_request(line: &str) -> Option<String> {
+    let id = json_id(line);
+    match json_method(line).as_deref() {
+        Some("initialize") => Some(format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"result":{{"protocolVersion":"2024-11-05","capabilities":{{"tools":{{}}}},"serverInfo":{{"name":"ez-fixture","version":"0.1.0"}}}}}}"#
+        )),
+        Some("tools/list") => Some(format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"ping","description":"round-trip probe; returns pong","inputSchema":{{"type":"object","properties":{{}}}}}}]}}}}"#
+        )),
+        // `ping` is the only tool, so any `tools/call` gets the pong result.
+        Some("tools/call") => {
+            Some(format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"content":[{{"type":"text","text":"pong"}}],"isError":false}}}}"#))
+        }
+        // A request (has an id) we don't model still gets a well-formed reply;
+        // a notification (no id) is fire-and-forget.
+        Some(_) if id != "null" => Some(format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{}}}}"#)),
+        _ => None,
+    }
 }
 
 /// The raw JSON-RPC `id` token (a number, or a `"quoted"` string kept with its
@@ -158,4 +169,33 @@ fn json_method(line: &str) -> Option<String> {
 fn value_after<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     let i = line.find(key)? + key.len();
     Some(line.get(i..)?.trim_start().strip_prefix(':')?.trim_start())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::handle_request;
+
+    #[test]
+    fn tools_list_advertises_ping() {
+        let resp = handle_request(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).unwrap_or_default();
+        assert!(resp.contains(r#""name":"ping""#), "tools/list did not advertise ping: {resp}");
+    }
+
+    #[test]
+    fn tools_call_returns_pong() {
+        let resp = handle_request(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ping"}}"#).unwrap_or_default();
+        assert!(resp.contains(r#""text":"pong""#), "tools/call did not return pong: {resp}");
+        assert!(resp.contains(r#""id":2"#), "id not echoed: {resp}");
+    }
+
+    #[test]
+    fn initialize_advertises_tools_capability() {
+        let resp = handle_request(r#"{"jsonrpc":"2.0","id":3,"method":"initialize"}"#).unwrap_or_default();
+        assert!(resp.contains(r#""capabilities":{"tools":{}}"#), "initialize dropped tools cap: {resp}");
+    }
+
+    #[test]
+    fn notification_gets_no_reply() {
+        assert!(handle_request(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).is_none());
+    }
 }
