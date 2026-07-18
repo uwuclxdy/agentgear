@@ -135,9 +135,9 @@ fn surface_base(scope: &Scope) -> Result<PathBuf> {
 }
 
 /// The on-disk path for a translated doc under `<base>/<subdir>/`: plugin-name
-/// prefixed and flattened (subdir separators -> `-`) into one file. A flat,
-/// prefixed name is discoverable regardless of whether opencode recurses command/
-/// agent subdirectories (unverified in the brief) and stays identifiably ours.
+/// prefixed and flattened (subdir separators -> `-`) into one file. opencode's own
+/// scan of `commands`/`agents` recurses subdirectories, so a flat, prefixed name
+/// stays discoverable there and identifiably ours.
 fn doc_path(base: &Path, subdir: &str, plugin: &str, doc: &MarkdownDoc) -> PathBuf {
     let stem =
         doc.rel.strip_prefix(subdir).unwrap_or(&doc.rel).trim_start_matches('/').strip_suffix(".md").unwrap_or(&doc.rel).replace('/', "-");
@@ -279,7 +279,8 @@ fn probe_mcp(config: &Path, servers: &[McpServer]) -> Result<BackendState> {
 
 /// Render a CC agent doc as opencode subagent markdown. CC agents are always
 /// subagents (invoked via the Task tool), so `mode: subagent` is injected;
-/// opencode would otherwise treat a mode-less file as a primary agent. The CC
+/// opencode's own mode-less default is `all` (usable as both primary and
+/// subagent), which would let the translated agent run standalone too. The CC
 /// `model` alias (`sonnet`/`opus`) is dropped — it has no reliable map to
 /// opencode's `provider/model` ids, so opencode's own default is used instead.
 fn render_agent_md(doc: &MarkdownDoc) -> String {
