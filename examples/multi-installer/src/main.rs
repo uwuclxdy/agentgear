@@ -27,9 +27,9 @@ fn main() -> ExitCode {
         Some("setup" | "install") => {
             let agents = parse_agents();
             let refs: Vec<&str> = agents.iter().map(String::as_str).collect();
-            report(MultiInstaller::install_into(Scope::User, Source::Embedded, &refs))
+            report_agents(MultiInstaller::install_into_report(Scope::User, Source::Embedded, &refs))
         }
-        Some("uninstall") => report(MultiInstaller::uninstall(Scope::User)),
+        Some("uninstall") => report_agents(MultiInstaller::uninstall_report(Scope::User)),
         Some("self-heal") => report(MultiInstaller::self_heal()),
         Some("doctor") => match MultiInstaller::doctor() {
             Ok(report) => {
@@ -104,6 +104,22 @@ fn report(result: agentgear::Result<agentgear::Outcome>) -> ExitCode {
         Ok(outcome) => {
             println!("{outcome:?}");
             ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Print the per-agent summary (one line per agent: converged / skipped /
+/// failed), the user-facing answer "which of my 25 agents did setup touch?"
+/// that a single merged outcome cannot give. A failed agent flips the exit code.
+fn report_agents(result: agentgear::Result<agentgear::AgentReport>) -> ExitCode {
+    match result {
+        Ok(report) => {
+            print!("{report}");
+            if report.is_healthy() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
         }
         Err(e) => {
             eprintln!("error: {e}");

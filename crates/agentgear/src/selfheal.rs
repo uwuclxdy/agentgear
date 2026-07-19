@@ -23,29 +23,33 @@
 
 use crate::agents::{AgentBackend, BackendState};
 use crate::error::Result;
-use crate::host::{Desired, Outcome, Plugin, Scope, Source};
-use crate::install::{merge, resolve};
+use crate::host::{AgentReport, AgentStatus, Desired, Outcome, Plugin, Scope, SkipReason, Source};
+use crate::install::resolve;
 use crate::{lock, restart, stamp};
 
-pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
+pub(crate) fn self_heal_report(plugin: &Plugin, source: Source) -> Result<AgentReport> {
     // The SessionStart hook targets user-scoped installs; project scope has no
     // stable session context to key on in v1.
     let scope = Scope::User;
     let _lock = lock::acquire()?;
 
-    let mut merged = Outcome::NoOp;
+    let mut report = AgentReport::new();
     for id in plugin.agents {
         let backend = resolve(id)?;
         if !backend.detect() {
-            continue; // a tool that isn't installed has nothing to heal
+            // a tool that isn't installed has nothing to heal
+            report.push(id, AgentStatus::Skipped(SkipReason::NotDetected));
+            continue;
         }
         if !backend.capabilities().scopes.contains(&scope.as_cli()) {
-            continue; // no user-scope surface (e.g. a repo-config-only IDE backend)
+            // no user-scope surface (e.g. a repo-config-only IDE backend)
+            report.push(id, AgentStatus::Skipped(SkipReason::ScopeUnsupported));
+            continue;
         }
         let outcome = heal_agent(&*backend, plugin, &source, &scope, *id == "claude")?;
-        merged = merge(merged, outcome);
+        report.push(id, AgentStatus::Converged(outcome));
     }
-    Ok(merged)
+    Ok(report)
 }
 
 /// Drive one detected backend's marker × `probe()` table. `is_claude` gates the
