@@ -31,6 +31,7 @@ $ mytool doctor
 
 - **One binary, 25 agents.** `agents = [...]` in the derive picks the targets. Claude Code and GitHub Copilot CLI get the full plugin lifecycle; the other 23 get config-merge: mcp servers, hooks, commands, agent defs translated into each tool's own config file. Only installed tools are touched.
 - **One dependency, one derive.** Add the crate, write a `#[derive(PluginHost)]` struct and a one-line `build.rs`. The binary then gets `install` / `update` / `uninstall` / `self_heal` / `doctor`.
+- **Know which agent did what.** Each lifecycle call has a `_report` twin (`install_report`, `update_report`, `uninstall_report`, `self_heal_report`) returning an `AgentReport`: one `AgentResult` per configured agent, each `Converged` (with its own `Outcome`), `Skipped` (with a `SkipReason`), or `Failed` (with the detail). A host reads it to tell the user which of its 25 agents actually installed instead of guessing from one collapsed result. The plain `install` / `update` / `uninstall` / `self_heal` calls still return a single merged `Outcome` for a host that only wants pass/fail.
 - **The CLI is the source of truth.** Every mutation goes through `claude plugin …`, so a Claude Code registry schema bump never breaks the crate. It reads state back through `list --json` for drift checks.
 - **Self-heal that respects the user.** A SessionStart hook repairs a broken install without overriding a deliberate choice: it never resurrects an uninstall, re-enables a disable, or downgrades a newer install.
 - **Tells the model when to reload.** After an out-of-band `setup update`, a `UserPromptSubmit` hook surfaces a restart-pending flag so the model tells the user to run `/reload-plugins`; the next `self_heal` clears it once the new version is loaded.
@@ -126,7 +127,7 @@ Five runnable hosts live in [`examples/`](examples/), all workspace members with
 | one per agent | off | a feature per non-CC backend (24 total; `copilot-cli` is plugin-native, the rest config-merge); `kimi` pulls `toml_edit`, `goose` and `omp` pull `serde_norway` |
 | `all-agents` | off | every backend above, enabled at once |
 
-A feature name is the agent id, and every id in `agents = [...]` needs its feature enabled:
+A feature name is the agent id, and the two lists must match: an id in `agents = [...]` whose feature is off fails the build, naming the id and the missing feature.
 
 ```toml
 [dependencies]
@@ -139,7 +140,7 @@ agentgear = { git = "https://github.com/uwuclxdy/agentgear", features = ["codex"
 
 ## Supported agents
 
-Every id in the derive's `agents = [...]` list gets its own backend. Claude Code and copilot-cli run the full plugin lifecycle described above; the other 23 read-modify-write the target tool's own config file, translating what the plugin declares into that tool's shape. A backend only writes when it detects the tool installed. It touches its own entries only, so `uninstall` removes exactly what agentgear wrote.
+Every id in the derive's `agents = [...]` list gets its own backend, gated by a cargo feature of the same name (see [Feature flags](#feature-flags)); a listed id with the feature off fails the build. Claude Code and copilot-cli run the full plugin lifecycle described above; the other 23 read-modify-write the target tool's own config file, translating what the plugin declares into that tool's shape. A backend only writes when it detects the tool installed. It touches its own entries only, so `uninstall` removes exactly what agentgear wrote.
 
 Grouped by what each surface translates:
 
@@ -173,7 +174,7 @@ whose path is registered in opencode's `instructions[]`. `vscode-copilot` writes
 | docker legs | 19 per-tool legs (GUI/IDE and no-surface backends have none): each installs the real tool, runs `setup`, checks the written config, then checks `uninstall` strips exactly what agentgear wrote and leaves a seeded foreign entry in place. All 19 pass; the CLI-testable legs assert through the tool's own `mcp list` |
 | hermetic tests | every backend has config-file tests plus unit tests, green in plain `cargo test` |
 | remote (http/sse) MCP | fidelity varies per tool: most read the rendered shape as-is, a few key the transport off other fields or reject the shape whole. Remote stays best-effort on non-CC backends until per-tool fixes land; stdio is the verified path everywhere |
-| extensibility | the `AgentBackend` trait is unsealed; an external crate can add an agent this crate does not ship |
+| extensibility | the `AgentBackend` trait is genuinely implementable out of crate: `DoctorReport::from_checks`/`from_error` build a report from outside, and `Error::Backend` gives a foreign failure a neutral shape. The derive's `agents = [...]` still can't name an external id, so it reconciles beside the built-in fan-out via `Plugin::components()` plus a direct `reconcile`/`remove` call |
 | platforms | Linux CI-gated, macOS tested. Windows is designed in but not CI-gated: its pointer flip uses a directory junction (delete-then-create, unlike the posix rename), so a crash inside that window leaves `current` absent until the next materialize repairs it |
 
 ## Alternatives
@@ -226,6 +227,7 @@ The README is a map. The reference lives in the wiki.
 | [Getting started](https://github.com/uwuclxdy/agentgear/wiki/Getting-Started) | add the crate, derive, build guard, hook wiring |
 | [Plugin tree](https://github.com/uwuclxdy/agentgear/wiki/Plugin-Tree) | tree layout, `plugin.json`, the version lock, `${CLAUDE_PLUGIN_ROOT}` portability |
 | [How it works](https://github.com/uwuclxdy/agentgear/wiki/How-It-Works) | lifecycle to CLI mapping, materialize, the self-heal state table |
+| [Types and errors](https://github.com/uwuclxdy/agentgear/wiki/Types-and-Errors) | the programmatic API: `AgentReport`/`AgentResult`/`AgentStatus`/`SkipReason`, the `Error` enum, building a `DoctorReport` from outside the crate |
 | [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) | the unsealed trait, the 23 config-merge backends, adding your own |
 | [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison) | side-by-side support matrix: config paths, scopes, MCP fidelity, hook events, CC-config interop |
 | [Testing your host](https://github.com/uwuclxdy/agentgear/wiki/Testing-Your-Host) | hermetic lifecycle tests: env redirects, forcing detection, the shared lock, what they miss |

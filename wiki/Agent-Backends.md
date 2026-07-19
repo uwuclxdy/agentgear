@@ -21,7 +21,7 @@ pub trait AgentBackend {
     fn capabilities(&self) -> Capabilities;                   // plugins / mcp / hooks / scopes
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState>;  // self_heal's input
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome>;
-    fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome>;
+    fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome>;
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport;
 }
 ```
@@ -143,8 +143,8 @@ Servers whose command or args carry `${CLAUDE_PLUGIN_ROOT}` are skipped on non-C
 
 ## Add a backend
 
-`AgentBackend` is the whole seam: seven methods, one registry arm. A host opts a plugin into the
-backend by naming it in the derive: `agents = ["claude", "mytool"]`.
+`AgentBackend` is the whole seam: seven methods, one registry arm. A host opts a plugin into an
+in-crate backend by naming its id in the derive's `agents = [...]` list.
 
 ### In this crate
 
@@ -160,24 +160,27 @@ backend by naming it in the derive: `agents = ["claude", "mytool"]`.
 
 ### From an external crate
 
-The trait is public, so a host can drive a backend this crate does not ship. It runs beside the
-built-in fan-out, not inside it:
+The trait is unsealed: every method, `probe`, `reconcile`, `remove`, `report` included,
+is implementable from outside the crate, not only the read-only ones a thin wrapper could reach.
+An external backend maps its own failures to `Error::Backend { agent, detail }` instead of
+borrowing an in-crate variant's meaning, builds `report()` from the now-`pub`
+`DoctorReport::from_checks` (or `from_error` on an upfront failure), and renders from
+`Plugin::components(&source)`, the same harness-agnostic IR the in-crate backends parse from,
+rather than walking the plugin tree by hand. Field-level detail on both is on
+[Types and errors](Types-and-Errors).
+
+The id registry `backend_for` resolves stays closed, so the derive's `agents = [...]` still cannot
+name an external backend. It never joins the locked, stamped `install`/`self_heal` fan-out; it
+runs beside that fan-out instead, driven directly:
 
 ```rust
 use agentgear::{AgentBackend, Desired, PluginHost, Scope, Source};
 
 let plugin = MyHost::descriptor();
 MyHost::install(Scope::User, Source::Embedded)?; // the built-in agents
-let components = plugin.components(&Source::Embedded)?; // the parsed plugin IR
-MyToolBackend.reconcile(
-    &plugin,
-    &Desired { source: Source::Embedded, reenable: true },
-    &Scope::User,
-)?; // yours, rendering from `components`
+let source = Source::Embedded;
+let components = plugin.components(&source)?; // the parsed plugin IR
+let desired = Desired { source: source.clone(), reenable: true };
+MyToolBackend.reconcile(&plugin, &desired, &Scope::User)?; // yours, rendering from `components`
+MyToolBackend.remove(&plugin, &Scope::User, &source)?; // symmetric with reconcile
 ```
-
-One limit today: the id registry is closed, so the derive's `agents = [...]` cannot name an
-external backend. It never joins the locked, stamped `install`/`self_heal` fan-out, so it
-reconciles beside that loop rather than inside it. Parsing is no longer a barrier:
-`Plugin::components(&source)` is public, so an external backend renders from the same IR the
-built-in backends do instead of walking the plugin tree itself.

@@ -8,6 +8,7 @@
 - [Harness comparison](Harness-Comparison)
 - [Testing your host](Testing-Your-Host)
 - [Doctor](Doctor)
+- [Types and errors](Types-and-Errors)
 
 ---
 [README](https://github.com/uwuclxdy/agentgear#readme)

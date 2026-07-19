@@ -8,11 +8,13 @@ The crate orchestrates the supported `claude plugin` CLI. The CLI is the transac
 |---|---|
 | `install(scope, source)` | acquire the shared lock. Ensure the marketplace (materialize + `marketplace add`, or `update` if present), then `plugin install <name>@<mkt>` if absent or stale, verified via `plugin list --json`. Write the stamp marker. |
 | `update(scope)` | embedded: materialize a fresh versioned dir, `marketplace update`, `plugin update`. github: `plugin update`. Write the marker. |
-| `uninstall(scope)` | `plugin uninstall -y`, then a refcount-gated `marketplace remove` (only when no other installed plugin comes from that marketplace). Clear the marker. |
+| `uninstall(scope)` | per configured agent: skip without calling `remove` when the tool is not detected, has no surface at this scope, or (a config-merge backend) the resolved source is a GitHub ref it cannot render. Otherwise `remove(plugin, scope, source)` runs (claude: `plugin uninstall -y`, then a refcount-gated `marketplace remove`, only when no other installed plugin comes from that marketplace). The marker clears for every skipped or removed agent, so an explicit uninstall never orphans one; a failed `remove` keeps its marker so the next uninstall or self_heal retries it. |
 | `self_heal()` | read the marker, one `plugin list --json`, then the state table below. |
 | `doctor()` | the six checks on the [Doctor](Doctor) page. |
 
 Every call runs through one wrapper that locates `claude`, scrubs the session env a hook would leak (`CLAUDECODE` and every `CLAUDE_CODE_*`, preserving `CLAUDE_CONFIG_DIR`), forces non-interactive stdio, and parses `--json` tolerantly.
+
+Each op above has a `_report` twin (`install_report`, `install_into_report`, `update_report`, `uninstall_report`, `self_heal_report`) returning an `AgentReport` instead of the merged `Outcome`: one `Converged`/`Skipped`/`Failed` status per configured agent, so a host can tell its user which agents converged, which were skipped and why, and which failed, rather than only the first real change. Full shape on [Types and errors](Types-and-Errors).
 
 ## Materialize (embedded and path sources)
 

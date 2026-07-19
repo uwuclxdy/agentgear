@@ -28,6 +28,7 @@ embeds plugin/ (.tar.br blob) ── materialize ──▶ ~/.local/share/<name>
 | [Harness comparison](Harness-Comparison) | side-by-side: support, config paths, remote fidelity, native CC-config interop |
 | [Testing your host](Testing-Your-Host) | hermetic runs against a temp `HOME`, reading back what each backend wrote |
 | [Doctor](Doctor) | the health report: shared checks, per-agent checks, fix hints |
+| [Types and errors](Types-and-Errors) | the programmatic API: `Outcome`, `AgentReport`, `Capabilities`, the components IR, `Error` |
 
 ## Status
 
