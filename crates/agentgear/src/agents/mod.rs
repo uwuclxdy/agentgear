@@ -173,6 +173,64 @@ pub trait AgentBackend {
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport;
 }
 
+/// Every agent id compiled into this build, in the order [`backend_for`] resolves
+/// them: one entry per enabled backend feature. A host enumerates these to know
+/// which backends it can target without hardcoding the roster — every id here
+/// resolves to `Some` through [`backend_for`], pinned by a test. Feature-gated, so a
+/// default build holds only `["claude"]` and `all-agents` holds all 25.
+pub const AGENT_IDS: &[&str] = &[
+    #[cfg(feature = "claude")]
+    "claude",
+    #[cfg(feature = "codex")]
+    "codex",
+    #[cfg(feature = "opencode")]
+    "opencode",
+    #[cfg(feature = "gemini")]
+    "gemini",
+    #[cfg(feature = "cursor")]
+    "cursor",
+    #[cfg(feature = "cline")]
+    "cline",
+    #[cfg(feature = "devin")]
+    "devin",
+    #[cfg(feature = "qwen-code")]
+    "qwen-code",
+    #[cfg(feature = "copilot-cli")]
+    "copilot-cli",
+    #[cfg(feature = "vscode-copilot")]
+    "vscode-copilot",
+    #[cfg(feature = "jetbrains-copilot")]
+    "jetbrains-copilot",
+    #[cfg(feature = "kimi")]
+    "kimi",
+    #[cfg(feature = "kiro")]
+    "kiro",
+    #[cfg(feature = "zed")]
+    "zed",
+    #[cfg(feature = "omp")]
+    "omp",
+    #[cfg(feature = "openclaw")]
+    "openclaw",
+    #[cfg(feature = "kilo")]
+    "kilo",
+    #[cfg(feature = "antigravity")]
+    "antigravity",
+    #[cfg(feature = "antigravity-cli")]
+    "antigravity-cli",
+    #[cfg(feature = "pi")]
+    "pi",
+    #[cfg(feature = "goose")]
+    "goose",
+    #[cfg(feature = "amp")]
+    "amp",
+    #[cfg(feature = "crush")]
+    "crush",
+    #[cfg(feature = "droid")]
+    "droid",
+    #[cfg(feature = "augment")]
+    "augment",
+];
+
 /// Resolve a backend by id. Each non-CC arm is feature-gated so a default build
 /// ships only Claude; `all-agents` (fixture + docker legs) lights every arm.
 /// Public so a host can enumerate its `AGENTS` (`detect`/`capabilities`) to

@@ -117,7 +117,7 @@ pub mod build;
 #[doc(hidden)]
 pub mod __feature_check;
 
-pub use agents::{AgentBackend, BackendState, backend_for};
+pub use agents::{AGENT_IDS, AgentBackend, BackendState, backend_for};
 pub use components::{HookBinding, MarkdownDoc, McpKind, McpServer, PluginComponents, SkillDir};
 pub use doctor::{CheckStatus, DoctorCheck, DoctorReport};
 pub use error::{Error, Result};
