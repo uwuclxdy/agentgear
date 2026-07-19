@@ -1,11 +1,27 @@
 [package]
 name = "agentgear"
-description = "Canonical install/uninstall/self-heal lifecycle for the Claude Code plugin a binary ships."
+description = "Install and self-heal the plugin your Rust binary ships into Claude Code and 24 other coding agents, via a derive macro."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "../../README.md"
+documentation = "https://docs.rs/agentgear"
+keywords = ["claude-code", "plugin", "derive-macro", "coding-agent", "self-heal"]
+categories = ["development-tools", "config"]
+
+# `--cfg docsrs` is inert until the crate root opts in. The form that builds on
+# the nightly docs.rs uses:
+#     #![cfg_attr(docsrs, feature(doc_cfg))]
+#     #![cfg_attr(docsrs, doc(auto_cfg))]
+# `feature(doc_auto_cfg)` was removed in 1.92 (E0557); bare `doc(auto_cfg)` needs
+# the feature gate (E0658). It badges only `derive`, the crate's one feature-gated
+# public item, so the per-backend features need listing in the crate docs by hand.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lints]
 workspace = true

@@ -3,9 +3,18 @@ name = "agentgear-derive"
 description = "Derive macro for agentgear: #[derive(PluginHost)] + #[plugin(..)]."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "../../README.md"
+documentation = "https://docs.rs/agentgear-derive"
+keywords = ["claude-code", "plugin", "derive-macro", "proc-macro"]
+categories = ["development-tools"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lib]
 proc-macro = true
