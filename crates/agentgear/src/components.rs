@@ -9,25 +9,36 @@ use serde_json::{Map, Value};
 
 use crate::error::{Error, Result};
 
+/// A plugin tree parsed into a harness-agnostic shape. Lossless: a backend that
+/// lacks a surface skips that field, the parser never drops one.
 #[derive(Debug, Clone, Default)]
 pub struct PluginComponents {
+    /// MCP servers declared by the plugin.
     pub mcp_servers: Vec<McpServer>,
+    /// Hook bindings across every event.
     pub hooks: Vec<HookBinding>,
+    /// Slash commands (`commands/*.md`).
     pub commands: Vec<MarkdownDoc>,
+    /// Subagent definitions (`agents/*.md`).
     pub agents: Vec<MarkdownDoc>,
+    /// Skill directories (`skills/<name>/`).
     pub skills: Vec<SkillDir>,
 }
 
+/// One MCP server the plugin declares.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpServer {
     /// Server key; already unique within the plugin.
     pub name: String,
+    /// Transport (stdio, http, or sse).
     pub kind: McpKind,
     /// Stdio: the executable. Recorded verbatim; a `${CLAUDE_PLUGIN_ROOT}`-bearing
     /// command is kept as-is but flagged non-portable (see [`McpServer::is_portable`]).
     /// A bare binary is the tested path.
     pub command: String,
+    /// Stdio: the executable's arguments.
     pub args: Vec<String>,
+    /// Environment variables passed to the server.
     pub env: BTreeMap<String, String>,
 }
 
@@ -42,17 +53,29 @@ impl McpServer {
     }
 }
 
+/// An MCP server's transport.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpKind {
+    /// Launched as a subprocess speaking over stdio.
     Stdio,
-    Http { url: String },
-    Sse { url: String },
+    /// Streamable-HTTP endpoint.
+    Http {
+        /// The server URL.
+        url: String,
+    },
+    /// Server-sent-events endpoint.
+    Sse {
+        /// The server URL.
+        url: String,
+    },
 }
 
+/// One hook binding: a command wired to an event, optionally matcher-gated.
 #[derive(Debug, Clone)]
 pub struct HookBinding {
     /// `"SessionStart"`, `"UserPromptSubmit"`, ...
     pub event: String,
+    /// The event matcher, when the event supports one.
     pub matcher: Option<String>,
     /// Shell command string.
     pub command: String,
@@ -68,20 +91,25 @@ impl HookBinding {
     }
 }
 
+/// A markdown component (a command or agent) with its frontmatter split out.
 #[derive(Debug, Clone)]
 pub struct MarkdownDoc {
     /// File stem.
     pub name: String,
     /// Path within the tree (namespacing on write).
     pub rel: String,
+    /// Parsed leading `---` frontmatter block.
     pub frontmatter: BTreeMap<String, Value>,
+    /// The markdown after the frontmatter.
     pub body: String,
     /// Verbatim file bytes (copy-through when no transform applies).
     pub raw: Vec<u8>,
 }
 
+/// A skill directory and its files, ready to copy into a harness's skills dir.
 #[derive(Debug, Clone)]
 pub struct SkillDir {
+    /// Skill name (the directory name under `skills/`).
     pub name: String,
     /// `(path-within-the-skill-dir, bytes)`.
     pub files: Vec<(String, Vec<u8>)>,

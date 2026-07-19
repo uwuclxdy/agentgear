@@ -18,6 +18,53 @@ use syn::{DeriveInput, Expr, ExprLit, Lit, MetaNameValue, Token, parse_macro_inp
 mod known_agents;
 use known_agents::{KNOWN_AGENTS, feature_const_ident};
 
+/// Derive `PluginHost` for a host unit struct, wiring the plugin's
+/// install/update/self-heal lifecycle from one `#[plugin(..)]` attribute.
+///
+/// At expansion the macro reads the shipped `plugin.json` (it must exist, be valid
+/// JSON, and its `name` must equal the `name` key), bakes the plugin tree in via
+/// `include_bytes!` of the `build.rs` blob, emits the `impl PluginHost` (the consts,
+/// `embedded_blob`, and the optional `instructions` override; the lifecycle methods
+/// are trait defaults), and plants const-eval guards: one fires if the host forgot
+/// its `build.rs`, one more per listed agent whose cargo feature is off.
+///
+/// The host also writes the one-line build script the guard checks for:
+///
+/// ```ignore
+/// fn main() { agentgear::build::assert_plugin_version(); }
+/// ```
+///
+/// # `#[plugin(..)]` keys
+///
+/// | key | required | default | meaning |
+/// |---|---|---|---|
+/// | `name` | yes | n/a | plugin id; must equal `plugin.json`'s `name` |
+/// | `marketplace` | no | value of `name` | marketplace id in `<name>@<marketplace>` |
+/// | `version` | no | `env!("CARGO_PKG_VERSION")` | spliced verbatim (a str literal or an `env!(..)` call), never evaluated at macro time |
+/// | `tree` | no | `"$CARGO_MANIFEST_DIR/plugin"` | plugin tree dir; `$CARGO_MANIFEST_DIR` is substituted |
+/// | `default_source` | no | `"embedded"` | `"embedded"` or `"github"`; sets `PluginHost::DEFAULT_SOURCE` |
+/// | `github_repo` | with `default_source = "github"` | n/a | `"owner/repo"`; the tracked ref is `v<version>` |
+/// | `agents` | no | `["claude"]` | backend ids to fan out to; each must be a known id with its cargo feature on |
+/// | `embed` | no | `true` | `false` bakes an empty blob for a github/path-source host |
+/// | `instructions_fn` | no | none | path to a `fn() -> Option<String>` feeding `PluginHost::instructions` |
+///
+/// # Compile-time errors
+///
+/// - an unknown `agents` id, or an empty `agents` list;
+/// - a listed agent whose cargo feature is off (the message names the `features = [..]` fix);
+/// - `default_source = "github"` without `github_repo`;
+/// - a `plugin.json` that is missing, is invalid JSON, or whose `name` disagrees with the attr;
+/// - a missing `build.rs` (the `AGENTGEAR_GUARD` guard).
+///
+/// # Example
+///
+/// ```ignore
+/// use agentgear::PluginHost;
+///
+/// #[derive(PluginHost)]
+/// #[plugin(name = "claudix", agents = ["claude", "codex", "gemini"])]
+/// struct ClaudixHost;
+/// ```
 #[proc_macro_derive(PluginHost, attributes(plugin))]
 pub fn derive_plugin_host(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

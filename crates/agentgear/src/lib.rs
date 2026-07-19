@@ -11,6 +11,10 @@
 //! atomic read-modify-write merges that leave the user's entries untouched, and
 //! only runs when the tool is detected on the machine.
 //!
+//! The derive-driven example stays `ignore`: the macro reads a `plugin.json` tree
+//! and the emitted guard needs `AGENTGEAR_GUARD`, neither of which a doctest has. A
+//! compiled example of the derive-free value types follows below.
+//!
 //! ```ignore
 //! use agentgear::{PluginHost, Scope, Source};
 //!
@@ -23,6 +27,39 @@
 //! ClaudixHost::self_heal()?; // SessionStart entrypoint
 //! ```
 //!
+//! The value types need no derive, so this block is a real, compiled doctest. It
+//! builds a [`Source`]/[`Scope`], then reads an [`Outcome`] and an [`AgentReport`]'s
+//! per-agent results.
+//!
+//! ```
+//! use agentgear::{AgentReport, AgentResult, AgentStatus, Outcome, Scope, Source};
+//!
+//! let _source = Source::Path("./plugin".into());
+//! let _scope = Scope::Project { path: ".".into() };
+//!
+//! let outcome = Outcome::Updated { from: Some("0.1.0".into()), to: "0.2.0".into() };
+//! let line = match outcome {
+//!     Outcome::Installed => "installed".to_string(),
+//!     Outcome::Updated { from, to } => format!("updated {from:?} -> {to}"),
+//!     other => other.to_string(),
+//! };
+//! assert_eq!(line, "updated Some(\"0.1.0\") -> 0.2.0");
+//!
+//! let result = AgentResult { agent: "claude", status: AgentStatus::Converged(Outcome::Installed) };
+//! assert!(matches!(result.status, AgentStatus::Converged(_)));
+//!
+//! // AgentReport is #[non_exhaustive]; only a lifecycle call builds one, so this
+//! // reader is compile-checked against the live signatures without an instance.
+//! fn summarize(report: &AgentReport) -> bool {
+//!     for entry in &report.results {
+//!         let _ = (entry.agent, &entry.status);
+//!     }
+//!     let _merged: Outcome = report.merged();
+//!     report.is_healthy()
+//! }
+//! let _ = summarize as fn(&AgentReport) -> bool;
+//! ```
+//!
 //! The host also authors a one-line `build.rs`:
 //! `fn main() { agentgear::build::assert_plugin_version(); }`.
 //!
@@ -32,19 +69,28 @@
 //!
 //! # Feature flags
 //!
-//! - `derive`, `claude`, `embed` — the defaults: the [`PluginHost`] derive macro,
-//!   the Claude Code backend, and baking the plugin tree into the binary as a
-//!   compressed blob so `setup` works offline.
-//! - one feature per non-Claude backend, named by its id (`codex`, `opencode`,
-//!   `gemini`, `cursor`, `goose`, `crush`, …) — see `[features]` in Cargo.toml for
-//!   the full list; `all-agents` turns on every one of them.
-//! - disabling `embed` (with `embed = false` on the derive) ships a zero-embed
-//!   binary for a host that installs from a GitHub or path [`Source`] instead.
+//! `default = ["derive", "claude", "embed"]`: the [`PluginHost`] derive macro, the
+//! Claude Code backend, and baking the plugin tree into the binary as a compressed
+//! blob so `setup` works offline. Turning `embed` off (paired with `embed = false`
+//! on the derive) ships a zero-embed binary for a host that installs from a GitHub
+//! or path [`Source`] instead.
+//!
+//! Every other coding agent is its own feature, named by its backend id;
+//! `all-agents` enables all 24 at once. Only four pull an extra dependency:
+//!
+//! | feature (= backend id) | extra dependency |
+//! |---|---|
+//! | `codex`, `kimi` | `toml_edit` (toml config) |
+//! | `omp`, `goose` | `serde_norway` (yaml config) |
+//! | `opencode`, `gemini`, `cursor`, `cline`, `devin`, `qwen-code`, `copilot-cli`, `vscode-copilot`, `jetbrains-copilot`, `kiro`, `zed`, `openclaw`, `kilo`, `antigravity`, `antigravity-cli`, `pi`, `amp`, `crush`, `droid`, `augment` | none |
 //!
 //! Backends are selected per host binary with the derive's `agents = [...]` list;
-//! [`backend_for`] resolves an id to its [`AgentBackend`] when a host wants its
-//! own picker UI. Design rationale lives in `docs/design.md`.
+//! [`backend_for`] resolves an id to its [`AgentBackend`] when a host wants its own
+//! picker UI. Design rationale lives in `docs/design.md`.
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(docsrs, doc(auto_cfg))]
+#![warn(missing_docs)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod agents;

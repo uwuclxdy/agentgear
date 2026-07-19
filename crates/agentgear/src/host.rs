@@ -12,8 +12,14 @@ use crate::error::Result;
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum Scope {
+    /// User-wide install (CC's `--scope user`).
     User,
-    Project { path: PathBuf },
+    /// Install into one project's settings; the CLI keys off its working directory,
+    /// so calls run with cwd set to `path`.
+    Project {
+        /// The project directory.
+        path: PathBuf,
+    },
 }
 
 impl Scope {
@@ -62,8 +68,13 @@ pub enum Source {
     /// The compile-time blob baked into the binary (needs the `embed` feature +
     /// derive attr). Decompressed and materialized locally.
     Embedded,
+    /// A GitHub-hosted marketplace the `claude` CLI fetches directly, letting users
+    /// track a ref for plugin updates without a new binary release. Non-plugin-native
+    /// backends have no local tree here, so they skip (design §API).
     GitHub {
+        /// `"owner/repo"`.
         repo: &'static str,
+        /// The tracked git ref (the derive uses `v<version>`).
         ref_: &'static str,
     },
     /// An on-disk plugin tree (a dir holding `.claude-plugin/plugin.json`),
@@ -76,6 +87,7 @@ pub enum Source {
 /// backend converges the same desired state across scopes.
 #[derive(Debug, Clone)]
 pub struct Desired {
+    /// Where the plugin tree comes from for this reconcile.
     pub source: Source,
     /// `true` for an explicit `install`/`update` (the design says install flips
     /// enable state), `false` for self_heal/adopt (never re-enable a deliberate
@@ -89,15 +101,20 @@ pub struct Desired {
 pub enum Outcome {
     /// Already converged; nothing changed.
     NoOp,
+    /// A fresh install landed.
     Installed,
+    /// The install moved to a new version.
     Updated {
+        /// The prior version, when it could be read.
         from: Option<String>,
+        /// The version now installed.
         to: String,
     },
     /// A broken/partial state was reconciled back to healthy.
     Repaired,
     /// self_heal found a healthy install with no marker and wrote one.
     Adopted,
+    /// The install was removed.
     Removed,
     /// self_heal found a cleanly-uninstalled plugin and cleared the stale marker.
     Cleared,
@@ -129,6 +146,7 @@ impl std::fmt::Display for Outcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AgentReport {
+    /// One entry per configured agent that was asked to run, in `plugin.agents` order.
     pub results: Vec<AgentResult>,
 }
 
@@ -137,6 +155,7 @@ pub struct AgentReport {
 pub struct AgentResult {
     /// The backend id (`"claude"`, `"codex"`, …).
     pub agent: &'static str,
+    /// What that backend did.
     pub status: AgentStatus,
 }
 
@@ -255,14 +274,20 @@ pub struct Capabilities {
     /// except `instructions`, which is a non-CC context-file surface (a CC host
     /// delivers its guidance through the MCP `instructions` channel, not a file).
     pub plugins: bool,
+    /// Manages MCP servers.
     pub mcp: bool,
+    /// Manages hook bindings.
     pub hooks: bool,
+    /// Manages slash commands.
     pub commands: bool,
+    /// Manages subagent definitions.
     pub agents: bool,
+    /// Manages skill directories.
     pub skills: bool,
     /// Host-authored always-loaded guidance written to the harness's native
     /// context channel (a dedicated instructions file + any registration).
     pub instructions: bool,
+    /// The scope ids this backend supports (e.g. `["user", "project"]`).
     pub scopes: &'static [&'static str],
 }
 
@@ -270,9 +295,13 @@ pub struct Capabilities {
 /// derive-emitted metadata; passed to backends.
 #[derive(Clone)]
 pub struct Plugin {
+    /// Plugin name (`plugin.json`'s `name`).
     pub name: &'static str,
+    /// Marketplace id in `<name>@<marketplace>`.
     pub marketplace: &'static str,
+    /// The plugin version.
     pub version: &'static str,
+    /// The configured backend ids this plugin fans out to.
     pub agents: &'static [&'static str],
     /// Host-authored always-loaded guidance ([`PluginHost::instructions`]); each
     /// non-CC backend writes it to its native context channel. `None` writes nothing.
@@ -317,10 +346,15 @@ impl Plugin {
 /// Implemented by the `#[derive(PluginHost)]` macro. The consts carry the
 /// compile-time metadata; the provided methods are the lifecycle the host calls.
 pub trait PluginHost {
+    /// Plugin name; must equal `plugin.json`'s `name` (the derive checks it).
     const NAME: &'static str;
+    /// Marketplace id in `<name>@<marketplace>` (defaults to [`NAME`](Self::NAME)).
     const MARKETPLACE: &'static str;
+    /// Plugin version; the host's `build.rs` pins it to `plugin.json`'s `version`.
     const VERSION: &'static str;
+    /// The source a no-argument lifecycle call (`update`/`uninstall`/`self_heal`/`doctor`) uses.
     const DEFAULT_SOURCE: Source;
+    /// The backend ids this host fans out to (the derive's `agents` list).
     const AGENTS: &'static [&'static str];
 
     /// The plugin tree baked into the host crate as a compressed `.tar.br` blob
@@ -336,6 +370,8 @@ pub trait PluginHost {
         None
     }
 
+    /// The resolved [`Plugin`] descriptor built from this host's consts, passed to
+    /// the backends. Rarely overridden.
     fn descriptor() -> Plugin {
         Plugin {
             name: Self::NAME,
@@ -425,6 +461,8 @@ pub trait PluginHost {
         crate::restart::pending(&plugin).ok().flatten().map(|()| crate::restart::message(Self::NAME, Self::VERSION))
     }
 
+    /// A structured health report: the host binary on `PATH`, then each configured
+    /// agent's own checks. Reads state, never mutates.
     fn doctor() -> Result<DoctorReport> {
         crate::doctor::doctor(&Self::descriptor(), &Self::DEFAULT_SOURCE)
     }

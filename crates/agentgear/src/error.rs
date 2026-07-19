@@ -4,37 +4,69 @@
 
 use std::path::PathBuf;
 
+/// The crate's result alias over [`Error`].
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Everything a lifecycle call can fail with. Environment problems the user can fix
+/// (missing or old `claude`/`copilot`) are distinct variants from genuine bugs
+/// (io/json), so a caller renders a fix-hint rather than a stack trace.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// The `claude` CLI is not on `PATH`.
     #[error("`claude` CLI not found on PATH; install it with `npm install -g @anthropic-ai/claude-code`")]
     ClaudeNotFound,
 
+    /// The located `claude` is older than the supported floor.
     #[error("`claude` version {found} is below the required floor {floor}; upgrade with `npm install -g @anthropic-ai/claude-code`")]
-    ClaudeTooOld { found: String, floor: &'static str },
+    ClaudeTooOld {
+        /// The version `claude --version` reported.
+        found: String,
+        /// The minimum version the crate requires.
+        floor: &'static str,
+    },
 
+    /// The `copilot` CLI is not on `PATH`.
     #[error("`copilot` CLI not found on PATH; install it with `npm install -g @github/copilot`")]
     CopilotNotFound,
 
+    /// The located `copilot` predates plugin-management support.
     #[error("copilot >= 1.0.71 required for plugin management (found {found}); run `copilot update`")]
-    CopilotTooOld { found: String },
+    CopilotTooOld {
+        /// The version `copilot --version` reported.
+        found: String,
+    },
 
+    /// A CLI call exited non-zero.
     #[error("`{bin} {args}` failed with exit {code}:\n{stderr}")]
     #[non_exhaustive]
-    Cli { bin: &'static str, args: String, code: i32, stderr: String },
+    Cli {
+        /// The invoked binary.
+        bin: &'static str,
+        /// Its argument line.
+        args: String,
+        /// Its exit code.
+        code: i32,
+        /// Captured stderr.
+        stderr: String,
+    },
 
+    /// A JSON document did not parse.
     #[error("could not parse {what} as JSON: {source}")]
     Json {
+        /// What was being parsed (for the message).
         what: String,
+        /// The underlying serde error.
         #[source]
         source: serde_json::Error,
     },
 
+    /// A filesystem operation failed.
     #[error("{context}: {source}")]
     Io {
+        /// The operation being attempted.
         context: String,
+        /// The underlying io error.
         #[source]
         source: std::io::Error,
     },
@@ -47,7 +79,12 @@ pub enum Error {
     /// A harness config file exists but does not parse; a read-modify-write
     /// refuses to clobber it rather than risk destroying the user's config.
     #[error("could not parse config {path}: {detail}")]
-    Config { path: String, detail: String },
+    Config {
+        /// The config file that failed to parse.
+        path: String,
+        /// The parse failure, rendered for the user.
+        detail: String,
+    },
 
     /// An out-of-crate [`AgentBackend`](crate::AgentBackend) failure. The other
     /// variants all carry in-crate semantics (CLI orchestration, tree parsing,
@@ -67,9 +104,12 @@ pub enum Error {
     #[error("post-op verification failed: {0}")]
     Verify(String),
 
+    /// The shared cross-process lock could not be acquired.
     #[error("failed to acquire the shared lock at {path}: {source}")]
     Lock {
+        /// The lock file.
         path: PathBuf,
+        /// The underlying io error.
         #[source]
         source: std::io::Error,
     },

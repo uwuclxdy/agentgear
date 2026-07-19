@@ -132,13 +132,23 @@ pub(crate) mod ccregistry;
 /// What `probe` classifies a plugin's per-agent state as. Drives self_heal's
 /// marker × state table (never resurrect, never re-enable, repair drift).
 pub enum BackendState {
+    /// The plugin is not present for this agent.
     Absent,
+    /// Present and converged to the desired state.
     Healthy,
+    /// Present but deliberately disabled; self_heal leaves it alone.
     Disabled,
+    /// Present but drifted from what `reconcile` would write.
     NeedsRepair,
 }
 
+/// One coding agent's translation of the plugin. `reconcile` is the single shape
+/// install/update/self_heal reduce to; each backend decides what "converged" means
+/// for its harness. The trait is unsealed, so an out-of-crate crate can add a
+/// backend and drive it via [`Plugin::components`](crate::Plugin::components) plus a
+/// direct `reconcile`/`remove` (the derive's `agents` list only names built-in ids).
 pub trait AgentBackend {
+    /// The backend's stable id, matching its cargo feature name.
     fn id(&self) -> &'static str;
     /// Is this agent installed on the host?
     fn detect(&self) -> bool;
@@ -159,6 +169,7 @@ pub trait AgentBackend {
     /// drive their own CLI for removal and ignore it. Does not touch the stamp
     /// marker; the caller owns that.
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome>;
+    /// This agent's slice of `doctor`: one check per surface it manages.
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport;
 }
 

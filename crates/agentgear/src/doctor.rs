@@ -16,26 +16,41 @@ use crate::error::Result;
 use crate::host::{Plugin, Scope, Source, data_root};
 use crate::materialize::{dir_hash, tree_hash};
 
+/// An ordered health report: one [`DoctorCheck`] per thing inspected, rendered by
+/// its [`Display`](std::fmt::Display) into a `[ ok ]`/`[warn]`/`[fail]` list.
 #[derive(Debug, Clone)]
 pub struct DoctorReport {
     checks: Vec<DoctorCheck>,
 }
 
+/// One inspected thing and how it fared.
 #[derive(Debug, Clone)]
 pub struct DoctorCheck {
+    /// The check's label (e.g. `"claude version"`).
     pub name: &'static str,
+    /// Its result.
     pub status: CheckStatus,
 }
 
+/// A single check's verdict. Only [`CheckStatus::Fail`] makes a report unhealthy.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum CheckStatus {
+    /// Passed; the string is the detail shown after `[ ok ]`.
     Ok(String),
+    /// A tolerated concern (the report stays healthy); the string is the detail.
     Warn(String),
-    Fail { problem: String, fix: String },
+    /// Failed; carries both what broke and how to fix it.
+    Fail {
+        /// What went wrong.
+        problem: String,
+        /// The rendered fix-hint.
+        fix: String,
+    },
 }
 
 impl DoctorReport {
+    /// The checks in report order.
     pub fn checks(&self) -> &[DoctorCheck] {
         &self.checks
     }

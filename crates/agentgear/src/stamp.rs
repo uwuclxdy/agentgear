@@ -118,13 +118,15 @@ pub(crate) fn clear(plugin: &Plugin, scope: &Scope, agent: &str) -> Result<()> {
 /// `docs/design.md` calls out (installing into `[claude, codex]` must never
 /// confuse one backend's marker for another's).
 pub(crate) fn source_from_marker(marker: Option<&Marker>, default: Source) -> Source {
-    // Only "path" rehydrates; ceiling: an explicit `install(Source::Embedded)` on
-    // a `default_source = "github"` host stamps "embedded" but resolves back to
-    // the github default here, so update/self_heal/uninstall treat that agent as
-    // github-sourced — and the github gate then skips a config backend on every
-    // pass until a `setup` re-runs. Upgrade path: rehydrate `source_mode ==
-    // "embedded"` to `Source::Embedded` once it is decided whether an explicit
-    // embedded install should pin embedded over the host's compile-time default.
+    // Only "path" rehydrates. Ceiling: an explicit `install(Source::Embedded)` on
+    // a `default_source = "github"` host stamps "embedded" but resolves back to the
+    // github default here, so update/self_heal/uninstall treat that agent as
+    // github-sourced. The github gate then skips a config backend on every heal
+    // pass, and on uninstall the same skip still clears the marker while the
+    // config writes stay on disk, orphaning them with nothing left to reclaim them.
+    // Upgrade path: rehydrate `source_mode == "embedded"` to `Source::Embedded`
+    // once it is decided whether an explicit embedded install should pin embedded
+    // over the host's compile-time default.
     match marker {
         Some(m) if m.source_mode == "path" => m.source_path.clone().map(|p| Source::Path(PathBuf::from(p))).unwrap_or(default),
         _ => default,
