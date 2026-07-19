@@ -45,19 +45,20 @@ impl DoctorReport {
         !self.checks.iter().any(|c| matches!(c.status, CheckStatus::Fail { .. }))
     }
 
-    /// Build a report from a check list (a non-CC backend's `report` assembles its
-    /// own checks). `allow(dead_code)`: only the feature-gated non-CC backends call
-    /// it, so a default (claude-only) build sees it unused.
-    #[allow(dead_code)]
-    pub(crate) fn from_checks(checks: Vec<DoctorCheck>) -> Self {
+    /// Build a report from a check list. This is how a backend's
+    /// [`report`](crate::AgentBackend::report) assembles its result — the in-crate
+    /// backends and an out-of-crate [`AgentBackend`](crate::AgentBackend) impl
+    /// both go through it (`checks` itself stays private so a report is always
+    /// built whole, never mutated after the fact).
+    pub fn from_checks(checks: Vec<DoctorCheck>) -> Self {
         Self { checks }
     }
 
-    /// Collapse a fallible backend `report` into a single failed check. `allow`:
-    /// the claude report is infallible; the non-CC backends wrap their config
-    /// reads through this when their workflow fills them.
-    #[allow(dead_code)]
-    pub(crate) fn from_error(err: crate::error::Error) -> Self {
+    /// Collapse an error into a single-check failed report, for a backend whose
+    /// `report` hit a failure before it could produce individual checks (e.g. an
+    /// unreadable config). An external backend maps its own failures through
+    /// [`Error::Backend`](crate::Error::Backend) here.
+    pub fn from_error(err: crate::error::Error) -> Self {
         Self {
             checks: vec![DoctorCheck {
                 name: "doctor",

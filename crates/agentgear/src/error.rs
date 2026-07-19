@@ -49,6 +49,18 @@ pub enum Error {
     #[error("could not parse config {path}: {detail}")]
     Config { path: String, detail: String },
 
+    /// An out-of-crate [`AgentBackend`](crate::AgentBackend) failure. The other
+    /// variants all carry in-crate semantics (CLI orchestration, tree parsing,
+    /// config merging), so an external backend maps its own failures into this
+    /// neutral shape instead of borrowing one of those meanings.
+    #[error("{agent}: {detail}")]
+    Backend {
+        /// The backend's [`id`](crate::AgentBackend::id).
+        agent: String,
+        /// What went wrong, rendered for the user.
+        detail: String,
+    },
+
     /// A mutating CLI call reported success but `list --json` does not reflect the
     /// expected end state. The CLI's own state is the reconcile target, so this is
     /// a genuine inconsistency, not a retryable bad-input error.
