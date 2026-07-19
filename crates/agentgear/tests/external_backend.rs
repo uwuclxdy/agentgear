@@ -46,7 +46,7 @@ impl AgentBackend for FakeAgent {
         Err(Error::Backend { agent: "fake".into(), detail: "config write refused".into() })
     }
 
-    fn remove(&self, _plugin: &Plugin, _scope: &Scope) -> Result<Outcome> {
+    fn remove(&self, _plugin: &Plugin, _scope: &Scope, _source: &Source) -> Result<Outcome> {
         Ok(Outcome::Removed)
     }
 

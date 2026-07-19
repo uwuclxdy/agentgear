@@ -103,9 +103,9 @@ impl AgentBackend for VscodeCopilotBackend {
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
-    fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
+    fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
         let root = project_root(scope)?;
-        let comp = plugin.components(&Source::Embedded)?;
+        let comp = plugin.components(source)?;
 
         let mut changed = false;
         // Key removal off the same portable set reconcile writes: an unfiltered name

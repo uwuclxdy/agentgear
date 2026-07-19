@@ -151,3 +151,26 @@ fn github_source_skips_config_backends_visibly() {
     assert!(out.lines().any(|l| l.starts_with("[warn] gemini: github source")), "doctor must warn about the github-source skip:\n{out}");
     assert!(!out.contains("[fail]"), "no check may fail on a healthy github-source host:\n{out}");
 }
+
+/// Uninstall on a zero-embed github host with a DETECTED config backend that was
+/// never installed: the backend has no local tree to render a strip-set from, so
+/// it must skip visibly — never `failed: invalid plugin tree: embedded blob is
+/// empty` (which told the user to stop using the source they are already on) —
+/// and the legacy merged `uninstall()` must stay `Ok`.
+#[test]
+fn zero_embed_github_uninstall_skips_config_backends() {
+    let env = Env::new("gh-uninstall");
+
+    let (ok, out) = env.run(GITHUB_BIN, &["uninstall-report"]);
+    assert!(ok, "a source skip is not a failure: {out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(
+        lines.contains(&"gemini: skipped (cannot serve a github source; use an embedded or path source)"),
+        "gemini must skip visibly:\n{out}"
+    );
+    assert!(lines.contains(&"claude: skipped (not installed on this machine)"), "claude line missing:\n{out}");
+
+    let (ok, out) = env.run(GITHUB_BIN, &["uninstall"]);
+    assert!(ok, "legacy uninstall must collapse a source skip to Ok, got: {out}");
+    assert_eq!(out, "NoOp", "nothing was installed, so nothing changed: {out}");
+}

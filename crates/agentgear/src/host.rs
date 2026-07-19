@@ -357,8 +357,9 @@ pub trait PluginHost {
 
     /// [`PluginHost::install`] with per-agent results: which agents converged
     /// (and how), which were skipped (and why), which failed. `Err` only on a
-    /// fatal precondition (the shared lock); per-agent failures live in the
-    /// report so one bad agent never hides the rest.
+    /// fatal precondition — the shared lock, or no usable data root (`HOME` and
+    /// `XDG_DATA_HOME` both unset, so no agent could stamp a marker); per-agent
+    /// failures live in the report so one bad agent never hides the rest.
     fn install_report(scope: Scope, source: Source) -> Result<AgentReport> {
         crate::install::install_report(&Self::descriptor(), scope, source, &[])
     }
@@ -382,7 +383,8 @@ pub trait PluginHost {
         Self::update_report(scope)?.into_merged()
     }
 
-    /// [`PluginHost::update`] with per-agent results.
+    /// [`PluginHost::update`] with per-agent results. Same `Err` contract as
+    /// [`PluginHost::install_report`]: only the lock or a missing data root.
     fn update_report(scope: Scope) -> Result<AgentReport> {
         crate::install::update_report(&Self::descriptor(), scope, Self::DEFAULT_SOURCE)
     }
@@ -393,9 +395,10 @@ pub trait PluginHost {
         Self::uninstall_report(scope)?.into_merged()
     }
 
-    /// [`PluginHost::uninstall`] with per-agent results.
+    /// [`PluginHost::uninstall`] with per-agent results. Same `Err` contract as
+    /// [`PluginHost::install_report`]: only the lock or a missing data root.
     fn uninstall_report(scope: Scope) -> Result<AgentReport> {
-        crate::install::uninstall_report(&Self::descriptor(), scope)
+        crate::install::uninstall_report(&Self::descriptor(), scope, Self::DEFAULT_SOURCE)
     }
 
     /// SessionStart entrypoint. Repairs broken installs, never resurrects a
@@ -405,7 +408,8 @@ pub trait PluginHost {
         Self::self_heal_report()?.into_merged()
     }
 
-    /// [`PluginHost::self_heal`] with per-agent results.
+    /// [`PluginHost::self_heal`] with per-agent results. Same `Err` contract as
+    /// [`PluginHost::install_report`]: only the lock or a missing data root.
     fn self_heal_report() -> Result<AgentReport> {
         crate::selfheal::self_heal_report(&Self::descriptor(), Self::DEFAULT_SOURCE)
     }

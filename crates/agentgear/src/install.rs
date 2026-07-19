@@ -40,12 +40,12 @@ pub(crate) fn update_report(plugin: &Plugin, scope: Scope, source: Source) -> Re
     Ok(report)
 }
 
-pub(crate) fn uninstall_report(plugin: &Plugin, scope: Scope) -> Result<AgentReport> {
+pub(crate) fn uninstall_report(plugin: &Plugin, scope: Scope, default_source: Source) -> Result<AgentReport> {
     let _lock = lock::acquire()?;
     data_dir_precondition(plugin)?;
     let mut report = AgentReport::new();
     for id in plugin.agents {
-        report.push(id, uninstall_agent(plugin, &scope, id));
+        report.push(id, uninstall_agent(plugin, &scope, id, &default_source));
     }
     Ok(report)
 }
@@ -54,18 +54,24 @@ pub(crate) fn uninstall_report(plugin: &Plugin, scope: Scope) -> Result<AgentRep
 /// absent tool has nothing of ours to remove, but the marker is agentgear's own
 /// state — cleared even for a skipped agent, so an explicit uninstall never
 /// orphans one. A FAILED remove keeps its marker (the install is still live;
-/// the next uninstall or self_heal picks it back up).
-fn uninstall_agent(plugin: &Plugin, scope: &Scope, id: &'static str) -> AgentStatus {
+/// the next uninstall or self_heal picks it back up). The strip-set renders
+/// from this agent's OWN resolved source (marker-rehydrated `--path`, else
+/// `default_source`), mirroring `reconcile_agent` — including the github gate: a
+/// config backend under a github source was never installed, so it skips.
+fn uninstall_agent(plugin: &Plugin, scope: &Scope, id: &'static str, default_source: &Source) -> AgentStatus {
     let backend = match resolve(id) {
         Ok(backend) => backend,
         Err(e) => return AgentStatus::Failed(e.to_string()),
     };
+    let source = stamp::resolve_source(plugin, scope, id, default_source.clone());
     let status = if !backend.detect() {
         AgentStatus::Skipped(SkipReason::NotDetected)
     } else if !backend.capabilities().scopes.contains(&scope.as_cli()) {
         AgentStatus::Skipped(SkipReason::ScopeUnsupported)
+    } else if matches!(source, Source::GitHub { .. }) && !backend.capabilities().plugins {
+        AgentStatus::Skipped(SkipReason::SourceUnsupported)
     } else {
-        match backend.remove(plugin, scope) {
+        match backend.remove(plugin, scope, &source) {
             Ok(outcome) => AgentStatus::Converged(outcome),
             Err(e) => return AgentStatus::Failed(e.to_string()),
         }

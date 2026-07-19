@@ -86,8 +86,8 @@ impl AgentBackend for AmpBackend {
         reconcile_mcp(&settings_path(scope)?, &comp.mcp_servers)
     }
 
-    fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
-        let comp = plugin.components(&Source::Embedded)?;
+    fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
+        let comp = plugin.components(source)?;
         remove_mcp(&settings_path(scope)?, &comp.mcp_servers)
     }
 

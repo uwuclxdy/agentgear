@@ -77,7 +77,7 @@ impl AgentBackend for CopilotCliBackend {
         reconcile(plugin, desired)
     }
 
-    fn remove(&self, plugin: &Plugin, _scope: &Scope) -> Result<Outcome> {
+    fn remove(&self, plugin: &Plugin, _scope: &Scope, _source: &Source) -> Result<Outcome> {
         remove(plugin)
     }
 

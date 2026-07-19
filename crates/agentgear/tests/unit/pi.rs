@@ -62,7 +62,7 @@ fn probe_is_always_healthy() {
 fn reconcile_and_remove_are_noops() {
     let desired = Desired { source: Source::Embedded, reenable: true };
     assert_eq!(PiBackend.reconcile(&plugin(), &desired, &Scope::User).unwrap(), Outcome::NoOp);
-    assert_eq!(PiBackend.remove(&plugin(), &Scope::User).unwrap(), Outcome::NoOp);
+    assert_eq!(PiBackend.remove(&plugin(), &Scope::User, &Source::Embedded).unwrap(), Outcome::NoOp);
 }
 
 #[test]

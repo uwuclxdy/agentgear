@@ -105,8 +105,8 @@ impl AgentBackend for GooseBackend {
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
-    fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
-        let comp = plugin.components(&Source::Embedded)?;
+    fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
+        let comp = plugin.components(source)?;
 
         let mut changed = false;
         changed |= remove_mcp(&config_yaml()?, &writable_names(&comp.mcp_servers))?;

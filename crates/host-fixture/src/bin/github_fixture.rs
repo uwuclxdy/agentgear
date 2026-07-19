@@ -33,6 +33,28 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        // Legacy merged path: a source-skipped backend must collapse to `Ok`,
+        // never an error telling the user to use the source they are already on.
+        Some("uninstall") => match GithubFixture::uninstall(Scope::User) {
+            Ok(outcome) => {
+                println!("{outcome:?}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("uninstall-report") => match GithubFixture::uninstall_report(Scope::User) {
+            Ok(report) => {
+                print!("{report}");
+                if report.is_healthy() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Some("doctor") => match GithubFixture::doctor() {
             Ok(report) => {
                 print!("{report}");
@@ -44,7 +66,7 @@ fn main() -> ExitCode {
             }
         },
         other => {
-            eprintln!("usage: github_fixture <setup-report|doctor> (got {other:?})");
+            eprintln!("usage: github_fixture <setup-report|uninstall|uninstall-report|doctor> (got {other:?})");
             ExitCode::from(2)
         }
     }
