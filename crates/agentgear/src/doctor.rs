@@ -112,6 +112,19 @@ pub(crate) fn doctor(plugin: &Plugin, source: &Source) -> Result<DoctorReport> {
             // `doctor` (like self_heal) has no scope of its own, so it keys on the
             // same user-scope marker self_heal writes.
             let resolved = crate::stamp::resolve_source(plugin, &Scope::User, id, source.clone());
+            // A github source has no local tree for a config-merge backend, so
+            // install/update/self_heal all skip it (visible in their reports);
+            // doctor mirrors that as a Warn instead of running per-surface checks
+            // that would all fail against a tree that cannot exist locally.
+            if matches!(resolved, Source::GitHub { .. }) && !backend.capabilities().plugins {
+                checks.push(DoctorCheck {
+                    name: id,
+                    status: CheckStatus::Warn(
+                        "github source: this backend needs a local tree (embedded or path) and is skipped by setup".into(),
+                    ),
+                });
+                continue;
+            }
             checks.extend(backend.report(plugin, &resolved).checks);
         } else {
             // A declared harness that isn't installed here is not a failure: it is

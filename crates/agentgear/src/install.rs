@@ -114,6 +114,13 @@ fn reconcile_agent(plugin: &Plugin, desired: &Desired, scope: &Scope, id: &'stat
         return AgentStatus::Skipped(SkipReason::ScopeUnsupported);
     }
     let source = if rehydrate { stamp::resolve_source(plugin, scope, id, desired.source.clone()) } else { desired.source.clone() };
+    // A github source has no local tree for a config-merge backend to render
+    // from; only a plugin-native backend (claude, copilot-cli) can hand the ref
+    // to its own CLI. A visible skip — never a mid-fan-out error after siblings
+    // already wrote their configs.
+    if matches!(source, Source::GitHub { .. }) && !backend.capabilities().plugins {
+        return AgentStatus::Skipped(SkipReason::SourceUnsupported);
+    }
     let per_agent = Desired { source, reenable: desired.reenable };
     let written = backend.reconcile(plugin, &per_agent, scope).and_then(|outcome| {
         stamp::write(plugin, scope, &per_agent.source, id)?;

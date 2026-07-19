@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const BIN: &str = env!("CARGO_BIN_EXE_host_fixture");
+const GITHUB_BIN: &str = env!("CARGO_BIN_EXE_github_fixture");
 
 struct Env {
     root: PathBuf,
@@ -34,7 +35,11 @@ impl Env {
     }
 
     fn fixture(&self, args: &[&str]) -> (bool, String) {
-        let mut cmd = Command::new(BIN);
+        self.run(BIN, args)
+    }
+
+    fn run(&self, bin: &str, args: &[&str]) -> (bool, String) {
+        let mut cmd = Command::new(bin);
         cmd.args(args)
             .env("HOME", &self.root)
             .env("XDG_CONFIG_HOME", self.root.join("config"))
@@ -117,4 +122,32 @@ fn a_failing_agent_does_not_strand_the_rest_of_the_fanout() {
     assert!(!ok, "uninstall must surface gemini's failure: {out}");
     let mcp = fs::read_to_string(&droid_mcp).unwrap();
     assert!(!mcp.contains("\"ez-fixture\""), "droid's mcp entry must be removed despite gemini failing first:\n{mcp}");
+}
+
+/// A github-source host with a config-merge backend in `agents = [...]`: the
+/// backend has no local tree to render from, so it must be a VISIBLE skip (and
+/// a doctor Warn) — never a mid-fan-out error after earlier agents already
+/// wrote, and never a silent drop. Driven through `github_fixture`
+/// (`default_source = "github"`, zero-embed); nothing here reaches the network,
+/// because the only github-capable backend (claude) is undetected in this env
+/// and skipped agents never touch the source.
+#[test]
+fn github_source_skips_config_backends_visibly() {
+    let env = Env::new("github");
+    let settings = env.root.join(".gemini").join("settings.json");
+
+    let (ok, out) = env.run(GITHUB_BIN, &["setup-report"]);
+    assert!(ok, "a source skip is not a failure: {out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(
+        lines.contains(&"gemini: skipped (cannot serve a github source; use an embedded or path source)"),
+        "gemini must skip visibly:\n{out}"
+    );
+    assert!(lines.contains(&"claude: skipped (not installed on this machine)"), "claude line missing:\n{out}");
+    assert!(!settings.exists(), "a skipped backend must write nothing");
+
+    let (ok, out) = env.run(GITHUB_BIN, &["doctor"]);
+    assert!(ok, "the skip must be a Warn, not a Fail: {out}");
+    assert!(out.lines().any(|l| l.starts_with("[warn] gemini: github source")), "doctor must warn about the github-source skip:\n{out}");
+    assert!(!out.contains("[fail]"), "no check may fail on a healthy github-source host:\n{out}");
 }
