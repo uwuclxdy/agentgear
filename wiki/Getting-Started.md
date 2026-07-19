@@ -108,7 +108,7 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-`install` takes any `Source`: `Source::Embedded` decompresses the baked blob, `Source::Path(dir)` materializes an on-disk tree, `Source::GitHub { repo, ref_ }` installs from a GitHub marketplace pinned to `ref_` (sent to the CLI as `{repo}@{ref_}`; the default `ref_` is the `v{version}` tag). `self_heal`/`update`/`doctor` resolve `Source::Embedded`/`Source::GitHub` against the `default_source` attr and rehydrate a `Source::Path` install from its stamp marker, so a `--path` install stays path-sourced across repair instead of drifting back to the baked blob.
+`install` takes any `Source`: `Source::Embedded` decompresses the baked blob, `Source::Path(dir)` materializes an on-disk tree, `Source::GitHub { repo, ref_ }` installs from a GitHub marketplace pinned to `ref_` (sent to the CLI as `{repo}@{ref_}`; the default `ref_` is the `v{version}` tag). `self_heal`/`update`/`doctor` rehydrate each agent's own install source from its stamp marker. A `Source::Path` install stays path-sourced across repair. An explicit `Source::Embedded` install stays embedded even on a `default_source = "github"` host. An agent with no marker falls back to the `default_source` attr.
 
 To target a subset of `AGENTS` (a `setup --agent gemini` flag), call `install_into` instead. An empty slice means all of them:
 
