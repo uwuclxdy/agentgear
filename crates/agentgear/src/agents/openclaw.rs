@@ -94,8 +94,8 @@ impl AgentBackend for OpenclawBackend {
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
-    fn remove(&self, plugin: &Plugin, _scope: &Scope) -> Result<Outcome> {
-        let comp = plugin.components(&Source::Embedded)?;
+    fn remove(&self, plugin: &Plugin, _scope: &Scope, source: &Source) -> Result<Outcome> {
+        let comp = plugin.components(source)?;
         let mut changed = mcpjson::remove(&config_path()?, MCP_KEY, &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= skillsdir::remove(&skills_root()?, plugin, &comp.skills)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })

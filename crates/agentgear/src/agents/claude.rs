@@ -61,7 +61,7 @@ impl AgentBackend for ClaudeBackend {
         reconcile(plugin, desired, scope)
     }
 
-    fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
+    fn remove(&self, plugin: &Plugin, scope: &Scope, _source: &Source) -> Result<Outcome> {
         remove(plugin, scope)
     }
 

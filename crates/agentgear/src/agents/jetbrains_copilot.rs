@@ -85,8 +85,8 @@ impl AgentBackend for JetbrainsCopilotBackend {
         mcpjson::reconcile(&mcp_path()?, MCP_KEY, &comp.mcp_servers, SHAPE)
     }
 
-    fn remove(&self, plugin: &Plugin, _scope: &Scope) -> Result<Outcome> {
-        let comp = plugin.components(&Source::Embedded)?;
+    fn remove(&self, plugin: &Plugin, _scope: &Scope, source: &Source) -> Result<Outcome> {
+        let comp = plugin.components(source)?;
         // Key removal off the same portable-server set reconcile writes: an unfiltered name
         // could delete an unrelated user server sharing a name with a non-portable entry we
         // never wrote (e.g. a `${CLAUDE_PLUGIN_ROOT}`-bearing one).

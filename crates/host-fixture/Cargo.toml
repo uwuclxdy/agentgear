@@ -10,6 +10,13 @@ publish = false
 name = "host_fixture"
 path = "src/main.rs"
 
+# A github-default (`default_source = "github"`, zero-embed) host, so the
+# hermetic tests can pin the config-merge-backend-under-github-source skip
+# without a network or a real tag.
+[[bin]]
+name = "github_fixture"
+path = "src/bin/github_fixture.rs"
+
 [lints]
 workspace = true
 

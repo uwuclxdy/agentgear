@@ -108,8 +108,8 @@ impl AgentBackend for CrushBackend {
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
-    fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
-        let comp = plugin.components(&Source::Embedded)?;
+    fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
+        let comp = plugin.components(source)?;
         let mut changed = remove_config(&config_file(scope)?, &portable_names(&comp.mcp_servers), &comp.hooks)?;
         changed |= skillsdir::remove(&skills_root(scope)?, plugin, &comp.skills)?;
         // We own the whole `commands/<plugin>/` subtree (crush walks it recursively),

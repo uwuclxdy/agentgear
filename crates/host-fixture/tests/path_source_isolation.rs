@@ -148,3 +148,32 @@ fn update_never_broadcasts_one_agents_path_source_onto_a_sibling() {
         "cline was hijacked onto codex's --path source (per-agent-marker invariant broken):\n{cline_workflow}"
     );
 }
+
+/// Uninstall's strip-set renders from the agent's OWN marker-rehydrated `--path`
+/// tree, not the baked embedded blob: a command that exists ONLY in the path
+/// tree still gets its translation deleted. Pre-fix, `remove()` hardcoded
+/// `Source::Embedded`, so it never knew the path-only command's name and left
+/// its rendered file orphaned in `~/.codex/prompts/`.
+#[test]
+fn uninstall_strips_from_the_agents_own_path_source() {
+    let env = Env::new("path-uninstall");
+
+    // A path tree that DIVERGES from the embedded one by a whole component: an
+    // extra command name the embedded blob has never heard of.
+    let src_plugin = env.root.join("src-plugin");
+    copy_dir_all(&Path::new(env!("CARGO_MANIFEST_DIR")).join("plugin"), &src_plugin);
+    fs::write(src_plugin.join("commands").join("extra.md"), "path-tree-only command body\n").unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "codex", "--path", src_plugin.to_str().unwrap()]);
+    assert!(ok, "codex path setup failed: {out}");
+    let extra_prompt = env.codex.join("prompts").join("ez-fixture-plugin-extra.md");
+    assert!(extra_prompt.exists(), "the path-only command must have been rendered: {}", extra_prompt.display());
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(
+        !extra_prompt.exists(),
+        "uninstall must strip the path-only command by rendering codex's own path source, not the embedded blob"
+    );
+    assert!(!env.codex.join("prompts").join("ez-fixture-plugin-hello.md").exists(), "the shared command must be stripped too");
+}

@@ -5,13 +5,18 @@
 //! the attrs, and emits a const-panic guard that fires if the host forgot its
 //! `build.rs` (design §7, §10). `embed = false` bakes nothing (an empty blob).
 
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
 use std::path::Path;
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::punctuated::Punctuated;
 use syn::{DeriveInput, Expr, ExprLit, Lit, MetaNameValue, Token, parse_macro_input};
+
+mod known_agents;
+use known_agents::{KNOWN_AGENTS, feature_const_ident};
 
 #[proc_macro_derive(PluginHost, attributes(plugin))]
 pub fn derive_plugin_host(input: TokenStream) -> TokenStream {
@@ -70,6 +75,25 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         quote! { &[] }
     };
 
+    // One const-eval check per listed agent: `agents = ["codex"]` with the
+    // `codex` cargo feature off fails HERE (host compile) with the fix, instead
+    // of on the end user's machine at first `setup`. Same const-panic trick as
+    // the AGENTGEAR_GUARD block below; the bools live in the lib because a
+    // panicking unit const would fire eagerly in agentgear's own build.
+    let feature_checks = agents.iter().map(|id| {
+        let const_ident = format_ident!("{}", feature_const_ident(id));
+        let msg = format!(
+            "agentgear: agent `{id}` is listed in #[plugin(agents = [...])] but its `{id}` cargo feature is off; add `features = [\"{id}\"]` to your agentgear dependency"
+        );
+        quote! {
+            const _: () = {
+                if !::agentgear::__feature_check::#const_ident {
+                    ::core::panic!(#msg);
+                }
+            };
+        }
+    });
+
     Ok(quote! {
         impl ::agentgear::PluginHost for #ident {
             const NAME: &'static str = #name;
@@ -95,6 +119,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 );
             }
         };
+
+        #(#feature_checks)*
     })
 }
 
@@ -131,7 +157,19 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
             "tree" => tree = Some(lit_str(&pair.value)?),
             "default_source" => default_source = Some(lit_str(&pair.value)?),
             "github_repo" => github_repo = Some(lit_str(&pair.value)?),
-            "agents" => agents = Some(str_array(&pair.value)?),
+            "agents" => {
+                let list = str_array(&pair.value)?;
+                // The registry is closed (an external backend never joins the
+                // derive fan-out), so a typo fails here with the known set — the
+                // feature-off diagnostic below must never fire for a misspelling.
+                if let Some(bad) = list.iter().find(|id| !KNOWN_AGENTS.contains(&id.as_str())) {
+                    return Err(syn::Error::new_spanned(
+                        &pair.value,
+                        format!("unknown agent id `{bad}`; known ids: {}", KNOWN_AGENTS.join(", ")),
+                    ));
+                }
+                agents = Some(list);
+            }
             "embed" => embed = Some(lit_bool(&pair.value)?),
             "instructions_fn" => {
                 // A fn path (e.g. `guidance::session_block_opt`), spliced through
@@ -218,5 +256,36 @@ fn str_array(expr: &Expr) -> syn::Result<Vec<String>> {
     match expr {
         Expr::Array(arr) => arr.elems.iter().map(lit_str).collect(),
         other => Err(syn::Error::new_spanned(other, "expected an array of string literals, e.g. [\"claude\"]")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_agent_id_is_rejected_at_expansion() {
+        let input: DeriveInput = syn::parse_quote! {
+            #[plugin(name = "x", agents = ["claude", "codx"])]
+            struct Host;
+        };
+        let Err(err) = parse_attrs(&input) else {
+            panic!("`codx` must be rejected");
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("unknown agent id `codx`"), "got: {msg}");
+        assert!(msg.contains("known ids: claude,"), "must list the known ids: {msg}");
+    }
+
+    #[test]
+    fn known_agent_ids_parse() {
+        let input: DeriveInput = syn::parse_quote! {
+            #[plugin(name = "x", agents = ["claude", "copilot-cli", "qwen-code"])]
+            struct Host;
+        };
+        let Ok(attrs) = parse_attrs(&input) else {
+            panic!("known ids must parse");
+        };
+        assert_eq!(attrs.agents, ["claude", "copilot-cli", "qwen-code"]);
     }
 }

@@ -90,8 +90,8 @@ impl AgentBackend for KimiBackend {
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
-    fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
-        let comp = plugin.components(&Source::Embedded)?;
+    fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
+        let comp = plugin.components(source)?;
         let base = kimi_base(scope)?;
 
         let mut changed = false;

@@ -151,8 +151,14 @@ pub trait AgentBackend {
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState>;
     /// Idempotent converge to `desired` at `scope`.
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome>;
-    /// Undo the install (does not touch the stamp marker; the caller owns that).
-    fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome>;
+    /// Undo the install, stripping exactly what a reconcile from `source` would
+    /// have written — the caller resolves `source` per agent (a `--path`
+    /// install's marker-rehydrated tree, else the compile-time default), so a
+    /// path-installed agent's entries are removed by rendering the SAME tree
+    /// they came from, never a divergent embedded blob. Plugin-native backends
+    /// drive their own CLI for removal and ignore it. Does not touch the stamp
+    /// marker; the caller owns that.
+    fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome>;
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport;
 }
 

@@ -57,7 +57,37 @@ fn main() -> ExitCode {
             let refs: Vec<&str> = agents.iter().map(String::as_str).collect();
             report(FixtureHost::install_into(Scope::User, source, &refs))
         }
+        // Same install, but printing the per-agent summary (`AgentReport`'s
+        // Display) instead of the merged outcome; exercised by the fanout-report
+        // hermetic test. Exit code follows `is_healthy` so a failed agent reds CI.
+        "setup-report" => {
+            let (source, agents) = parse_flags();
+            let refs: Vec<&str> = agents.iter().map(String::as_str).collect();
+            match FixtureHost::install_into_report(Scope::User, source, &refs) {
+                Ok(report) => {
+                    print!("{report}");
+                    if report.is_healthy() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         "self-heal" => report(FixtureHost::self_heal()),
+        // The hook-side per-agent summary: one broken agent reads as its own
+        // failed line while the siblings still heal (exercised by the
+        // fanout-report hermetic test).
+        "self-heal-report" => match FixtureHost::self_heal_report() {
+            Ok(report) => {
+                print!("{report}");
+                if report.is_healthy() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
         // UserPromptSubmit hook entry: prints the restart-pending notice as plain
         // stdout (CC treats non-JSON stdout as context) when an update landed, else
         // silent. Always exits 0 so it never blocks the prompt.
@@ -82,7 +112,9 @@ fn main() -> ExitCode {
             }
         },
         other => {
-            eprintln!("usage: host_fixture <setup|self-heal|check-restart|mcp|update|uninstall|doctor> (got {other:?})");
+            eprintln!(
+                "usage: host_fixture <setup|setup-report|self-heal|self-heal-report|check-restart|mcp|update|uninstall|doctor> (got {other:?})"
+            );
             ExitCode::from(2)
         }
     }

@@ -73,8 +73,8 @@ impl AgentBackend for KiroBackend {
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
-    fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
-        let comp = plugin.components(&Source::Embedded)?;
+    fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
+        let comp = plugin.components(source)?;
         let mut changed = mcpjson::remove(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
         changed |= skillsdir::remove(&kiro_base(scope)?.join("skills"), plugin, &comp.skills)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })

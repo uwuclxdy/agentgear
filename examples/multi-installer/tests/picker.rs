@@ -164,7 +164,9 @@ fn setup_agent_filter_scopes_to_one_backend() {
     // install: --agent gemini touches only gemini, though codex is also detected.
     let (ok, out) = env.run(&["setup", "--agent", "gemini"]);
     assert!(ok, "setup failed: {out}");
-    assert_eq!(out, "Installed", "first setup should install, got {out}");
+    // The per-agent summary: a filtered setup reports exactly the asked-for
+    // agent, in end-user wording (not a debug-printed merged Outcome).
+    assert_eq!(out, "gemini: installed", "first setup should install, got {out}");
 
     let s = env.gemini_settings();
     assert!(s.contains("multi-installer"), "our mcp server key missing:\n{s}");
@@ -182,13 +184,19 @@ fn setup_agent_filter_scopes_to_one_backend() {
 
     // idempotent: a second identical reconcile is a true NoOp (no write).
     let (ok, out) = env.run(&["setup", "--agent", "gemini"]);
-    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert!(ok && out == "gemini: no changes needed", "second setup should no-op, got {out}");
     assert_eq!(env.codex_config(), SEED_CODEX, "second setup touched codex's config");
 
     // uninstall (no --agent filter, matching kitchen-sink/host-fixture): removes
     // our gemini entries, leaves the seeded gemini AND codex config untouched.
+    // Unfiltered, so the summary carries every agent: the one we cleaned, the
+    // detected-but-never-installed sibling, and the undetected rest as skips.
     let (ok, out) = env.run(&["uninstall"]);
-    assert!(ok && out == "Removed", "uninstall failed: {out}");
+    assert!(ok, "uninstall failed: {out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.contains(&"gemini: removed"), "gemini removal line missing:\n{out}");
+    assert!(lines.contains(&"codex: no changes needed"), "codex (nothing of ours installed) line missing:\n{out}");
+    assert!(lines.contains(&"zed: skipped (not installed on this machine)"), "undetected zed should read as a skip:\n{out}");
 
     let s = env.gemini_settings();
     assert!(!s.contains("multi-installer"), "our mcp server survived uninstall:\n{s}");

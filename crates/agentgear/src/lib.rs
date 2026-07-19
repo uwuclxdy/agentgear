@@ -66,17 +66,21 @@ mod stamp;
 mod util;
 
 pub mod build;
+// The derive's compile-time listed-agent-vs-enabled-feature check reads these;
+// hidden because nothing else should (the module doc has the full story).
+#[doc(hidden)]
+pub mod __feature_check;
 
 pub use agents::{AgentBackend, BackendState, backend_for};
 pub use components::{HookBinding, MarkdownDoc, McpKind, McpServer, PluginComponents, SkillDir};
 pub use doctor::{CheckStatus, DoctorCheck, DoctorReport};
 pub use error::{Error, Result};
-pub use host::{Capabilities, Desired, Outcome, Plugin, PluginHost, Scope, Source};
+pub use host::{AgentReport, AgentResult, AgentStatus, Capabilities, Desired, Outcome, Plugin, PluginHost, Scope, SkipReason, Source};
 
 #[cfg(feature = "derive")]
 pub use agentgear_derive::PluginHost;
 
 /// A ready-to-glob prelude for host binaries.
 pub mod prelude {
-    pub use crate::{DoctorReport, Outcome, PluginHost, Scope, Source};
+    pub use crate::{AgentReport, DoctorReport, Outcome, PluginHost, Scope, Source};
 }

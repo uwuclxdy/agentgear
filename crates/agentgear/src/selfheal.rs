@@ -23,39 +23,70 @@
 
 use crate::agents::{AgentBackend, BackendState};
 use crate::error::Result;
-use crate::host::{Desired, Outcome, Plugin, Scope, Source};
-use crate::install::{merge, resolve};
+use crate::host::{AgentReport, AgentStatus, Desired, Outcome, Plugin, Scope, SkipReason, Source};
+use crate::install::resolve;
 use crate::{lock, restart, stamp};
 
-pub(crate) fn self_heal(plugin: &Plugin, source: Source) -> Result<Outcome> {
+pub(crate) fn self_heal_report(plugin: &Plugin, source: Source) -> Result<AgentReport> {
     // The SessionStart hook targets user-scoped installs; project scope has no
     // stable session context to key on in v1.
     let scope = Scope::User;
     let _lock = lock::acquire()?;
+    // Like the lock, a missing data root fails every agent's marker read/write
+    // identically: a whole-call precondition, not a per-agent failure.
+    crate::install::data_dir_precondition(plugin)?;
 
-    let mut merged = Outcome::NoOp;
+    let mut report = AgentReport::new();
     for id in plugin.agents {
-        let backend = resolve(id)?;
-        if !backend.detect() {
-            continue; // a tool that isn't installed has nothing to heal
-        }
-        if !backend.capabilities().scopes.contains(&scope.as_cli()) {
-            continue; // no user-scope surface (e.g. a repo-config-only IDE backend)
-        }
-        let outcome = heal_agent(&*backend, plugin, &source, &scope, *id == "claude")?;
-        merged = merge(merged, outcome);
+        report.push(id, heal_status(plugin, &source, &scope, id));
     }
-    Ok(merged)
+    Ok(report)
 }
 
-/// Drive one detected backend's marker × `probe()` table. `is_claude` gates the
-/// CC-only restart flag; convergence delegates to the backend's `reconcile`.
-fn heal_agent(backend: &dyn AgentBackend, plugin: &Plugin, source: &Source, scope: &Scope, is_claude: bool) -> Result<Outcome> {
-    let marker = stamp::read(plugin, scope, backend.id())?;
+/// One agent's heal slice; a failure here becomes its `Failed` entry and never
+/// aborts the fan-out (a session-start heal must not let one broken agent stop
+/// the other 24 from healing).
+fn heal_status(plugin: &Plugin, source: &Source, scope: &Scope, id: &'static str) -> AgentStatus {
+    let backend = match resolve(id) {
+        Ok(backend) => backend,
+        Err(e) => return AgentStatus::Failed(e.to_string()),
+    };
+    if !backend.detect() {
+        // a tool that isn't installed has nothing to heal
+        return AgentStatus::Skipped(SkipReason::NotDetected);
+    }
+    if !backend.capabilities().scopes.contains(&scope.as_cli()) {
+        // no user-scope surface (e.g. a repo-config-only IDE backend)
+        return AgentStatus::Skipped(SkipReason::ScopeUnsupported);
+    }
     // This agent's OWN marker settles its source (never a sibling's — the
     // per-agent-marker invariant); `source` is the caller's `DEFAULT_SOURCE`,
     // used only absent a persisted `--path` for this specific agent.
+    let marker = match stamp::read(plugin, scope, id) {
+        Ok(marker) => marker,
+        Err(e) => return AgentStatus::Failed(e.to_string()),
+    };
     let resolved_source = stamp::source_from_marker(marker.as_ref(), source.clone());
+    // A github source has no local tree for a config-merge backend to probe or
+    // render from; only a plugin-native backend can heal off it. A visible skip,
+    // matching install/update.
+    if matches!(resolved_source, Source::GitHub { .. }) && !backend.capabilities().plugins {
+        return AgentStatus::Skipped(SkipReason::SourceUnsupported);
+    }
+    match heal_agent(&*backend, plugin, resolved_source, scope, marker.is_some(), id == "claude") {
+        Ok(outcome) => AgentStatus::Converged(outcome),
+        Err(e) => AgentStatus::Failed(e.to_string()),
+    }
+}
+
+/// Drive one detected backend's marker × `probe()` table. `resolved_source` is
+/// the caller-resolved per-agent source and `has_marker` its marker's presence
+/// (the caller reads it once for the source resolution and the table both).
+/// `is_claude` gates the CC-only restart flag; convergence delegates to the
+/// backend's `reconcile`.
+fn heal_agent(
+    backend: &dyn AgentBackend, plugin: &Plugin, resolved_source: Source, scope: &Scope, has_marker: bool, is_claude: bool,
+) -> Result<Outcome> {
     // Probe against the SAME source `reconcile` (below) will render from, so a
     // `--path` install whose tree differs from the embedded blob does not read as
     // perpetual drift (probe wanting embedded bytes, reconcile writing path bytes).
@@ -64,7 +95,7 @@ fn heal_agent(backend: &dyn AgentBackend, plugin: &Plugin, source: &Source, scop
     // enable flip); adopt/repair both converge without touching enable state.
     let desired = Desired { source: resolved_source, reenable: false };
 
-    match (marker.is_some(), state) {
+    match (has_marker, state) {
         (false, BackendState::Absent) => Ok(Outcome::NoOp),
 
         (false, BackendState::Healthy) => {

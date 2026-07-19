@@ -60,7 +60,7 @@ impl AgentBackend for PiBackend {
         Ok(Outcome::NoOp)
     }
 
-    fn remove(&self, _plugin: &Plugin, _scope: &Scope) -> Result<Outcome> {
+    fn remove(&self, _plugin: &Plugin, _scope: &Scope, _source: &Source) -> Result<Outcome> {
         // Nothing was ever written, so there is nothing to undo.
         Ok(Outcome::NoOp)
     }

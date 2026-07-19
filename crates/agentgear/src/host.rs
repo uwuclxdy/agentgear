@@ -103,6 +103,146 @@ pub enum Outcome {
     Cleared,
 }
 
+/// End-user wording (`installed`, `updated (0.1.0 -> 0.2.0)`), so a host can
+/// print an outcome in a `setup` summary instead of exposing `{:?}`.
+impl std::fmt::Display for Outcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Outcome::NoOp => f.write_str("no changes needed"),
+            Outcome::Installed => f.write_str("installed"),
+            Outcome::Updated { from: Some(from), to } => write!(f, "updated ({from} -> {to})"),
+            Outcome::Updated { from: None, to } => write!(f, "updated (to {to})"),
+            Outcome::Repaired => f.write_str("repaired"),
+            Outcome::Adopted => f.write_str("adopted existing install"),
+            Outcome::Removed => f.write_str("removed"),
+            Outcome::Cleared => f.write_str("cleared stale marker"),
+        }
+    }
+}
+
+/// Per-agent results of one lifecycle fan-out, one entry per configured agent in
+/// `plugin.agents` order (agents excluded by an explicit `install_into` filter get
+/// no entry — they were never asked for). The merged-[`Outcome`] lifecycle methods
+/// collapse this to first-change-wins; a host that wants to tell its user which
+/// agents were installed, skipped, or failed reads the `*_report` variants and
+/// prints this (its `Display` is a ready `setup` summary, one line per agent).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct AgentReport {
+    pub results: Vec<AgentResult>,
+}
+
+/// One agent's slice of a lifecycle fan-out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentResult {
+    /// The backend id (`"claude"`, `"codex"`, …).
+    pub agent: &'static str,
+    pub status: AgentStatus,
+}
+
+/// What one agent's slice of the fan-out did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AgentStatus {
+    /// The backend ran; this is its own outcome (not the merged one).
+    Converged(Outcome),
+    /// The backend was skipped before it could write anything.
+    Skipped(SkipReason),
+    /// The backend failed, rendered for the user. The fan-out continued past it,
+    /// so sibling entries still reflect real per-agent results.
+    Failed(String),
+}
+
+/// Why an agent was skipped rather than converged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SkipReason {
+    /// `detect()` returned false — the tool is not on this machine.
+    NotDetected,
+    /// The backend has no config surface at the requested scope.
+    ScopeUnsupported,
+    /// The resolved source cannot serve this backend (a GitHub source needs a
+    /// plugin-native backend; config-merge backends have no local tree to render).
+    SourceUnsupported,
+}
+
+impl AgentReport {
+    pub(crate) fn new() -> Self {
+        Self { results: Vec::new() }
+    }
+
+    pub(crate) fn push(&mut self, agent: &'static str, status: AgentStatus) {
+        self.results.push(AgentResult { agent, status });
+    }
+
+    /// The first real change across the agents (a change outranks a no-op);
+    /// [`Outcome::NoOp`] when nothing changed. This is exactly what the merged
+    /// lifecycle methods ([`PluginHost::install`], …) return on success.
+    pub fn merged(&self) -> Outcome {
+        self.results
+            .iter()
+            .find_map(|result| match &result.status {
+                AgentStatus::Converged(outcome) if *outcome != Outcome::NoOp => Some(outcome.clone()),
+                _ => None,
+            })
+            .unwrap_or(Outcome::NoOp)
+    }
+
+    /// True when no agent failed (skips are not failures).
+    pub fn is_healthy(&self) -> bool {
+        !self.results.iter().any(|result| matches!(result.status, AgentStatus::Failed(_)))
+    }
+
+    /// The legacy single-`Outcome` collapse: every agent already ran, so this is
+    /// fail-at-end — the first failed agent decides the `Err` (as
+    /// [`Error::Backend`](crate::Error::Backend)), else the merged outcome.
+    pub(crate) fn into_merged(self) -> Result<Outcome> {
+        for result in &self.results {
+            if let AgentStatus::Failed(detail) = &result.status {
+                return Err(crate::error::Error::Backend { agent: result.agent.into(), detail: detail.clone() });
+            }
+        }
+        Ok(self.merged())
+    }
+
+    /// The `Converged` outcome of one agent, if it ran.
+    pub(crate) fn outcome_of(&self, agent: &str) -> Option<&Outcome> {
+        self.results.iter().find_map(|result| match &result.status {
+            AgentStatus::Converged(outcome) if result.agent == agent => Some(outcome),
+            _ => None,
+        })
+    }
+}
+
+impl std::fmt::Display for AgentReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for result in &self.results {
+            writeln!(f, "{}: {}", result.agent, result.status)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for AgentStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AgentStatus::Converged(outcome) => outcome.fmt(f),
+            AgentStatus::Skipped(reason) => write!(f, "skipped ({reason})"),
+            AgentStatus::Failed(detail) => write!(f, "failed: {detail}"),
+        }
+    }
+}
+
+impl std::fmt::Display for SkipReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SkipReason::NotDetected => f.write_str("not installed on this machine"),
+            SkipReason::ScopeUnsupported => f.write_str("no config surface at this scope"),
+            SkipReason::SourceUnsupported => f.write_str("cannot serve a github source; use an embedded or path source"),
+        }
+    }
+}
+
 /// What an agent backend can host. Each surface flag is `true` iff the backend's
 /// `reconcile` actually writes/manages that surface for a plugin declaring it
 /// (a conditionally-gated surface — e.g. one a native registry may already cover —
@@ -208,31 +348,70 @@ pub trait PluginHost {
     }
 
     /// Idempotent: ensure the plugin is installed at the embedded version.
+    /// Collapses [`PluginHost::install_report`] to one merged [`Outcome`]
+    /// (first real change wins); a failed agent surfaces as `Err` after the
+    /// whole fan-out ran.
     fn install(scope: Scope, source: Source) -> Result<Outcome> {
-        crate::install::install(&Self::descriptor(), scope, source)
+        Self::install_report(scope, source)?.into_merged()
+    }
+
+    /// [`PluginHost::install`] with per-agent results: which agents converged
+    /// (and how), which were skipped (and why), which failed. `Err` only on a
+    /// fatal precondition — the shared lock, or no usable data root (`HOME` and
+    /// `XDG_DATA_HOME` both unset, so no agent could stamp a marker); per-agent
+    /// failures live in the report so one bad agent never hides the rest.
+    fn install_report(scope: Scope, source: Source) -> Result<AgentReport> {
+        crate::install::install_report(&Self::descriptor(), scope, source, &[])
     }
 
     /// Like [`PluginHost::install`] but only into the `AGENTS` whose id is in
     /// `agents` (an empty slice = all of `AGENTS`). Lets a host target one backend
     /// (`setup --agent gemini`) without touching the others.
     fn install_into(scope: Scope, source: Source, agents: &[&str]) -> Result<Outcome> {
-        crate::install::install_filtered(&Self::descriptor(), scope, source, agents)
+        Self::install_into_report(scope, source, agents)?.into_merged()
+    }
+
+    /// [`PluginHost::install_into`] with per-agent results; filtered-out agents
+    /// get no entry.
+    fn install_into_report(scope: Scope, source: Source, agents: &[&str]) -> Result<AgentReport> {
+        crate::install::install_report(&Self::descriptor(), scope, source, agents)
     }
 
     /// Materialize a new versioned tree, then update the marketplace + plugin.
+    /// Collapses [`PluginHost::update_report`] like [`PluginHost::install`].
     fn update(scope: Scope) -> Result<Outcome> {
-        crate::install::update(&Self::descriptor(), scope, Self::DEFAULT_SOURCE)
+        Self::update_report(scope)?.into_merged()
+    }
+
+    /// [`PluginHost::update`] with per-agent results. Same `Err` contract as
+    /// [`PluginHost::install_report`]: only the lock or a missing data root.
+    fn update_report(scope: Scope) -> Result<AgentReport> {
+        crate::install::update_report(&Self::descriptor(), scope, Self::DEFAULT_SOURCE)
     }
 
     /// Uninstall, then refcount-gated marketplace remove; clears the marker.
+    /// Collapses [`PluginHost::uninstall_report`] like [`PluginHost::install`].
     fn uninstall(scope: Scope) -> Result<Outcome> {
-        crate::install::uninstall(&Self::descriptor(), scope)
+        Self::uninstall_report(scope)?.into_merged()
+    }
+
+    /// [`PluginHost::uninstall`] with per-agent results. Same `Err` contract as
+    /// [`PluginHost::install_report`]: only the lock or a missing data root.
+    fn uninstall_report(scope: Scope) -> Result<AgentReport> {
+        crate::install::uninstall_report(&Self::descriptor(), scope, Self::DEFAULT_SOURCE)
     }
 
     /// SessionStart entrypoint. Repairs broken installs, never resurrects a
     /// deliberate uninstall, never downgrades, never re-enables (design §6).
+    /// Collapses [`PluginHost::self_heal_report`] like [`PluginHost::install`].
     fn self_heal() -> Result<Outcome> {
-        crate::selfheal::self_heal(&Self::descriptor(), Self::DEFAULT_SOURCE)
+        Self::self_heal_report()?.into_merged()
+    }
+
+    /// [`PluginHost::self_heal`] with per-agent results. Same `Err` contract as
+    /// [`PluginHost::install_report`]: only the lock or a missing data root.
+    fn self_heal_report() -> Result<AgentReport> {
+        crate::selfheal::self_heal_report(&Self::descriptor(), Self::DEFAULT_SOURCE)
     }
 
     /// `Some(message)` when an update landed that the running CC session has not

@@ -76,8 +76,8 @@ impl AgentBackend for AntigravityBackend {
         mcpjson::reconcile(&mcp, &["mcpServers"], &comp.mcp_servers, SHAPE)
     }
 
-    fn remove(&self, plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
-        let comp = plugin.components(&Source::Embedded)?;
+    fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
+        let comp = plugin.components(source)?;
         let mcp = mcp_config(scope)?;
         mcpjson::remove(&mcp, &["mcpServers"], &comp.mcp_servers, SHAPE)
     }

@@ -45,19 +45,20 @@ impl DoctorReport {
         !self.checks.iter().any(|c| matches!(c.status, CheckStatus::Fail { .. }))
     }
 
-    /// Build a report from a check list (a non-CC backend's `report` assembles its
-    /// own checks). `allow(dead_code)`: only the feature-gated non-CC backends call
-    /// it, so a default (claude-only) build sees it unused.
-    #[allow(dead_code)]
-    pub(crate) fn from_checks(checks: Vec<DoctorCheck>) -> Self {
+    /// Build a report from a check list. This is how a backend's
+    /// [`report`](crate::AgentBackend::report) assembles its result — the in-crate
+    /// backends and an out-of-crate [`AgentBackend`](crate::AgentBackend) impl
+    /// both go through it (`checks` itself stays private so a report is always
+    /// built whole, never mutated after the fact).
+    pub fn from_checks(checks: Vec<DoctorCheck>) -> Self {
         Self { checks }
     }
 
-    /// Collapse a fallible backend `report` into a single failed check. `allow`:
-    /// the claude report is infallible; the non-CC backends wrap their config
-    /// reads through this when their workflow fills them.
-    #[allow(dead_code)]
-    pub(crate) fn from_error(err: crate::error::Error) -> Self {
+    /// Collapse an error into a single-check failed report, for a backend whose
+    /// `report` hit a failure before it could produce individual checks (e.g. an
+    /// unreadable config). An external backend maps its own failures through
+    /// [`Error::Backend`](crate::Error::Backend) here.
+    pub fn from_error(err: crate::error::Error) -> Self {
         Self {
             checks: vec![DoctorCheck {
                 name: "doctor",
@@ -89,13 +90,41 @@ impl fmt::Display for DoctorReport {
 pub(crate) fn doctor(plugin: &Plugin, source: &Source) -> Result<DoctorReport> {
     let mut checks = vec![check_host_binary()];
     for id in plugin.agents {
-        let backend = crate::install::resolve(id)?;
+        // An unresolvable id is a failed CHECK, never an aborted report: a health
+        // command that throws away every check it already collected is useless
+        // exactly when it is needed.
+        let backend = match crate::install::resolve(id) {
+            Ok(backend) => backend,
+            Err(e) => {
+                checks.push(DoctorCheck {
+                    name: id,
+                    status: CheckStatus::Fail {
+                        problem: e.to_string(),
+                        fix: "rebuild the host with this agent's cargo feature enabled".into(),
+                    },
+                });
+                continue;
+            }
+        };
         if backend.detect() {
             // This agent's OWN marker settles its source (never a sibling's — the
             // per-agent-marker invariant); `source` is the caller's `DEFAULT_SOURCE`.
             // `doctor` (like self_heal) has no scope of its own, so it keys on the
             // same user-scope marker self_heal writes.
             let resolved = crate::stamp::resolve_source(plugin, &Scope::User, id, source.clone());
+            // A github source has no local tree for a config-merge backend, so
+            // install/update/self_heal all skip it (visible in their reports);
+            // doctor mirrors that as a Warn instead of running per-surface checks
+            // that would all fail against a tree that cannot exist locally.
+            if matches!(resolved, Source::GitHub { .. }) && !backend.capabilities().plugins {
+                checks.push(DoctorCheck {
+                    name: id,
+                    status: CheckStatus::Warn(
+                        "github source: this backend needs a local tree (embedded or path) and is skipped by setup".into(),
+                    ),
+                });
+                continue;
+            }
             checks.extend(backend.report(plugin, &resolved).checks);
         } else {
             // A declared harness that isn't installed here is not a failure: it is
@@ -389,3 +418,7 @@ fn bare_command(command: &str) -> Option<String> {
         && token.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
     looks_bare.then(|| token.to_string())
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/doctor.rs"]
+mod doctor_tests;
