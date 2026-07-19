@@ -1,15 +1,23 @@
 # hello-mcp
 
-The smallest real agentgear host: one derived struct, a one-line `build.rs`, and a
-`setup` subcommand that ships a single stdio MCP server to Claude Code. No non-CC
-backends, no `update` / `self_heal` / `check-restart`. See
-[`kitchen-sink`](../kitchen-sink) for a host that wires the full lifecycle across
-seven harnesses.
+Start here. The smallest real agentgear host: one derived struct, a one-line
+`build.rs`, and a `setup` subcommand that ships a single stdio MCP server to Claude
+Code. No non-CC backends, no `update` / `self_heal` / `check-restart`. Read
+`src/lib.rs` first (the derive is three lines), then `src/main.rs`.
+
+Once this makes sense, [`kitchen-sink`](../kitchen-sink) is the follow-up: the same
+lifecycle at full surface, across seven harnesses.
 
 ## What it demonstrates
 
 - `#[derive(PluginHost)]` with no `agents = [...]` attribute, which targets Claude
   Code only.
+- `instructions_fn = session_instructions`: the derive key naming a
+  `fn() -> Option<String>` that backs `PluginHost::instructions`. The claude backend
+  declares `instructions: false` (a CC host is expected to serve its guidance from
+  its own MCP server's `instructions`), so this text reaches nothing here. The attr
+  is present to show the descriptor wiring; `opencode` is currently the one backend
+  that writes it to a context file.
 - The plugin tree (`plugin/`) embedded into the binary at compile time via the
   default `embed` feature, so `setup` installs offline from the built binary.
 - A three-command binary: `setup`, `uninstall`, `doctor`.
@@ -21,7 +29,7 @@ seven harnesses.
 | `Cargo.toml` | default features only (`derive` + `claude` + `embed`) |
 | `build.rs` | pins `plugin.json` `version` to `CARGO_PKG_VERSION` |
 | `plugin/.claude-plugin/plugin.json` | plugin metadata + one `mcpServers` entry |
-| `src/lib.rs` | the `HelloMcp` derive struct, exercised by `tests/wiring.rs` |
+| `src/lib.rs` | the `HelloMcp` derive struct + its `instructions_fn`, exercised by `tests/wiring.rs` |
 | `src/main.rs` | `setup` / `uninstall` / `doctor` |
 | `tests/wiring.rs` | asserts the derive + embed wiring compiled correctly |
 
@@ -72,4 +80,5 @@ on `PATH` (`cargo install` or packaging) clears the first check.
 This host only wires `setup` / `uninstall` / `doctor`. `update`, `self_heal` (the
 `SessionStart` hook target), and `check-restart` (the `UserPromptSubmit` hook
 target) are real `PluginHost` methods this crate never calls. It ships no hooks,
-so nothing invokes them. [`kitchen-sink`](../kitchen-sink) wires all seven.
+so nothing invokes them. [`kitchen-sink`](../kitchen-sink) wires all six, plus its
+own `mcp` subcommand.

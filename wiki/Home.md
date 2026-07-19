@@ -6,7 +6,7 @@ The [README](https://github.com/uwuclxdy/agentgear#readme) is the overview. Thes
 
 ## Mental model
 
-The crate lives in your binary, not in the plugin tree. The binary embeds the plugin at compile time as a compressed blob and hands it to one or more agent backends at runtime. 25 backends ship today: Claude Code, copilot-cli, and 23 config-merge agents; the full list is on the [Agent Backends](Agent-Backends) page.
+The crate lives in your binary, not in the plugin tree. The binary embeds the plugin at compile time as a compressed blob and hands it to one or more agent backends at runtime. 25 backends ship today: Claude Code, copilot-cli, and 23 config-merge agents; the full list is on the [Agent backends](Agent-Backends) page.
 
 ```text
 your binary  ──derive──▶  PluginHost  ──reconcile──▶  AgentBackend
@@ -21,12 +21,16 @@ embeds plugin/ (.tar.br blob) ── materialize ──▶ ~/.local/share/<name>
 
 | page | topic |
 |---|---|
-| [Getting Started](Getting-Started) | add the crate, the derive, the build guard, hook wiring |
-| [How It Works](How-It-Works) | lifecycle to CLI mapping, materialize, the self-heal state table |
-| [Agent Backends](Agent-Backends) | the unsealed `AgentBackend` trait, install models, env overrides, hook renames |
-| [Harness Comparison](Harness-Comparison) | side-by-side: support, config paths, remote fidelity, native CC-config interop |
+| [Getting started](Getting-Started) | add the crate, the derive, the build guard, hook wiring |
+| [Plugin tree](Plugin-Tree) | what `plugin/` holds, what each backend can translate out of it |
+| [How it works](How-It-Works) | lifecycle to CLI mapping, materialize, the self-heal state table |
+| [Agent backends](Agent-Backends) | the unsealed `AgentBackend` trait, install models, env overrides, hook renames |
+| [Harness comparison](Harness-Comparison) | side-by-side: support, config paths, remote fidelity, native CC-config interop |
+| [Testing your host](Testing-Your-Host) | hermetic runs against a temp `HOME`, reading back what each backend wrote |
 | [Doctor](Doctor) | the health report: shared checks, per-agent checks, fix hints |
 
 ## Status
 
-v1 ships 25 agent backends: Claude Code + copilot-cli (full plugin lifecycle) plus 23 config-merge backends. Every non-CC backend was verified against its real shipping binary on 2026-07-16 (copilot-cli's native rewrite 2026-07-18), with positive and negative controls before any parse was trusted. 19 per-tool docker legs (the GUI/IDE and no-surface backends have none) pass locally; the CI push is pending. Hermetic and unit tests are green in plain `cargo test`. The `AgentBackend` trait is unsealed. Linux is CI-gated, macOS is tested, Windows is designed in but not gated in CI.
+v1 ships 25 agent backends: Claude Code + copilot-cli (full plugin lifecycle) plus 23 config-merge backends. Every non-CC backend was verified against its real shipping binary, with positive and negative controls before any parse was trusted. 19 per-tool docker legs (the GUI/IDE and no-surface backends have none) run in CI as a matrix, one job per tool. Hermetic and unit tests are green in plain `cargo test`. The `AgentBackend` trait is unsealed.
+
+Linux is CI-gated. Windows was probed by hand against Claude Code 2.1.201: a junction created without elevation, with `validate`, `marketplace add`, `install`, and `list --json` all resolving through `current`; the no-BOM and no-trailing-whitespace path rules in `materialize` come from that same run. macOS is a first-class target in the design but is not exercised on a real host in CI. Every CI job runs on `ubuntu-latest`.

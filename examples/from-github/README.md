@@ -1,7 +1,11 @@
 # from-github
 
 A zero-embed agentgear host: the binary ships no baked plugin blob and installs its
-plugin from a GitHub marketplace instead.
+plugin from a GitHub marketplace instead. [`hello-mcp`](../hello-mcp) is the smallest
+host to start from; read this one for the distribution choice.
+
+`src/lib.rs` holds the derive (the `embed = false` + `default_source = "github"`
+pairing) and `Cargo.toml` its feature half. Read them together.
 
 ## What it demonstrates
 
@@ -59,10 +63,15 @@ iterates faster than the binary.
 
 The derive defaults `ref_` to `v{CARGO_PKG_VERSION}` (the tag `claude plugin tag`
 produces), so a given binary tracks the plugin tag that matches its own version rather
-than a moving branch.
+than a moving branch. That ref reaches the CLI: the marketplace is registered as
+`owner/repo@ref`.
 
-## Current limitation
+A marketplace already present on a *different* ref gets re-added instead of updated,
+because `claude plugin marketplace update` refreshes a pin without moving it. Re-adding
+is what re-points the pin when a binary upgrade changes the tracked tag.
 
-`ensure_marketplace` drops `ref_` today, so the GitHub source tracks the repo's
-default branch rather than the pinned tag (docs/todo.md §1); the ignored live test
-pins the intended behavior for that fix.
+`tests/wiring.rs`'s `github_install_pins_the_version_tag` covers that flow against the
+real `claude` CLI and a pushed tag. It is `#[ignore]`d and gated on
+`AGENTGEAR_E2E_GITHUB=1` on top of that, so a default test run never couples to a
+mutable remote. The file's other tests run unconditionally, against a fake `claude`
+shim where they need one.

@@ -21,6 +21,7 @@ $ mytool doctor
 [ ok ] host binary on PATH: `mytool` resolves on PATH
 [ ok ] claude version: 2.1.201 (Claude Code)
 [ ok ] plugin registered: mytool@mytool v0.4.0 (enabled)
+[ ok ] marketplace registered: `mytool` registered
 [ ok ] manifest validates: ~/.local/share/mytool/current --strict clean
 [ ok ] current tree matches embedded: hashes match
 [ ok ] hook commands on PATH: all referenced bare commands resolve
@@ -111,7 +112,7 @@ Five runnable hosts live in [`examples/`](examples/), all workspace members with
 - [`hello-mcp`](examples/hello-mcp): the smallest real host. One derive, a one-line `build.rs`, a `setup` subcommand that ships one MCP server to Claude Code.
 - [`kitchen-sink`](examples/kitchen-sink): every component type (MCP server, hooks, command, subagent, skill) across seven harnesses, plus its own dependency-free stdio MCP server and hermetic lifecycle tests.
 - [`multi-installer`](examples/multi-installer): builds its own agent picker by enumerating backends through `backend_for` (detected vs not), then installs into a filtered subset.
-- [`hooks-everywhere`](examples/hooks-everywhere): four Claude Code hook events translated across the 15 hook-capable harnesses; its README carries the per-harness event map.
+- [`hooks-everywhere`](examples/hooks-everywhere): four Claude Code hook events translated across 14 harnesses; its README carries the per-harness event map.
 - [`from-github`](examples/from-github): a zero-embed host (`embed = false`, `default_source = "github"`) that tracks a remote repo instead of baking a tree.
 
 ## Feature flags
@@ -122,8 +123,19 @@ Five runnable hosts live in [`examples/`](examples/), all workspace members with
 | `claude` | on | the Claude Code backend |
 | `embed` | on | bakes the plugin tree into the binary as a compressed blob; turn off (with `embed = false` on the derive) for a `default_source = "github"` host that tracks a remote repo and ships no baked tree |
 | `codex` | off | the codex backend (pulls in `toml_edit`) |
-| one per agent | off | a feature per non-CC backend (24 total; `copilot-cli` is plugin-native, the rest config-merge); `kimi` also pulls `toml_edit`, `goose` pulls `serde_norway` |
+| one per agent | off | a feature per non-CC backend (24 total; `copilot-cli` is plugin-native, the rest config-merge); `kimi` pulls `toml_edit`, `goose` and `omp` pull `serde_norway` |
 | `all-agents` | off | every backend above, enabled at once |
+
+A feature name is the agent id, and every id in `agents = [...]` needs its feature enabled:
+
+```toml
+[dependencies]
+agentgear = { git = "https://github.com/uwuclxdy/agentgear", features = ["codex", "cursor", "opencode"] }
+```
+
+```rust
+#[plugin(name = "mytool", agents = ["claude", "codex", "cursor", "opencode"])]
+```
 
 ## Supported agents
 
@@ -150,7 +162,7 @@ Grouped by what each surface translates:
 
 Skills translate on 13 of 25 backends now (see above). Instructions (always-loaded host guidance
 from `PluginHost::instructions`) translate on `opencode` only so far, written to a dedicated file
-whose path is registered in opencode's `instructions[]`. `vscode-copilot` writes at project scope only; `copilot-cli` is user-scope only (no `--scope` on the `copilot` CLI); the rest are user-scope-primary. Codex's hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI; kimi's fire as soon as they are written. Per-agent config paths and skipped-surface reasons are on the [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) wiki page; for a side-by-side view of how each tool handles config paths, MCP shapes, hook events, and Claude-Code-config interop, see [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison).
+whose path is registered in opencode's `instructions[]`. `vscode-copilot` writes at project scope only. Of the other 23 non-Claude backends, 14 accept both user and project scope; the 9 that are user-scope only include `copilot-cli`, whose CLI has no `--scope`. Codex's hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI; kimi's fire as soon as they are written. Per-agent config paths and skipped-surface reasons are on the [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) wiki page; for a side-by-side view of how each tool handles config paths, scopes, MCP shapes, hook events, and Claude-Code-config interop, see [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison).
 
 ## Status
 
@@ -195,7 +207,15 @@ Yes. The SessionStart hook calls `self_heal`, which re-registers a plugin whose 
 Yes, 25 in total. List the ids you want in the derive, e.g. `agents = ["claude", "codex", "cursor"]`; `setup` installs into every one it detects. See [Supported agents](#supported-agents) for the full roster and what each translates.
 
 **Do I need to publish the plugin to a marketplace?**
-No. In embedded mode the plugin tree is baked into the binary as a compressed blob and served from a locally generated marketplace. A GitHub source mode is available when you want `claude plugin update` to pull plugin changes without a binary release. A `Source::Path` mode installs from an on-disk tree at runtime; the recurring `self_heal`/`update`/`doctor` still resolve against the derive's `default_source`, so a self-healing host keeps an `embedded` or `github` default.
+No. In embedded mode the plugin tree is baked into the binary as a compressed blob and served from a locally generated marketplace. A GitHub source mode is available when you want `claude plugin update` to pull plugin changes without a binary release. A `Source::Path` mode installs from an on-disk tree at runtime; `self_heal`/`update`/`doctor` rehydrate that path from the install's own stamp marker, so it stays path-sourced across repair. `embedded` and `github` installs resolve against the derive's `default_source`.
+
+## Versioning
+
+| item | policy |
+|---|---|
+| MSRV | Rust 1.88, measured rather than the edition 2024 floor: the lib uses let-chains, which 1.87 rejects and 1.88 stabilized. Raising it ships as a minor bump |
+| semver | pre-1.0, so a minor bump may break the API; patch releases stay compatible |
+| changes | [`CHANGELOG.md`](CHANGELOG.md) |
 
 ## Documentation
 
@@ -204,10 +224,12 @@ The README is a map. The reference lives in the wiki.
 | page | topic |
 |---|---|
 | [Getting started](https://github.com/uwuclxdy/agentgear/wiki/Getting-Started) | add the crate, derive, build guard, hook wiring |
+| [Plugin tree](https://github.com/uwuclxdy/agentgear/wiki/Plugin-Tree) | tree layout, `plugin.json`, the version lock, `${CLAUDE_PLUGIN_ROOT}` portability |
 | [How it works](https://github.com/uwuclxdy/agentgear/wiki/How-It-Works) | lifecycle to CLI mapping, materialize, the self-heal state table |
 | [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) | the unsealed trait, the 23 config-merge backends, adding your own |
-| [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison) | side-by-side support matrix: config paths, MCP fidelity, hook events, CC-config interop |
-| [Doctor](https://github.com/uwuclxdy/agentgear/wiki/Doctor) | the six health checks and their fix hints |
+| [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison) | side-by-side support matrix: config paths, scopes, MCP fidelity, hook events, CC-config interop |
+| [Testing your host](https://github.com/uwuclxdy/agentgear/wiki/Testing-Your-Host) | hermetic lifecycle tests: env redirects, forcing detection, the shared lock, what they miss |
+| [Doctor](https://github.com/uwuclxdy/agentgear/wiki/Doctor) | the health checks and their fix hints |
 
 ## Development
 

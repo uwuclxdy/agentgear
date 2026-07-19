@@ -1,10 +1,12 @@
 **agentgear**
 
 - [Home](Home)
-- [Getting Started](Getting-Started)
-- [How It Works](How-It-Works)
-- [Agent Backends](Agent-Backends)
-- [Harness Comparison](Harness-Comparison)
+- [Getting started](Getting-Started)
+- [Plugin tree](Plugin-Tree)
+- [How it works](How-It-Works)
+- [Agent backends](Agent-Backends)
+- [Harness comparison](Harness-Comparison)
+- [Testing your host](Testing-Your-Host)
 - [Doctor](Doctor)
 
 ---

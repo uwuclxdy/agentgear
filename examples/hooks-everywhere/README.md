@@ -1,8 +1,12 @@
 # hooks-everywhere
 
 A hooks-only agentgear host: no MCP server, no commands, no agents, no skills.
-The plugin ships four hook bindings and fans them out across every hook-capable
-harness agentgear supports (14 in the derive, one of them Claude Code itself):
+[`hello-mcp`](../hello-mcp) is the smallest host to start from; this one exists to
+show hook translation. Read `plugin/hooks/hooks.json` for the bindings the derive
+fans out, then `src/main.rs` for the handlers behind them.
+
+The plugin ships four hook bindings and fans them out across the 14 harnesses its
+derive names, one of them Claude Code itself:
 
 | CC event | matcher | hook target |
 |---|---|---|
@@ -39,7 +43,7 @@ system; a dash means agentgear skips it rather than writing it under a guessed n
 | claude | Y | Y | Y | Y |
 | codex | Y | Y | Y | Y |
 | gemini\* | Y | Y (`BeforeAgent`) | Y\* (`BeforeTool`) | Y\* (`AfterTool`) |
-| cursor | Y | Y (`beforeSubmitPrompt`) | Y | Y |
+| cursor | Y (`sessionStart`) | Y (`beforeSubmitPrompt`) | Y (`preToolUse`) | Y (`postToolUse`) |
 | cline\* | - | Y | Y\* | Y\* |
 | devin | Y | Y | Y | Y |
 | qwen-code | Y | Y | Y | Y |
@@ -56,11 +60,19 @@ names included, rather than going through a per-event `map_event`. Whether the
 copied file actually fires is unconfirmed (no headless hooks-list command
 exists), so it carries no `Y`/`-` verdict here.
 
+agentgear ships 15 hook-capable backends, one more than this host's derive names.
+The odd one out is `vscode-copilot`, which declares `scopes: &["project"]` and so
+writes at project scope only; this host installs at `Scope::User`, where the
+fan-out skips it. A host reaches it by naming `vscode-copilot` in its derive's
+`agents = [...]` and installing at `Scope::Project { path }`, since the fan-out
+iterates the derive's agent list before it ever looks at scope.
+
 crush is the one harness (besides copilot-cli) that skips most of this plugin's
 surface outright. It defines exactly one hook event (`PreToolUse`), so only
 `guard` lands there. `self-heal`, `check-restart`, and `audit` are never written
-under a guessed name. That is the real, verified shape of crush's own hook
-engine (`docs/research/verify-crush.md`), not a translation gap.
+under a guessed name. That ceiling is crush's own: its source declares a single
+hook-event constant (`EventPreToolUse`, `internal/hooks/hooks.go`), and no other
+event name is dispatched anywhere in its agent loop.
 
 \* This plugin's `guard` hook is scoped to CC's `Bash` tool, and a tool matcher
 does not survive translation everywhere. Two things happen to it. gemini and
@@ -69,7 +81,7 @@ are named differently (`run_command`, not `Bash`), so the hook lands correctly
 and then matches nothing. cline has no matcher field at all, so `guard` runs on
 *every* tool there instead. Either way the hook itself is live; only its
 scoping is lost, and the unmatched events above are unaffected. Per-harness
-detail: each `docs/harness/<id>.md`.
+detail: [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends#hook-event-mapping).
 
 A `Y` is what a backend's `map_event` translates to, not proof the hook fires in
 a live session: several harnesses need auth this example's tests do not have.

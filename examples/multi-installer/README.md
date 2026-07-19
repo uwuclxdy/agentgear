@@ -7,7 +7,10 @@ build its own per-backend picker UI, and `install_into`'s `--agent` filter.
 
 Ships a minimal plugin tree (one MCP server, one command) since the point is the
 picker, not the tree; see [`kitchen-sink`](../kitchen-sink) for the full component
-surface.
+surface, or [`hello-mcp`](../hello-mcp) for the smallest host to start from.
+
+The picker itself is the `status` arm of `src/main.rs`. `src/lib.rs` holds the derive
+listing all 25 ids.
 
 ## Run it
 
@@ -16,7 +19,9 @@ cargo run -p multi-installer -- status
 cargo run -p multi-installer -- setup --agent gemini   # one backend only
 cargo run -p multi-installer -- setup                  # every detected backend
 cargo run -p multi-installer -- uninstall
+cargo run -p multi-installer -- self-heal
 cargo run -p multi-installer -- doctor
+cargo run -p multi-installer -- mcp                    # the plugin's own stdio server
 ```
 
 `status` resolves every `MultiInstaller::AGENTS` id through `backend_for` and

@@ -22,13 +22,23 @@ mytool/
   build.rs
   plugin/
     .claude-plugin/
-      plugin.json        # name + version + description + author
-    commands/            # your commands, hooks, agents, skills
+      plugin.json
   src/
     main.rs
 ```
 
-`plugin.json` `version` must equal `CARGO_PKG_VERSION`. The crate generates `marketplace.json`, so you do not ship one.
+`plugin.json` is the only file the tree needs:
+
+```json
+{
+  "name": "mytool",
+  "version": "0.1.0",
+  "description": "What the plugin does",
+  "author": { "name": "you" }
+}
+```
+
+Its `name` must match the derive's `name` attr, and its `version` must equal `CARGO_PKG_VERSION`. The crate generates `marketplace.json`, so you do not ship one. Component dirs (`commands/`, `agents/`, `skills/`, `hooks/`), MCP servers, and what each harness does with them: [Plugin tree](Plugin-Tree).
 
 ## 3. Derive the host
 
@@ -50,8 +60,19 @@ Attributes:
 | `tree` | `$CARGO_MANIFEST_DIR/plugin` | embedded tree path |
 | `default_source` | `"embedded"` | `"embedded"` or `"github"` |
 | `github_repo` | required for github | `"owner/repo"` |
-| `agents` | `["claude"]` | which backends `setup` wires |
+| `agents` | `["claude"]` | which backends `setup` wires; an empty list is rejected at compile time |
 | `embed` | `true` | bake the compressed tree in via `include_bytes!`; set `false` (with `default-features = false` on the crate) for a `default_source = "github"` host that ships no baked tree |
+| `instructions_fn` | none | a path to a `fn() -> Option<String>`, called from `PluginHost::instructions`. Host-authored always-loaded guidance, delivered through each harness's native context channel. `opencode` is the only backend that writes it today (a `<plugin>-instructions.md` registered in `opencode.json`'s `instructions[]`); see [Harness comparison](Harness-Comparison) |
+
+> [!IMPORTANT]
+> Every id in `agents = [...]` needs its cargo feature enabled on the `agentgear` dependency. The feature name is the id (`qwen-code`, `vscode-copilot`), and `claude` is on by default:
+>
+> ```toml
+> [dependencies]
+> agentgear = { git = "https://github.com/uwuclxdy/agentgear", features = ["codex", "cursor"] }
+> ```
+>
+> `all-agents` enables all 25 backends at once.
 
 ## 4. Add the build guard
 
@@ -89,6 +110,22 @@ fn main() -> anyhow::Result<()> {
 
 `install` takes any `Source`: `Source::Embedded` decompresses the baked blob, `Source::Path(dir)` materializes an on-disk tree, `Source::GitHub { repo, ref_ }` installs from a GitHub marketplace pinned to `ref_` (sent to the CLI as `{repo}@{ref_}`; the default `ref_` is the `v{version}` tag). `self_heal`/`update`/`doctor` resolve `Source::Embedded`/`Source::GitHub` against the `default_source` attr and rehydrate a `Source::Path` install from its stamp marker, so a `--path` install stays path-sourced across repair instead of drifting back to the baked blob.
 
+To target a subset of `AGENTS` (a `setup --agent gemini` flag), call `install_into` instead. An empty slice means all of them:
+
+```rust
+MyHost::install_into(Scope::User, Source::Embedded, &["gemini"])?;
+```
+
+`examples/multi-installer` builds its whole picker on this plus `agentgear::backend_for`.
+
+The scope-taking methods (`install`, `install_into`, `update`, `uninstall`) accept `Scope::Project { path }`, which writes into a repo's own config instead of the user's home:
+
+```rust
+MyHost::install(Scope::Project { path: std::env::current_dir()? }, Source::Embedded)?;
+```
+
+Scope support is per backend. One whose `capabilities().scopes` omits `"project"` is skipped silently, and `vscode-copilot` is project-only (user scope skips it the same way). The [Harness comparison](Harness-Comparison) has the per-backend split.
+
 Point the plugin's hooks at subcommands. The `SessionStart` hook calls `MyHost::self_heal()`, a no-op on a healthy install that repairs a broken one without resurrecting an uninstall. The `UserPromptSubmit` hook calls a `check-restart` subcommand wrapping `MyHost::restart_pending()`: after an out-of-band `setup update`, it prints a notice that the running session still has the old plugin loaded and needs a `/reload-plugins`. Claude Code does not hot-reload plugin hooks, so ship the `UserPromptSubmit` hook from your first release. It fires from whatever version the running session already has. Both hooks live in `hooks/hooks.json` at the plugin root:
 
 ```json
@@ -109,10 +146,10 @@ Installed
 
 The first install is always explicit: the hook that triggers self-heal ships inside the plugin, so it cannot fire until the plugin is installed. See [How It Works](How-It-Works) for what runs under the hood and [Doctor](Doctor) for verifying an install.
 
-Five runnable hosts live in the repo's [`examples/`](https://github.com/uwuclxdy/agentgear/tree/mommy/examples):
+Five runnable hosts live in the repo's [`examples/`](https://github.com/uwuclxdy/agentgear/tree/HEAD/examples):
 
-- `hello-mcp`: this page in ~30 lines, one MCP server to Claude Code only.
+- `hello-mcp`: the smallest working host, one MCP server to Claude Code only. Its tree is a lone `plugin.json`, and it carries the `instructions_fn` wiring.
 - `kitchen-sink`: every component type (MCP server, hooks, command, subagent, skill) across seven harnesses.
-- `multi-installer`: builds its own agent picker through `backend_for`, then installs a filtered subset.
-- `hooks-everywhere`: four hook events fanned across the 15 hook-capable harnesses; its README carries the event map.
+- `multi-installer`: builds its own agent picker through `backend_for` + `install_into`, then installs a filtered subset.
+- `hooks-everywhere`: four hook events fanned across 14 harnesses; its README carries the event map.
 - `from-github`: a zero-embed host (`embed = false`, `default_source = "github"`) that tracks a remote repo.
