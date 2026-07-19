@@ -79,7 +79,10 @@ impl AgentBackend for PiBackend {
         };
         let surface = DoctorCheck {
             name: "pi surface",
-            status: CheckStatus::Ok("detect-only: no mcp or config-file hooks to translate; pi's file-writable commands/skills surfaces are out of scope (see docs/harness/pi.md)".into()),
+            status: CheckStatus::Ok(
+                "detect-only: no mcp or config-file hooks to translate; pi's file-writable commands/skills surfaces are out of scope"
+                    .into(),
+            ),
         };
         DoctorReport::from_checks(vec![detected, surface])
     }
