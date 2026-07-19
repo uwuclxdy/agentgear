@@ -80,3 +80,41 @@ fn report_carries_one_line_per_agent_with_skips_visible() {
     assert!(lines.contains(&"zed: skipped (not installed on this machine)"), "undetected zed should read as a skip:\n{out}");
     assert!(lines.contains(&"claude: skipped (not installed on this machine)"), "claude (not on PATH here) should read as a skip:\n{out}");
 }
+
+/// One bad agent must not nuke the fan-out: gemini (earlier in the agents list)
+/// is broken — its seeded `settings.json` is unparseable, so its reconcile
+/// refuses to clobber it — yet droid (later in the list) still installs,
+/// self-heals, and uninstalls. Before the isolation fix, gemini's error aborted
+/// every one of these calls mid-fan-out, stranding droid.
+#[test]
+fn a_failing_agent_does_not_strand_the_rest_of_the_fanout() {
+    let env = Env::new("broken");
+    fs::write(env.root.join(".gemini").join("settings.json"), "{ this is not json").unwrap();
+    fs::create_dir_all(env.root.join(".factory")).unwrap();
+    let droid_mcp = env.root.join(".factory").join("mcp.json");
+
+    // install: gemini fails, droid (after it) still converges.
+    let (ok, out) = env.fixture(&["setup-report", "--agent", "gemini", "--agent", "droid"]);
+    assert!(!ok, "a failed agent must flip the exit code:\n{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.iter().any(|l| l.starts_with("gemini: failed: ")), "gemini must read as failed:\n{out}");
+    assert!(lines.contains(&"droid: installed"), "droid must install despite gemini failing first:\n{out}");
+    assert!(droid_mcp.exists(), "droid's mcp.json must have been written");
+
+    // the legacy merged path also finishes the fan-out before reporting the failure.
+    let (ok, _) = env.fixture(&["setup", "--agent", "gemini", "--agent", "droid"]);
+    assert!(!ok, "legacy setup must still surface the failure via its exit code");
+
+    // self_heal: gemini's probe fails on the same unparseable config; droid heals to a no-op.
+    let (ok, out) = env.fixture(&["self-heal-report"]);
+    assert!(!ok, "self-heal must surface gemini's failure:\n{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.iter().any(|l| l.starts_with("gemini: failed: ")), "gemini must read as failed:\n{out}");
+    assert!(lines.contains(&"droid: no changes needed"), "droid must still heal cleanly:\n{out}");
+
+    // uninstall: gemini's remove fails, droid's entries still come out.
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(!ok, "uninstall must surface gemini's failure: {out}");
+    let mcp = fs::read_to_string(&droid_mcp).unwrap();
+    assert!(!mcp.contains("\"ez-fixture\""), "droid's mcp entry must be removed despite gemini failing first:\n{mcp}");
+}

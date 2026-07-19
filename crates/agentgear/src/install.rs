@@ -42,21 +42,38 @@ pub(crate) fn update_report(plugin: &Plugin, scope: Scope, source: Source) -> Re
 
 pub(crate) fn uninstall_report(plugin: &Plugin, scope: Scope) -> Result<AgentReport> {
     let _lock = lock::acquire()?;
+    data_dir_precondition(plugin)?;
     let mut report = AgentReport::new();
     for id in plugin.agents {
-        let backend = resolve(id)?;
-        // An absent tool has nothing of ours to remove, but the marker is agentgear's
-        // own state — clear it unconditionally so an explicit uninstall never orphans one.
-        if !backend.detect() {
-            report.push(id, AgentStatus::Skipped(SkipReason::NotDetected));
-        } else if !backend.capabilities().scopes.contains(&scope.as_cli()) {
-            report.push(id, AgentStatus::Skipped(SkipReason::ScopeUnsupported));
-        } else {
-            report.push(id, AgentStatus::Converged(backend.remove(plugin, &scope)?));
-        }
-        stamp::clear(plugin, &scope, id)?;
+        report.push(id, uninstall_agent(plugin, &scope, id));
     }
     Ok(report)
+}
+
+/// One agent's uninstall slice; a failure here never aborts the fan-out. An
+/// absent tool has nothing of ours to remove, but the marker is agentgear's own
+/// state — cleared even for a skipped agent, so an explicit uninstall never
+/// orphans one. A FAILED remove keeps its marker (the install is still live;
+/// the next uninstall or self_heal picks it back up).
+fn uninstall_agent(plugin: &Plugin, scope: &Scope, id: &'static str) -> AgentStatus {
+    let backend = match resolve(id) {
+        Ok(backend) => backend,
+        Err(e) => return AgentStatus::Failed(e.to_string()),
+    };
+    let status = if !backend.detect() {
+        AgentStatus::Skipped(SkipReason::NotDetected)
+    } else if !backend.capabilities().scopes.contains(&scope.as_cli()) {
+        AgentStatus::Skipped(SkipReason::ScopeUnsupported)
+    } else {
+        match backend.remove(plugin, scope) {
+            Ok(outcome) => AgentStatus::Converged(outcome),
+            Err(e) => return AgentStatus::Failed(e.to_string()),
+        }
+    };
+    match stamp::clear(plugin, scope, id) {
+        Ok(()) => status,
+        Err(e) => AgentStatus::Failed(e.to_string()),
+    }
 }
 
 /// One reconcile pass over the configured agents. `rehydrate`: when true
@@ -66,31 +83,53 @@ pub(crate) fn uninstall_report(plugin: &Plugin, scope: Scope) -> Result<AgentRep
 /// `desired.source` exactly as given — an explicit install/`install_into` source
 /// is the caller's, never a prior marker's.
 fn reconcile_all(plugin: &Plugin, desired: &Desired, scope: &Scope, filter: &[&str], rehydrate: bool) -> Result<AgentReport> {
+    data_dir_precondition(plugin)?;
     let mut report = AgentReport::new();
     for id in plugin.agents {
         if !filter.is_empty() && !filter.contains(id) {
             continue; // not asked for: no entry, exactly as before the report existed
         }
-        let backend = resolve(id)?;
-        if !backend.detect() {
-            // never forge config for a tool that isn't installed (design §0)
-            report.push(id, AgentStatus::Skipped(SkipReason::NotDetected));
-            continue;
-        }
-        // No surface at this scope (e.g. a repo-config-only IDE backend at user
-        // scope): skip, no marker — visible in the report, but still exempt from
-        // an explicit `install_into` filter's expectations, matching detect.
-        if !backend.capabilities().scopes.contains(&scope.as_cli()) {
-            report.push(id, AgentStatus::Skipped(SkipReason::ScopeUnsupported));
-            continue;
-        }
-        let source = if rehydrate { stamp::resolve_source(plugin, scope, id, desired.source.clone()) } else { desired.source.clone() };
-        let per_agent = Desired { source, reenable: desired.reenable };
-        let outcome = backend.reconcile(plugin, &per_agent, scope)?;
-        stamp::write(plugin, scope, &per_agent.source, id)?;
-        report.push(id, AgentStatus::Converged(outcome));
+        report.push(id, reconcile_agent(plugin, desired, scope, id, rehydrate));
     }
     Ok(report)
+}
+
+/// One agent's reconcile slice; a failure here becomes its `Failed` entry and
+/// never aborts the fan-out (one bad agent must not strand the other 24
+/// mid-write). Markers stay strictly per agent: only THIS agent's marker is
+/// written, and only after its own reconcile succeeded.
+fn reconcile_agent(plugin: &Plugin, desired: &Desired, scope: &Scope, id: &'static str, rehydrate: bool) -> AgentStatus {
+    let backend = match resolve(id) {
+        Ok(backend) => backend,
+        Err(e) => return AgentStatus::Failed(e.to_string()),
+    };
+    if !backend.detect() {
+        // never forge config for a tool that isn't installed (design §0)
+        return AgentStatus::Skipped(SkipReason::NotDetected);
+    }
+    // No surface at this scope (e.g. a repo-config-only IDE backend at user
+    // scope): skip, no marker — visible in the report, but still exempt from
+    // an explicit `install_into` filter's expectations, matching detect.
+    if !backend.capabilities().scopes.contains(&scope.as_cli()) {
+        return AgentStatus::Skipped(SkipReason::ScopeUnsupported);
+    }
+    let source = if rehydrate { stamp::resolve_source(plugin, scope, id, desired.source.clone()) } else { desired.source.clone() };
+    let per_agent = Desired { source, reenable: desired.reenable };
+    let written = backend.reconcile(plugin, &per_agent, scope).and_then(|outcome| {
+        stamp::write(plugin, scope, &per_agent.source, id)?;
+        Ok(outcome)
+    });
+    match written {
+        Ok(outcome) => AgentStatus::Converged(outcome),
+        Err(e) => AgentStatus::Failed(e.to_string()),
+    }
+}
+
+/// A missing data root (`HOME`/`XDG_DATA_HOME` both unset) fails every agent's
+/// marker write identically, so it aborts the whole call like the lock — a
+/// genuine precondition, not 25 copies of the same per-agent failure.
+pub(crate) fn data_dir_precondition(plugin: &Plugin) -> Result<()> {
+    crate::host::data_root(plugin).map(|_| ())
 }
 
 pub(crate) fn resolve(id: &str) -> Result<Box<dyn crate::agents::AgentBackend>> {

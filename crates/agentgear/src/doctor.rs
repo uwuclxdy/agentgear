@@ -90,7 +90,22 @@ impl fmt::Display for DoctorReport {
 pub(crate) fn doctor(plugin: &Plugin, source: &Source) -> Result<DoctorReport> {
     let mut checks = vec![check_host_binary()];
     for id in plugin.agents {
-        let backend = crate::install::resolve(id)?;
+        // An unresolvable id is a failed CHECK, never an aborted report: a health
+        // command that throws away every check it already collected is useless
+        // exactly when it is needed.
+        let backend = match crate::install::resolve(id) {
+            Ok(backend) => backend,
+            Err(e) => {
+                checks.push(DoctorCheck {
+                    name: id,
+                    status: CheckStatus::Fail {
+                        problem: e.to_string(),
+                        fix: "rebuild the host with this agent's cargo feature enabled".into(),
+                    },
+                });
+                continue;
+            }
+        };
         if backend.detect() {
             // This agent's OWN marker settles its source (never a sibling's — the
             // per-agent-marker invariant); `source` is the caller's `DEFAULT_SOURCE`.
@@ -390,3 +405,7 @@ fn bare_command(command: &str) -> Option<String> {
         && token.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
     looks_bare.then(|| token.to_string())
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/doctor.rs"]
+mod doctor_tests;

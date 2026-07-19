@@ -32,24 +32,37 @@ pub(crate) fn self_heal_report(plugin: &Plugin, source: Source) -> Result<AgentR
     // stable session context to key on in v1.
     let scope = Scope::User;
     let _lock = lock::acquire()?;
+    // Like the lock, a missing data root fails every agent's marker read/write
+    // identically: a whole-call precondition, not a per-agent failure.
+    crate::install::data_dir_precondition(plugin)?;
 
     let mut report = AgentReport::new();
     for id in plugin.agents {
-        let backend = resolve(id)?;
-        if !backend.detect() {
-            // a tool that isn't installed has nothing to heal
-            report.push(id, AgentStatus::Skipped(SkipReason::NotDetected));
-            continue;
-        }
-        if !backend.capabilities().scopes.contains(&scope.as_cli()) {
-            // no user-scope surface (e.g. a repo-config-only IDE backend)
-            report.push(id, AgentStatus::Skipped(SkipReason::ScopeUnsupported));
-            continue;
-        }
-        let outcome = heal_agent(&*backend, plugin, &source, &scope, *id == "claude")?;
-        report.push(id, AgentStatus::Converged(outcome));
+        report.push(id, heal_status(plugin, &source, &scope, id));
     }
     Ok(report)
+}
+
+/// One agent's heal slice; a failure here becomes its `Failed` entry and never
+/// aborts the fan-out (a session-start heal must not let one broken agent stop
+/// the other 24 from healing).
+fn heal_status(plugin: &Plugin, source: &Source, scope: &Scope, id: &'static str) -> AgentStatus {
+    let backend = match resolve(id) {
+        Ok(backend) => backend,
+        Err(e) => return AgentStatus::Failed(e.to_string()),
+    };
+    if !backend.detect() {
+        // a tool that isn't installed has nothing to heal
+        return AgentStatus::Skipped(SkipReason::NotDetected);
+    }
+    if !backend.capabilities().scopes.contains(&scope.as_cli()) {
+        // no user-scope surface (e.g. a repo-config-only IDE backend)
+        return AgentStatus::Skipped(SkipReason::ScopeUnsupported);
+    }
+    match heal_agent(&*backend, plugin, source, scope, id == "claude") {
+        Ok(outcome) => AgentStatus::Converged(outcome),
+        Err(e) => AgentStatus::Failed(e.to_string()),
+    }
 }
 
 /// Drive one detected backend's marker × `probe()` table. `is_claude` gates the
