@@ -141,6 +141,25 @@ sse). The per-tool verdicts are on [Harness comparison](Harness-Comparison#remot
 Servers whose command or args carry `${CLAUDE_PLUGIN_ROOT}` are skipped on non-CC backends
 (that token only expands inside Claude Code).
 
+## Customization ceiling
+
+A host that uses the derive customizes through the `#[plugin(..)]` attributes plus
+`install_into` for runtime agent selection. Every knob configures the whole plugin. None
+reshapes one backend: nothing overrides how a backend renders (a different MCP command for
+codex) or drops a surface for one backend (skipping hooks on cursor). Each backend writes what
+its target tool supports, gated by detection and the `${CLAUDE_PLUGIN_ROOT}` portability filter.
+
+`instructions_fn` is the only method override the derive exposes, because it emits the sole
+`impl PluginHost`. For anything past the attributes, write `impl PluginHost` by hand. Every trait
+item is public: supply the five consts (`NAME`, `MARKETPLACE`, `VERSION`, `DEFAULT_SOURCE`,
+`AGENTS`) and `embedded_blob()`, and the lifecycle methods (`install`, `update`, `self_heal`,
+`doctor`, …) come with the trait. You give up three derive-only guarantees:
+
+- the compile error when the `build.rs` guard is missing;
+- the `agents`-vs-feature check;
+- the baked `include_bytes!` tree: a hand-written `embedded_blob()` returns `&[]`, so such a
+  host installs from `Source::Path` or `Source::GitHub`, not `Source::Embedded`.
+
 ## Add a backend
 
 `AgentBackend` is the whole seam: seven methods, one registry arm. A host opts a plugin into an

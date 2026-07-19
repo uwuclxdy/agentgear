@@ -6,11 +6,15 @@ The derive ships behind the default `derive` feature, so a consumer adds one dep
 
 ```toml
 [dependencies]
-agentgear = "0.1.0-rc.1"
+agentgear = "0.1"
 
 [build-dependencies]
-agentgear = "0.1.0-rc.1"
+agentgear = "0.1"
 ```
+
+> [!NOTE]
+> `0.1` resolves once `0.1.0` ships. During the release candidate, pin the prerelease
+> explicitly: `cargo add agentgear@0.1.0-rc.1` (add `--build` for the build-dependency).
 
 ## 2. Lay out the plugin tree
 
@@ -69,10 +73,12 @@ Attributes:
 >
 > ```toml
 > [dependencies]
-> agentgear = { version = "0.1.0-rc.1", features = ["codex", "cursor"] }
+> agentgear = { version = "0.1", features = ["codex", "cursor"] }
 > ```
 >
 > `all-agents` enables all 25 backends at once.
+
+The derive is the whole customization seam: the attributes above plus `install_into` (step 5) to pick a subset of agents. No attribute reshapes one backend (a different MCP command for codex, or skipping hooks on cursor). For control past the attributes, hand-write `impl PluginHost` instead of deriving; you supply the five consts and `embedded_blob()` and give up the build guard and the baked tree, so it suits a `Source::Path`/`Source::GitHub` host. [Agent backends](Agent-Backends#customization-ceiling) has the detail.
 
 ## 4. Add the build guard
 
@@ -117,6 +123,8 @@ MyHost::install_into(Scope::User, Source::Embedded, &["gemini"])?;
 ```
 
 `examples/multi-installer` builds its whole picker on this plus `agentgear::backend_for`.
+`agentgear::AGENT_IDS` lists every backend id compiled into the build (each resolvable through
+`backend_for`), for a host that wants the full roster rather than its own `AGENTS` subset.
 
 The scope-taking methods (`install`, `install_into`, `update`, `uninstall`) accept `Scope::Project { path }`, which writes into a repo's own config instead of the user's home:
 

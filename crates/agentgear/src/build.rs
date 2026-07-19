@@ -8,7 +8,7 @@
 //! caches on version, so a mismatch would ship a silent no-op), tracks the tree
 //! for rebuilds, and emits the `AGENTGEAR_GUARD` env the derive's const-panic
 //! checks for. It also emits a `cargo:warning` naming any plugin entry that carries
-//! `${CLAUDE_PLUGIN_ROOT}` (see [`warn_non_portable`]). With the `embed` feature
+//! `${CLAUDE_PLUGIN_ROOT}` (the non-portability lint). With the `embed` feature
 //! (default) it also tars + brotli-compresses the tree to `$OUT_DIR/agentgear.tar.br`
 //! and emits `AGENTGEAR_BLOB` (the path the derive's `include_bytes!` bakes in).
 

@@ -6,6 +6,8 @@
 
 Rust library and derive macro for shipping a coding-agent plugin from a binary. For Claude Code and GitHub Copilot CLI it orchestrates each tool's own plugin-management CLI and never forges its on-disk registry state. For the other 23 agents it read-modify-writes each tool's own config file, touching only the entries it wrote.
 
+[![crates.io](https://shields.uwuclxdy.dev/crates/v/agentgear)](https://crates.io/crates/agentgear)
+[![docs.rs](https://shields.uwuclxdy.dev/docsrs/agentgear)](https://docs.rs/agentgear)
 [![ci](https://shields.uwuclxdy.dev/github/actions/workflow/status/uwuclxdy/agentgear/ci.yml?label=ci)](https://github.com/uwuclxdy/agentgear/actions/workflows/ci.yml)
 [![license](https://shields.uwuclxdy.dev/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 [![claude code](https://shields.uwuclxdy.dev/badge/Claude%20Code-plugin%20lifecycle-8A2BE2)](https://code.claude.com/docs/en/plugins-reference)
@@ -56,14 +58,17 @@ The 23 config-merge agents skip the marketplace steps: their `reconcile` read-mo
 ## Install
 
 > [!NOTE]
-> Release candidate. `0.1.0-rc.1` is on crates.io; the API may change before `0.1.0`.
+> Release candidate: `0.1.0-rc.1` is on crates.io and the API may change before `0.1.0`.
+> The snippets below pin `0.1`, which resolves once `0.1.0` ships. To install the RC
+> today, pin the prerelease: `cargo add agentgear@0.1.0-rc.1` (add `--build` for the
+> build-dependency).
 
 ```toml
 [dependencies]
-agentgear = "0.1.0-rc.1"
+agentgear = "0.1"
 
 [build-dependencies]
-agentgear = "0.1.0-rc.1"
+agentgear = "0.1"
 ```
 
 The derive ships with the crate behind the default `derive` feature, so consumers add one dependency.
@@ -106,6 +111,12 @@ The plugin tree lives at `<crate>/plugin/.claude-plugin/plugin.json` by default,
 
 The Claude Code backend needs `claude` ≥ 2.1.196 on PATH at runtime; the copilot-cli backend needs `copilot` ≥ 1.0.71 (its `plugin` subcommand didn't exist before). `setup` fails the version gate with a clear error below that version. The config-merge backends have no CLI requirement.
 
+## Customization
+
+The seam is the derive: the `#[plugin(..)]` attributes plus `install_into` to target a subset of agents at runtime. Every knob configures the whole plugin. None reshapes one backend: nothing overrides how a backend renders (say a different MCP command for codex) or drops a surface for one backend (say skipping hooks on cursor). Each backend writes what its target tool supports, gated by detection and the `${CLAUDE_PLUGIN_ROOT}` portability filter.
+
+`instructions_fn` is the one method override, because the derive emits the sole `impl PluginHost` block. For control past the attributes, write `impl PluginHost` by hand instead of deriving. Supply the five consts (`NAME`, `MARKETPLACE`, `VERSION`, `DEFAULT_SOURCE`, `AGENTS`) and `embedded_blob()`; the lifecycle methods come with the trait. This drops the derive's compile-time guards (the missing-`build.rs` check and the `agents`-vs-feature check) and the baked `include_bytes!` tree, so a hand-written host returns `&[]` from `embedded_blob()` and installs from a `Source::Path` or `Source::GitHub`. See [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) for the detail.
+
 ## Examples
 
 Five runnable hosts live in [`examples/`](examples/), all workspace members with tests that run in plain `cargo test`:
@@ -131,7 +142,7 @@ A feature name is the agent id, and the two lists must match: an id in `agents =
 
 ```toml
 [dependencies]
-agentgear = { version = "0.1.0-rc.1", features = ["codex", "cursor", "opencode"] }
+agentgear = { version = "0.1", features = ["codex", "cursor", "opencode"] }
 ```
 
 ```rust
@@ -163,7 +174,7 @@ Grouped by what each surface translates:
 
 Skills translate on 13 of 25 backends now (see above). Instructions (always-loaded host guidance
 from `PluginHost::instructions`) translate on `opencode` only so far, written to a dedicated file
-whose path is registered in opencode's `instructions[]`. `vscode-copilot` writes at project scope only. Of the other 23 non-Claude backends, 14 accept both user and project scope; the 9 that are user-scope only include `copilot-cli`, whose CLI has no `--scope`. Codex's hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI; kimi's fire as soon as they are written. Per-agent config paths and skipped-surface reasons are on the [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) wiki page; for a side-by-side view of how each tool handles config paths, scopes, MCP shapes, hook events, and Claude-Code-config interop, see [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison).
+whose path is registered in opencode's `instructions[]`. Of the 24 non-Claude backends, 14 accept both scopes and 9 are user-scope only (`copilot-cli` among them, its CLI has no `--scope`). `vscode-copilot` is the one project-scope-only backend. Codex's hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI; kimi's fire as soon as they are written. Per-agent config paths and skipped-surface reasons are on the [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) wiki page; for a side-by-side view of how each tool handles config paths, scopes, MCP shapes, hook events, and Claude-Code-config interop, see [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison).
 
 ## Status
 

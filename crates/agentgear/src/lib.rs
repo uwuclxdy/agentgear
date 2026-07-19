@@ -63,9 +63,11 @@
 //! The host also authors a one-line `build.rs`:
 //! `fn main() { agentgear::build::assert_plugin_version(); }`.
 //!
-//! Two runnable hosts live in the repo's `examples/`: `hello-mcp` (the minimal
-//! Claude-only host) and `kitchen-sink` (every component type across seven
-//! harnesses, with hermetic lifecycle tests).
+//! Five runnable hosts live in the repo's `examples/`. `hello-mcp` is the minimal
+//! Claude-only host; `kitchen-sink` exercises every component type across seven
+//! harnesses; `multi-installer` builds an agent picker through [`backend_for`];
+//! `hooks-everywhere` fans one hook event across many harnesses; `from-github` is a
+//! zero-embed host tracking a GitHub source.
 //!
 //! # Feature flags
 //!
@@ -76,7 +78,7 @@
 //! or path [`Source`] instead.
 //!
 //! Every other coding agent is its own feature, named by its backend id;
-//! `all-agents` enables all 24 at once. Only four pull an extra dependency:
+//! `all-agents` enables all 25 at once. Only four pull an extra dependency:
 //!
 //! | feature (= backend id) | extra dependency |
 //! |---|---|
@@ -85,8 +87,15 @@
 //! | `opencode`, `gemini`, `cursor`, `cline`, `devin`, `qwen-code`, `copilot-cli`, `vscode-copilot`, `jetbrains-copilot`, `kiro`, `zed`, `openclaw`, `kilo`, `antigravity`, `antigravity-cli`, `pi`, `amp`, `crush`, `droid`, `augment` | none |
 //!
 //! Backends are selected per host binary with the derive's `agents = [...]` list;
-//! [`backend_for`] resolves an id to its [`AgentBackend`] when a host wants its own
-//! picker UI. Design rationale lives in `docs/design.md`.
+//! [`backend_for`] resolves an enabled id to its [`AgentBackend`], and [`AGENT_IDS`]
+//! is the roster of ids compiled into the current build, so a host can drive its own
+//! picker UI without hardcoding the list. The full set of 25 ids: plugin-native
+//! `claude` and `copilot-cli` (full lifecycle through the tool's own CLI), plus the
+//! 23 config-merge backends `codex`, `opencode`, `gemini`, `cursor`, `cline`,
+//! `devin`, `qwen-code`, `vscode-copilot`, `jetbrains-copilot`, `kimi`, `kiro`,
+//! `zed`, `omp`, `openclaw`, `kilo`, `antigravity`, `antigravity-cli`, `pi`, `goose`,
+//! `amp`, `crush`, `droid`, `augment`. Design rationale and the full per-backend
+//! reference live in the [project wiki](https://github.com/uwuclxdy/agentgear/wiki).
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, doc(auto_cfg))]
