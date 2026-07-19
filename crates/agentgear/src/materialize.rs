@@ -229,8 +229,10 @@ pub(crate) fn blob_entries(_blob: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
     Err(Error::Tree("this binary was built without the `embed` feature; use `Source::Path` or `Source::GitHub`, or enable `embed`".into()))
 }
 
-/// Read an on-disk plugin tree (`Source::Path`) into file entries.
-fn dir_entries(dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
+/// Read an on-disk plugin tree (`Source::Path`) into file entries. Also the
+/// build-time portability lint's tree reader (`build::warn_non_portable`), so it
+/// stays available without the `embed` feature.
+pub(crate) fn dir_entries(dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
     if !dir.join(".claude-plugin").join("plugin.json").exists() {
         return Err(Error::Tree(format!("{} is not a plugin tree (no .claude-plugin/plugin.json)", dir.display())));
     }
