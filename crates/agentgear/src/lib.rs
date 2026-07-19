@@ -66,6 +66,10 @@ mod stamp;
 mod util;
 
 pub mod build;
+// The derive's compile-time listed-agent-vs-enabled-feature check reads these;
+// hidden because nothing else should (the module doc has the full story).
+#[doc(hidden)]
+pub mod __feature_check;
 
 pub use agents::{AgentBackend, BackendState, backend_for};
 pub use components::{HookBinding, MarkdownDoc, McpKind, McpServer, PluginComponents, SkillDir};
