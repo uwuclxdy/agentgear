@@ -56,14 +56,14 @@ The 23 config-merge agents skip the marketplace steps: their `reconcile` read-mo
 ## Install
 
 > [!NOTE]
-> Pre-release. The crate is not on crates.io yet; depend on it by git until the first tagged release.
+> Release candidate. `0.1.0-rc.1` is on crates.io; the API may change before `0.1.0`.
 
 ```toml
 [dependencies]
-agentgear = { git = "https://github.com/uwuclxdy/agentgear" }
+agentgear = "0.1.0-rc.1"
 
 [build-dependencies]
-agentgear = { git = "https://github.com/uwuclxdy/agentgear" }
+agentgear = "0.1.0-rc.1"
 ```
 
 The derive ships with the crate behind the default `derive` feature, so consumers add one dependency.
@@ -131,7 +131,7 @@ A feature name is the agent id, and the two lists must match: an id in `agents =
 
 ```toml
 [dependencies]
-agentgear = { git = "https://github.com/uwuclxdy/agentgear", features = ["codex", "cursor", "opencode"] }
+agentgear = { version = "0.1.0-rc.1", features = ["codex", "cursor", "opencode"] }
 ```
 
 ```rust

@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased — 2026-07-19
+## 0.1.0-rc.1 - 2026-07-19
 
-First public release.
+First public release candidate.
 
 ### Features
 - `#[derive(PluginHost)]` gave a binary the whole plugin lifecycle: `install`, `update`, `uninstall`, `self_heal`, `doctor`.

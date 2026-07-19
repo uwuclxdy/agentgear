@@ -6,10 +6,10 @@ The derive ships behind the default `derive` feature, so a consumer adds one dep
 
 ```toml
 [dependencies]
-agentgear = { git = "https://github.com/uwuclxdy/agentgear" }
+agentgear = "0.1.0-rc.1"
 
 [build-dependencies]
-agentgear = { git = "https://github.com/uwuclxdy/agentgear" }
+agentgear = "0.1.0-rc.1"
 ```
 
 ## 2. Lay out the plugin tree
@@ -69,7 +69,7 @@ Attributes:
 >
 > ```toml
 > [dependencies]
-> agentgear = { git = "https://github.com/uwuclxdy/agentgear", features = ["codex", "cursor"] }
+> agentgear = { version = "0.1.0-rc.1", features = ["codex", "cursor"] }
 > ```
 >
 > `all-agents` enables all 25 backends at once.
