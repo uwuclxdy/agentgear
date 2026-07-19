@@ -102,8 +102,8 @@ pub(crate) fn clear(plugin: &Plugin, scope: &Scope, agent: &str) -> Result<()> {
     }
 }
 
-/// The pure half of source resolution: derive `Source::Path` from an
-/// already-read marker, else fall back to `default`. Split out of
+/// The pure half of source resolution: derive the marker's own persisted
+/// source, else fall back to `default`. Split out of
 /// [`resolve_source`] so a caller that already has the marker in hand
 /// (self_heal's `heal_agent`, which reads it for its own marker-presence check)
 /// does not have to read it a second time.
@@ -118,26 +118,24 @@ pub(crate) fn clear(plugin: &Plugin, scope: &Scope, agent: &str) -> Result<()> {
 /// `docs/design.md` calls out (installing into `[claude, codex]` must never
 /// confuse one backend's marker for another's).
 pub(crate) fn source_from_marker(marker: Option<&Marker>, default: Source) -> Source {
-    // Only "path" rehydrates. Ceiling: an explicit `install(Source::Embedded)` on
-    // a `default_source = "github"` host stamps "embedded" but resolves back to the
-    // github default here, so update/self_heal/uninstall treat that agent as
-    // github-sourced. The github gate then skips a config backend on every heal
-    // pass, and on uninstall the same skip still clears the marker while the
-    // config writes stay on disk, orphaning them with nothing left to reclaim them.
-    // Upgrade path: rehydrate `source_mode == "embedded"` to `Source::Embedded`
-    // once it is decided whether an explicit embedded install should pin embedded
-    // over the host's compile-time default.
+    // "path" and "embedded" markers each rehydrate the source they were stamped
+    // with, so an explicit `install(Source::Embedded)` on a `default_source =
+    // "github"` host stays embedded through update/self_heal/uninstall (the
+    // github gate would otherwise skip that config backend on every heal pass and
+    // orphan its writes on uninstall). The fallthrough covers a genuinely absent
+    // or unknown marker, plus a "path" marker with no persisted path; a "github"
+    // marker also falls through, since `default` already supplies the repo + ref.
     match marker {
         Some(m) if m.source_mode == "path" => m.source_path.clone().map(|p| Source::Path(PathBuf::from(p))).unwrap_or(default),
+        Some(m) if m.source_mode == "embedded" => Source::Embedded,
         _ => default,
     }
 }
 
-/// Rehydrate `agent`'s own persisted `Source::Path` for `update`/`doctor`, neither
-/// of which carry a runtime `Source` of their own (only the compile-time
-/// `DEFAULT_SOURCE`, which the derive only ever emits as `embedded`/`github`).
-/// `Embedded`/`GitHub` already resolve correctly from `DEFAULT_SOURCE`, so this
-/// only ever overrides toward a path. Reads `agent`'s marker fresh; self_heal's
+/// Rehydrate `agent`'s own persisted source (`Path` or an explicit `Embedded`)
+/// for `update`/`doctor`, neither of which carry a runtime `Source` of their own
+/// (only the compile-time `DEFAULT_SOURCE`, which the derive only ever emits as
+/// `embedded`/`github`). Reads `agent`'s marker fresh; self_heal's
 /// `heal_agent` already has it and calls [`source_from_marker`] directly instead.
 pub(crate) fn resolve_source(plugin: &Plugin, scope: &Scope, agent: &str, default: Source) -> Source {
     let marker = read(plugin, scope, agent).ok().flatten();

@@ -67,10 +67,19 @@ fn source_from_marker_falls_back_to_default_when_marker_is_absent() {
 }
 
 #[test]
-fn source_from_marker_falls_back_to_default_for_a_non_path_marker() {
-    // An embedded- or github-mode marker never overrides `default`: only a
-    // path-mode marker carries a runtime source `DEFAULT_SOURCE` cannot supply.
+fn source_from_marker_rehydrates_an_embedded_marker() {
+    // An explicit `install(Source::Embedded)` on a github-default host stays
+    // embedded through repair/uninstall instead of drifting to `DEFAULT_SOURCE`
+    // (which would make the github gate skip the backend and orphan its writes).
     let m = marker("embedded", None);
+    assert_eq!(source_from_marker(Some(&m), Source::GitHub { repo: "o/r", ref_: "v1" }), Source::Embedded);
+}
+
+#[test]
+fn source_from_marker_falls_back_to_default_for_a_github_marker() {
+    // A github-mode marker carries no runtime source of its own; the compile-time
+    // default already supplies the repo + ref.
+    let m = marker("github", None);
     assert_eq!(source_from_marker(Some(&m), Source::GitHub { repo: "o/r", ref_: "v1" }), Source::GitHub { repo: "o/r", ref_: "v1" });
 }
 

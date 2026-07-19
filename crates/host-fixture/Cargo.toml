@@ -17,6 +17,13 @@ path = "src/main.rs"
 name = "github_fixture"
 path = "src/bin/github_fixture.rs"
 
+# A github-default host WITH the embedded blob (`embed = true`), so the hermetic
+# tests can pin that an explicit embedded install stays embedded through
+# self_heal/uninstall instead of drifting to the github default.
+[[bin]]
+name = "embedded_github_fixture"
+path = "src/bin/embedded_github_fixture.rs"
+
 [lints]
 workspace = true
 
