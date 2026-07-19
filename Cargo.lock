@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agentgear"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "agentgear-derive",
  "brotli",
@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "agentgear-derive"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -179,7 +179,7 @@ dependencies = [
 
 [[package]]
 name = "from-github"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "agentgear",
 ]
@@ -213,21 +213,21 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hello-mcp"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "agentgear",
 ]
 
 [[package]]
 name = "hooks-everywhere"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "agentgear",
 ]
 
 [[package]]
 name = "host-fixture"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "agentgear",
  "serde",
@@ -271,7 +271,7 @@ dependencies = [
 
 [[package]]
 name = "kitchen-sink"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "agentgear",
 ]
@@ -305,7 +305,7 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
 name = "multi-installer"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "agentgear",
 ]

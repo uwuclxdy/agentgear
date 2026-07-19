@@ -1,6 +1,6 @@
 {
   "name": "from-github",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.1",
   "description": "Zero-embed agentgear example plugin: installed from a GitHub marketplace, not baked into the binary.",
   "author": { "name": "agentgear examples" }
 }
