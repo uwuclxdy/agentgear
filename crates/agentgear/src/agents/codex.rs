@@ -395,22 +395,22 @@ fn report_checks(backend: &CodexBackend, plugin: &Plugin, source: &Source) -> Ve
 fn check_mcp_registered(servers: &[McpServer], doc: Option<&toml_edit::DocumentMut>) -> DoctorCheck {
     let name = "mcp server registered";
     let portable: Vec<&str> = servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect();
+    let skipped = report::skipped_mcp(servers, &portable);
     if portable.is_empty() {
-        return DoctorCheck { name, status: CheckStatus::Ok("no portable mcp servers to register".into()) };
+        return report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(report::NO_MCP.into()) }, &skipped);
     }
     let table = doc.and_then(|d| d.get("mcp_servers")).and_then(toml_edit::Item::as_table);
     let missing: Vec<&str> = portable.iter().copied().filter(|n| table.is_none_or(|t| !t.contains_key(n))).collect();
-    if missing.is_empty() {
-        DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", portable.join(", "))) }
-    } else {
-        DoctorCheck {
+    if !missing.is_empty() {
+        return DoctorCheck {
             name,
             status: CheckStatus::Fail {
                 problem: format!("mcp server(s) not in config.toml [mcp_servers]: {}", missing.join(", ")),
                 fix: "run the host's `setup`".into(),
             },
-        }
+        };
     }
+    report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", portable.join(", "))) }, &skipped)
 }
 
 fn check_prompts_present(commands: &[MarkdownDoc], prompts: &Path, plugin: &str) -> DoctorCheck {
@@ -458,14 +458,15 @@ fn check_agents_present(agents: &[MarkdownDoc], agents_dir: &Path, plugin: &str)
 /// report. A missing hook we should have written is a real `Fail`.
 fn check_hooks_present(hooks: &[HookBinding], hooks_json: &Path) -> DoctorCheck {
     let name = "translated hooks present";
+    let skipped = report::skipped_hooks(hooks);
     let ours: Vec<&str> =
         hooks.iter().filter(|h| hook_is_portable(h) && map_event(&h.event).is_some()).map(|h| h.command.as_str()).collect();
     if ours.is_empty() {
-        return DoctorCheck { name, status: CheckStatus::Ok("no hooks to translate".into()) };
+        return report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok("no hooks to translate".into()) }, &skipped);
     }
     let text = fs::read_to_string(hooks_json).unwrap_or_default();
     let missing: Vec<&str> = ours.iter().copied().filter(|c| !text.contains(c)).collect();
-    if missing.is_empty() {
+    let check = if missing.is_empty() {
         DoctorCheck {
             name,
             status: CheckStatus::Warn(format!("present in {} but INERT until trusted via codex `/hooks`", hooks_json.display())),
@@ -478,7 +479,8 @@ fn check_hooks_present(hooks: &[HookBinding], hooks_json: &Path) -> DoctorCheck 
                 fix: "run the host's `setup`".into(),
             },
         }
-    }
+    };
+    report::note_skipped(check, &skipped)
 }
 
 #[cfg(test)]

@@ -203,22 +203,22 @@ fn report_checks(backend: &ZedBackend, plugin: &Plugin, source: &Source) -> Vec<
 fn check_mcp_registered(servers: &[McpServer], root: Option<&Value>) -> DoctorCheck {
     let name = "mcp server registered";
     let expected = writable_names(servers);
+    let skipped = report::skipped_mcp(servers, &expected);
     if expected.is_empty() {
-        return DoctorCheck { name, status: CheckStatus::Ok("no portable mcp servers to register".into()) };
+        return report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(report::NO_MCP.into()) }, &skipped);
     }
     let obj = root.and_then(|r| r.get(CONTEXT_SERVERS)).and_then(Value::as_object);
     let missing: Vec<&str> = expected.iter().copied().filter(|n| obj.is_none_or(|o| !o.contains_key(*n))).collect();
-    if missing.is_empty() {
-        DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", expected.join(", "))) }
-    } else {
-        DoctorCheck {
+    if !missing.is_empty() {
+        return DoctorCheck {
             name,
             status: CheckStatus::Fail {
                 problem: format!("mcp server(s) not in settings.json: {}", missing.join(", ")),
                 fix: "run the host's `setup`".into(),
             },
-        }
+        };
     }
+    report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", expected.join(", "))) }, &skipped)
 }
 
 #[cfg(test)]

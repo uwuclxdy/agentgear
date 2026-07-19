@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use super::{flat_stem, hook_is_portable, portable_names, reconcile_hooks, remove_hooks, toml_basic_string};
+use super::{check_hooks_present, flat_stem, hook_is_portable, portable_names, reconcile_hooks, remove_hooks, toml_basic_string};
 use crate::components::{HookBinding, McpKind, McpServer};
 use crate::host::Outcome;
 
@@ -143,4 +143,16 @@ fn probe_renders_from_the_resolved_source_not_the_embedded_blob() {
 
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
+fn a_dropped_hook_warns_in_the_report() {
+    // The hook family's wiring: every declared hook carries the token, so codex
+    // writes nothing and the check must say so instead of reading `Ok`.
+    let rooted = HookBinding { event: "SessionStart".into(), matcher: None, command: "${CLAUDE_PLUGIN_ROOT}/hooks/heal.sh".into() };
+    let check = check_hooks_present(&[rooted], std::path::Path::new("/nonexistent/hooks.json"));
+    let crate::doctor::CheckStatus::Warn(detail) = &check.status else {
+        panic!("a dropped hook must warn, got {:?}", check.status);
+    };
+    assert!(detail.contains("skipped SessionStart: ${CLAUDE_PLUGIN_ROOT}"), "{detail}");
 }

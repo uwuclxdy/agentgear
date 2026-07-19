@@ -381,10 +381,11 @@ fn report_checks(backend: &CrushBackend, plugin: &Plugin, source: &Source) -> Ve
 /// hooks are not trust-gated, so they fire the moment crush reads the file.
 fn check_hooks_present(hooks: &[HookBinding], root: Option<&Value>) -> DoctorCheck {
     let name = "translated hooks present";
+    let skipped = report::skipped_hooks(hooks);
     let ours: Vec<&str> =
         hooks.iter().filter(|h| hook_is_portable(h) && map_event(&h.event).is_some()).map(|h| h.command.as_str()).collect();
     if ours.is_empty() {
-        return DoctorCheck { name, status: CheckStatus::Ok("no PreToolUse hooks to translate".into()) };
+        return report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok("no PreToolUse hooks to translate".into()) }, &skipped);
     }
     let commands: BTreeSet<&str> = root
         .and_then(|r| r.get("hooks"))
@@ -393,7 +394,7 @@ fn check_hooks_present(hooks: &[HookBinding], root: Option<&Value>) -> DoctorChe
         .map(|arr| arr.iter().filter_map(|e| e.get("command").and_then(Value::as_str)).collect())
         .unwrap_or_default();
     let missing: Vec<&str> = ours.iter().copied().filter(|c| !commands.contains(c)).collect();
-    if missing.is_empty() {
+    let check = if missing.is_empty() {
         DoctorCheck { name, status: CheckStatus::Ok(format!("{} PreToolUse hook(s) present", ours.len())) }
     } else {
         DoctorCheck {
@@ -403,7 +404,8 @@ fn check_hooks_present(hooks: &[HookBinding], root: Option<&Value>) -> DoctorChe
                 fix: "run the host's `setup`".into(),
             },
         }
-    }
+    };
+    report::note_skipped(check, &skipped)
 }
 
 fn check_commands_present(commands: &[MarkdownDoc], cmd_root: &Path) -> DoctorCheck {

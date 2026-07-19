@@ -361,15 +361,17 @@ fn report_checks(backend: &AntigravityCliBackend, plugin: &Plugin, source: &Sour
 
 fn check_hooks_registered(plugin: &str, hooks: &[HookBinding]) -> DoctorCheck {
     let name = "hooks registered";
+    let skipped = report::skipped_hooks(hooks);
     let writable = hooks.iter().filter(|h| hook_is_portable(h)).any(|h| map_event(&h.event).is_some());
     if !writable {
-        return DoctorCheck { name, status: CheckStatus::Ok("no portable, mappable hooks to register".into()) };
+        let check = DoctorCheck { name, status: CheckStatus::Ok("no portable, mappable hooks to register".into()) };
+        return report::note_skipped(check, &skipped);
     }
     let path = match hooks_path(&Scope::User) {
         Ok(p) => p,
         Err(e) => return DoctorCheck { name, status: CheckStatus::Warn(e.to_string()) },
     };
-    match fs::read(&path) {
+    let check = match fs::read(&path) {
         Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
             Ok(v) if v.get(plugin).is_some() => DoctorCheck { name, status: CheckStatus::Ok(format!("{plugin} hook entry present")) },
             Ok(_) => DoctorCheck {
@@ -391,7 +393,8 @@ fn check_hooks_registered(plugin: &str, hooks: &[HookBinding]) -> DoctorCheck {
             DoctorCheck { name, status: CheckStatus::Warn(format!("{} does not exist yet (run setup)", path.display())) }
         }
         Err(e) => DoctorCheck { name, status: CheckStatus::Warn(format!("could not read {}: {e}", path.display())) },
-    }
+    };
+    report::note_skipped(check, &skipped)
 }
 
 #[cfg(test)]

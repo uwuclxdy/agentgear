@@ -508,36 +508,37 @@ fn report_checks(backend: &GooseBackend, plugin: &Plugin, source: &Source) -> Ve
 fn check_mcp_registered(servers: &[McpServer], root: Option<&Yaml>) -> DoctorCheck {
     let name = "mcp extension registered";
     let portable: Vec<&str> = writable_names(servers);
+    let skipped = report::skipped_mcp(servers, &portable);
     if portable.is_empty() {
-        return DoctorCheck { name, status: CheckStatus::Ok("no portable mcp servers to register".into()) };
+        return report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(report::NO_MCP.into()) }, &skipped);
     }
     let exts = root.and_then(|r| r.get("extensions"));
     let missing: Vec<&str> = portable.iter().copied().filter(|n| exts.and_then(|e| e.get(*n)).is_none()).collect();
-    if missing.is_empty() {
-        DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", portable.join(", "))) }
-    } else {
-        DoctorCheck {
+    if !missing.is_empty() {
+        return DoctorCheck {
             name,
             status: CheckStatus::Fail {
                 problem: format!("mcp extension(s) not under `extensions` in config.yaml: {}", missing.join(", ")),
                 fix: "run the host's `setup`".into(),
             },
-        }
+        };
     }
+    report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", portable.join(", "))) }, &skipped)
 }
 
 /// goose hooks fire without a trust gate (unlike codex), so a present hook is a
 /// plain `Ok`. A missing hook we should have written is a real `Fail`.
 fn check_hooks_present(hooks: &[HookBinding], hooks_json: &Path) -> DoctorCheck {
     let name = "translated hooks present";
+    let skipped = report::skipped_hooks(hooks);
     let ours: Vec<&str> =
         hooks.iter().filter(|h| hook_is_portable(h) && map_event(&h.event).is_some()).map(|h| h.command.as_str()).collect();
     if ours.is_empty() {
-        return DoctorCheck { name, status: CheckStatus::Ok("no hooks to translate".into()) };
+        return report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok("no hooks to translate".into()) }, &skipped);
     }
     let text = fs::read_to_string(hooks_json).unwrap_or_default();
     let missing: Vec<&str> = ours.iter().copied().filter(|c| !text.contains(c)).collect();
-    if missing.is_empty() {
+    let check = if missing.is_empty() {
         DoctorCheck { name, status: CheckStatus::Ok(format!("{} hook(s) present in {}", ours.len(), hooks_json.display())) }
     } else {
         DoctorCheck {
@@ -547,7 +548,8 @@ fn check_hooks_present(hooks: &[HookBinding], hooks_json: &Path) -> DoctorCheck 
                 fix: "run the host's `setup`".into(),
             },
         }
-    }
+    };
+    report::note_skipped(check, &skipped)
 }
 
 #[cfg(test)]

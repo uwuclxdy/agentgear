@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
-use super::{probe_mcp, reconcile_mcp, remove_mcp, writable_names};
+use super::{check_mcp_registered, probe_mcp, reconcile_mcp, remove_mcp, writable_names};
 use crate::agents::BackendState;
 use crate::components::{McpKind, McpServer};
 use crate::host::Outcome;
@@ -165,4 +165,18 @@ fn reconcile_skips_non_portable_and_sse_servers_but_writes_http() {
     assert!(root["context_servers"].get("remote-sse").is_none(), "an sse server must be skipped (no zed landing)");
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_dropped_server_warns_in_the_report() {
+    // Zed's own mcp check, not the shared one: pins that this site folds the
+    // skipped entries in rather than passing a bare `Ok` through.
+    let rooted = stdio("ez", "${CLAUDE_PLUGIN_ROOT}/bin/ez", &[]);
+    let sse = McpServer { name: "rm".into(), kind: McpKind::Sse { url: "https://x/sse".into() }, ..stdio("rm", "", &[]) };
+    let check = check_mcp_registered(&[rooted, sse], None);
+    let crate::doctor::CheckStatus::Warn(detail) = &check.status else {
+        panic!("a dropped server must warn, got {:?}", check.status);
+    };
+    assert!(detail.contains("skipped ez: ${CLAUDE_PLUGIN_ROOT}"), "{detail}");
+    assert!(detail.contains("skipped rm: this harness cannot host that transport"), "{detail}");
 }

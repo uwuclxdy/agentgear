@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 use super::BackendState;
-use crate::components::{McpKind, McpServer, PluginComponents};
+use crate::components::{HookBinding, McpKind, McpServer, PluginComponents};
 use crate::doctor::{CheckStatus, DoctorCheck};
 use crate::error::{Error, Result};
 use crate::host::{Plugin, Source};
@@ -66,11 +66,66 @@ pub(crate) fn components(checks: &mut Vec<DoctorCheck>, plugin: &Plugin, source:
     }
 }
 
+/// Why a declared entry will never be written. A `${CLAUDE_PLUGIN_ROOT}` command
+/// reaches the harness verbatim, so the filter drops it; a transport the harness
+/// has no shape for is dropped rather than written wrong.
+pub(crate) const NON_PORTABLE: &str = "${CLAUDE_PLUGIN_ROOT} expands only inside Claude Code (use a bare command name)";
+pub(crate) const UNRENDERABLE: &str = "this harness cannot host that transport";
+
+/// One entry the plugin declared that this backend will never write.
+pub(crate) struct Skipped<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) why: &'static str,
+}
+
+/// The declared servers missing from `writable`, each tagged with why it was
+/// dropped. A backend passes the names its own filters left it with.
+pub(crate) fn skipped_mcp<'a>(servers: &'a [McpServer], writable: &[&str]) -> Vec<Skipped<'a>> {
+    servers
+        .iter()
+        .filter(|s| !writable.contains(&s.name.as_str()))
+        .map(|s| Skipped { name: &s.name, why: if s.is_portable() { UNRENDERABLE } else { NON_PORTABLE } })
+        .collect()
+}
+
+/// Fold the entries this backend will never write into `check`, downgrading a
+/// passing check to `Warn` and naming them grouped by reason. Without it a plugin
+/// whose entries were all dropped installs clean, does nothing, and still reads
+/// `Ok`. A `Fail` passes through: a real breakage outranks the note, and each
+/// harness keeps its own success wording.
+pub(crate) fn note_skipped(check: DoctorCheck, skipped: &[Skipped<'_>]) -> DoctorCheck {
+    let detail = match &check.status {
+        _ if skipped.is_empty() => return check,
+        CheckStatus::Fail { .. } => return check,
+        CheckStatus::Ok(detail) | CheckStatus::Warn(detail) => detail.clone(),
+    };
+    let mut groups: Vec<(&'static str, Vec<&str>)> = Vec::new();
+    for entry in skipped {
+        match groups.iter_mut().find(|(why, _)| *why == entry.why) {
+            Some((_, names)) => names.push(entry.name),
+            None => groups.push((entry.why, vec![entry.name])),
+        }
+    }
+    let dropped = groups.iter().map(|(why, names)| format!("skipped {}: {why}", names.join(", "))).collect::<Vec<_>>().join("; ");
+    DoctorCheck { name: check.name, status: CheckStatus::Warn(format!("{detail}; {dropped}")) }
+}
+
+/// The hooks whose command carries `${CLAUDE_PLUGIN_ROOT}`, keyed by event. An
+/// event with no analog on this harness is a documented per-backend skip, so it
+/// is deliberately not in here.
+pub(crate) fn skipped_hooks(hooks: &[HookBinding]) -> Vec<Skipped<'_>> {
+    hooks
+        .iter()
+        .filter(|h| !h.is_portable())
+        .map(|h| Skipped { name: h.event.as_str(), why: NON_PORTABLE })
+        .collect()
+}
+
 /// "mcp server registered": every portable server is present under `key_path`.
 /// `where_` is the "not <where>" phrase for the failure (e.g. `"not in mcp.json"`,
 /// `"not under `mcp` in opencode.json"`) and `fix` its remediation, so each harness
-/// keeps its exact wording. Reports `Ok` — never a failure — when the plugin
-/// declares no portable server.
+/// keeps its exact wording. Never a failure for an entry that was never written:
+/// those are the `Warn` [`registered_status`] renders.
 pub(crate) fn check_mcp_registered(
     servers: &[McpServer],
     root: Option<&Value>,
@@ -80,12 +135,13 @@ pub(crate) fn check_mcp_registered(
 ) -> DoctorCheck {
     let name = "mcp server registered";
     let portable: Vec<&str> = servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect();
+    let skipped = skipped_mcp(servers, &portable);
     if portable.is_empty() {
-        return DoctorCheck { name, status: CheckStatus::Ok("no portable mcp servers to register".into()) };
+        return note_skipped(DoctorCheck { name, status: CheckStatus::Ok(NO_MCP.into()) }, &skipped);
     }
     let obj = navigate(root, key_path);
     let missing: Vec<&str> = portable.iter().copied().filter(|n| obj.is_none_or(|o| !o.contains_key(*n))).collect();
-    if missing.is_empty() {
+    let check = if missing.is_empty() {
         DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", portable.join(", "))) }
     } else {
         DoctorCheck {
@@ -95,8 +151,12 @@ pub(crate) fn check_mcp_registered(
                 fix: fix.into(),
             },
         }
-    }
+    };
+    note_skipped(check, &skipped)
 }
+
+/// The shared "this plugin declares no mcp server" wording.
+pub(crate) const NO_MCP: &str = "no portable mcp servers to register";
 
 /// "mcp command on PATH": every portable stdio server's command resolves. Only a
 /// bare executable name is a PATH lookup; a path/variable command can't be checked

@@ -510,16 +510,17 @@ fn check_workflows_present(commands: &[MarkdownDoc], plugin: &str) -> DoctorChec
 
 fn check_hooks_present(hooks: &[HookBinding]) -> DoctorCheck {
     let name = "translated hooks present";
+    let skipped = report::skipped_hooks(hooks);
     let events: BTreeSet<&'static str> = hooks.iter().filter(|h| hook_is_portable(h)).filter_map(|h| map_event(&h.event)).collect();
     if events.is_empty() {
-        return DoctorCheck { name, status: CheckStatus::Ok("no hooks map to a cline event".into()) };
+        return report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok("no hooks map to a cline event".into()) }, &skipped);
     }
     let hook_root = match hooks_dir(&Scope::User) {
         Ok(p) => p,
         Err(e) => return DoctorCheck { name, status: CheckStatus::Warn(e.to_string()) },
     };
     let missing: Vec<&str> = events.iter().copied().filter(|e| !hook_root.join(e).exists()).collect();
-    if missing.is_empty() {
+    let check = if missing.is_empty() {
         DoctorCheck { name, status: CheckStatus::Ok(format!("{} hook script(s) present", events.len())) }
     } else {
         DoctorCheck {
@@ -529,7 +530,8 @@ fn check_hooks_present(hooks: &[HookBinding]) -> DoctorCheck {
                 fix: "run the host's `setup` (or a user hook already owns that event)".into(),
             },
         }
-    }
+    };
+    report::note_skipped(check, &skipped)
 }
 
 #[cfg(test)]

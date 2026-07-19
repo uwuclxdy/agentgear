@@ -161,22 +161,22 @@ fn portable_names(servers: &[McpServer]) -> Vec<&str> {
 fn check_mcp_registered(servers: &[McpServer], root: Option<&Value>) -> DoctorCheck {
     let name = "mcp server registered";
     let portable: Vec<&str> = portable_names(servers);
+    let skipped = report::skipped_mcp(servers, &portable);
     if portable.is_empty() {
-        return DoctorCheck { name, status: CheckStatus::Ok("no portable mcp servers to register".into()) };
+        return report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(report::NO_MCP.into()) }, &skipped);
     }
     let obj = root.and_then(|r| r.get("servers")).and_then(Value::as_object);
     let missing: Vec<&str> = portable.iter().copied().filter(|n| obj.is_none_or(|o| !o.contains_key(*n))).collect();
-    if missing.is_empty() {
-        DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", portable.join(", "))) }
-    } else {
-        DoctorCheck {
+    if !missing.is_empty() {
+        return DoctorCheck {
             name,
             status: CheckStatus::Fail {
                 problem: format!("mcp server(s) not in mcp.json: {}", missing.join(", ")),
                 fix: "run the host's `setup`".into(),
             },
-        }
+        };
     }
+    report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", portable.join(", "))) }, &skipped)
 }
 
 fn report_checks(backend: &JetbrainsCopilotBackend, plugin: &Plugin, source: &Source) -> Vec<DoctorCheck> {
