@@ -123,8 +123,11 @@ pub(crate) fn source_from_marker(marker: Option<&Marker>, default: Source) -> So
     // "github"` host stays embedded through update/self_heal/uninstall (the
     // github gate would otherwise skip that config backend on every heal pass and
     // orphan its writes on uninstall). The fallthrough covers a genuinely absent
-    // or unknown marker, plus a "path" marker with no persisted path; a "github"
-    // marker also falls through, since `default` already supplies the repo + ref.
+    // or unknown marker, plus a "path" marker with no persisted path. A "github"
+    // marker also falls through: it persists no repo or ref, so github is only ever
+    // rebuilt from `default`. On a non-github-default host that lossily un-pins an
+    // explicit github install to the compile-time default (accepted; v1 has no
+    // consumer pairing an explicit github install with a non-github default).
     match marker {
         Some(m) if m.source_mode == "path" => m.source_path.clone().map(|p| Source::Path(PathBuf::from(p))).unwrap_or(default),
         Some(m) if m.source_mode == "embedded" => Source::Embedded,
