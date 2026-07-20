@@ -111,13 +111,14 @@ mod spawned {
 
     /// The GitHub flow against a real `claude`: `setup` uses DEFAULT_SOURCE (the
     /// `v{version}` tag), so `ensure_marketplace` sends `{repo}@{ref_}` and the
-    /// marketplace tracks the pinned tag. Proven green against the pushed `v0.1.0`
+    /// marketplace tracks the pinned tag. Proven green against the pushed version
     /// tag (+ its root `.claude-plugin/marketplace.json`) 2026-07-17.
     ///
     /// Env-gated, not merely `#[ignore]`d: the e2e CI job runs `-- --ignored`, so
     /// `#[ignore]` *selects* this test. It stays behind `AGENTGEAR_E2E_GITHUB` so the
     /// default CI run does not couple to a mutable remote tag — the assertion pins
-    /// `v0.1.0`, so a workspace version bump without a matching pushed tag would red it.
+    /// the current `v{version}`, so a workspace version bump without a matching
+    /// pushed tag would red it.
     /// Run it with `AGENTGEAR_E2E_GITHUB=1` once the tag for the current version exists.
     #[test]
     #[ignore = "needs AGENTGEAR_E2E_GITHUB + network + the matching version tag pushed"]
@@ -147,7 +148,7 @@ mod spawned {
         sb.apply(&mut list, &path);
         let listed = String::from_utf8_lossy(&list.output().unwrap().stdout).into_owned();
         assert!(listed.contains(PLUGIN_ID), "plugin not registered from the GitHub source:\n{listed}");
-        assert!(listed.contains("0.1.0"), "installed version is not the pinned v0.1.0 tag:\n{listed}");
+        assert!(listed.contains(env!("CARGO_PKG_VERSION")), "installed version is not the pinned version tag:\n{listed}");
     }
 
     fn claude_available() -> bool {
