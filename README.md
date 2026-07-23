@@ -174,7 +174,7 @@ Grouped by what each surface translates:
 
 Skills translate on 13 of 25 backends now (see above). Instructions (always-loaded host guidance
 from `PluginHost::instructions`) translate on `opencode` only so far, written to a dedicated file
-whose path is registered in opencode's `instructions[]`. Of the 24 non-Claude backends, 14 accept both scopes and 9 are user-scope only (`copilot-cli` among them, its CLI has no `--scope`). `vscode-copilot` is the one project-scope-only backend. Codex's hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI; kimi's fire as soon as they are written. Per-agent config paths and skipped-surface reasons are on the [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) wiki page; for a side-by-side view of how each tool handles config paths, scopes, MCP shapes, hook events, and Claude-Code-config interop, see [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison).
+whose path is registered in opencode's `instructions[]`. Of the 24 non-Claude backends, 14 accept both scopes and 9 are user-scope only (`copilot-cli` among them, its CLI has no `--scope`). `vscode-copilot` is the one project-scope-only backend. Codex's hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI; kimi's fire as soon as they are written. Per-agent config paths and skipped-surface reasons are on the [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) wiki page; the harness-first at-a-glance (config paths, scopes, support grid) is on [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison), and the capability-first depth — a page each for MCP shapes + fidelity, hook events, skills, native Claude-Code-config interop — is on [Capabilities](https://github.com/uwuclxdy/agentgear/wiki/Capabilities).
 
 ## Status
 
@@ -240,7 +240,8 @@ The README is a map. The reference lives in the wiki.
 | [How it works](https://github.com/uwuclxdy/agentgear/wiki/How-It-Works) | lifecycle to CLI mapping, materialize, the self-heal state table |
 | [Types and errors](https://github.com/uwuclxdy/agentgear/wiki/Types-and-Errors) | the programmatic API: `AgentReport`/`AgentResult`/`AgentStatus`/`SkipReason`, the `Error` enum, building a `DoctorReport` from outside the crate |
 | [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) | the unsealed trait, the 23 config-merge backends, adding your own |
-| [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison) | side-by-side support matrix: config paths, scopes, MCP fidelity, hook events, CC-config interop |
+| [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison) | harness-first at-a-glance: support grid, config paths, scopes |
+| [Capabilities](https://github.com/uwuclxdy/agentgear/wiki/Capabilities) | capability-first depth: MCP, hooks, commands, agents, skills, instructions + detection, scopes, native ingestion |
 | [Testing your host](https://github.com/uwuclxdy/agentgear/wiki/Testing-Your-Host) | hermetic lifecycle tests: env redirects, forcing detection, the shared lock, what they miss |
 | [Doctor](https://github.com/uwuclxdy/agentgear/wiki/Doctor) | the health checks and their fix hints |
 

@@ -24,8 +24,9 @@ embeds plugin/ (.tar.br blob) ── materialize ──▶ ~/.local/share/<name>
 | [Getting started](Getting-Started) | add the crate, the derive, the build guard, hook wiring |
 | [Plugin tree](Plugin-Tree) | what `plugin/` holds, what each backend can translate out of it |
 | [How it works](How-It-Works) | lifecycle to CLI mapping, materialize, the self-heal state table |
-| [Agent backends](Agent-Backends) | the unsealed `AgentBackend` trait, install models, env overrides, hook renames |
-| [Harness comparison](Harness-Comparison) | side-by-side: support, config paths, remote fidelity, native CC-config interop |
+| [Agent backends](Agent-Backends) | the unsealed `AgentBackend` trait, install models, adding your own |
+| [Harness comparison](Harness-Comparison) | harness-first at-a-glance: support grid, config paths, scopes |
+| [Capabilities](Capabilities) | capability-first depth: a page each for MCP, hooks, commands, agents, skills, instructions + detection, scopes, native ingestion |
 | [Testing your host](Testing-Your-Host) | hermetic runs against a temp `HOME`, reading back what each backend wrote |
 | [Doctor](Doctor) | the health report: shared checks, per-agent checks, fix hints |
 | [Types and errors](Types-and-Errors) | the programmatic API: `Outcome`, `AgentReport`, `Capabilities`, the components IR, `Error` |

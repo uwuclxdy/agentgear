@@ -6,9 +6,10 @@ ship: Claude Code, copilot-cli (both plugin-native), and 23 config-merge backend
 backends were verified against their real shipping binary on 2026-07-16 (copilot-cli's native
 rewrite 2026-07-18).
 
-For the side-by-side cross-view (which backend translates what, config paths, remote fidelity,
-native Claude-Code-config interop) see [Harness comparison](Harness-Comparison). This page holds the
-trait mechanics, backend-specific detail, and how to add your own.
+For the harness-first at-a-glance (which backend translates what, config paths, scopes) see
+[Harness comparison](Harness-Comparison); for the capability-first depth (MCP shapes + fidelity, hook
+events, native Claude-Code-config interop) see [Capabilities](Capabilities). This page holds the trait
+mechanics, backend-specific detail, and how to add your own.
 
 ## The trait
 
@@ -59,87 +60,19 @@ Two shapes:
   so the user's own config survives. A backend writes only when `detect()` finds the tool installed
   and it has a surface at the target scope.
 
-## Environment overrides
+## Per-capability detail
 
-Where a backend honors a config-dir env var, a test (or a real host) can redirect it. The
-**backend ignores** column lists a tool env the real tool honors but agentgear does not yet, so a
-host running under it writes where the tool never reads.
+The deep cross-harness tables that used to live here now sit on the capability pages, one home per
+surface:
 
-| backend | honored | backend ignores (known limitation) |
-|---|---|---|
-| codex | `CODEX_HOME` (replaces the config dir) | — |
-| copilot-cli | `COPILOT_HOME` (replaces the whole path) | — |
-| kimi | `KIMI_CODE_HOME` (the config dir) | — |
-| kiro | `KIRO_HOME` (points at the `.kiro`-equivalent dir) | — |
-| qwen-code | `QWEN_HOME` (used directly, no `.qwen` join) | — |
-| crush | `CRUSH_GLOBAL_CONFIG` (dir) | — |
-| openclaw | `OPENCLAW_CONFIG_PATH` → `OPENCLAW_STATE_DIR` (flat) → `OPENCLAW_HOME` (reads `<override>/.openclaw/`) | — |
-| pi | `PI_CODING_AGENT_DIR` (replaces wholesale) | — |
-| omp | `PI_CONFIG_DIR` (renames the dir under HOME; an absolute value still lands under HOME, matching the tool) | — |
-| cline | `CLINE_MCP_SETTINGS_PATH` (full path) → `CLINE_DATA_DIR` → `CLINE_DIR` (the store root) | — |
-| amp | `XDG_CONFIG_HOME`, else `$HOME/.config` | — |
-| goose | `GOOSE_PATH_ROOT` (first, unconditional; relocates config + the plugins/hooks dir) → `XDG_CONFIG_HOME` | — |
-| zed | `XDG_CONFIG_HOME` (Linux/FreeBSD; macOS matches zed's hardcoded `~/.config/zed`) | — |
-| jetbrains-copilot | `XDG_CONFIG_HOME` (that branch drops the `intellij` segment, matching the plugin's own resolver) | — |
-| kilo, devin | `XDG_CONFIG_HOME` | — |
-| gemini, cursor, droid, augment | HOME-based, no env override | — |
+- **Environment overrides** — the config-dir env var each backend honors, for redirecting a
+  hermetic run: [Detection § environment overrides](Capability-Detection#environment-overrides).
+- **Hook event mapping** — the CC-event → per-harness-event map, the renames, and the per-backend
+  hook notes: [Hooks § event map](Capability-Hooks#event-map).
+- **MCP shapes** — the stdio body per tool, the remote dialects, and the fidelity verdicts:
+  [MCP](Capability-MCP).
 
-## Hook event mapping
-
-Most hook-capable backends reuse Claude Code's PascalCase event names, so agentgear maps them 1:1
-where the analog exists and skips events with no analog. Four backends rename the events:
-
-| CC event | gemini | cursor | antigravity-cli | augment |
-|---|---|---|---|---|
-| SessionStart | SessionStart | sessionStart | — | SessionStart |
-| SessionEnd | SessionEnd | sessionEnd | — | SessionEnd |
-| UserPromptSubmit | BeforeAgent | beforeSubmitPrompt | PreInvocation | PromptSubmit |
-| PreToolUse | BeforeTool | preToolUse | PreToolUse | PreToolUse |
-| PostToolUse | AfterTool | postToolUse | PostToolUse | PostToolUse |
-| Stop | — | stop | Stop | Stop |
-| SubagentStart | — | subagentStart | — | — |
-| SubagentStop | — | subagentStop | — | — |
-| PreCompact | PreCompress | preCompact | — | — |
-| Notification | Notification | — | — | Notification |
-
-`copilot-cli` is not in this table: it's plugin-native, so the whole CC `hooks/hooks.json` copies
-into `~/.copilot/installed-plugins/` verbatim, event names included, rather than going through
-`map_event`. Whether the copied raw-shape file actually fires is unconfirmed (no headless
-hooks-list command exists).
-
-Per-backend hook notes:
-
-- **codex**: hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI (a
-  content-hash trust gate), not a bug.
-- **kimi**: no trust gate; config hooks fire as soon as they are written.
-- **gemini**: `BeforeTool`/`AfterTool` take a CC tool-name matcher that never matches gemini's own
-  tool names (known limitation).
-- **cline**: hooks land in dirs the CLI scans at both scopes: `~/Documents/Cline/Hooks/<Event>`
-  (user) and `.clinerules/hooks/<Event>` (project). `Hooks` is a sibling of `Rules`, not a child.
-- **kiro**: hooks are declared unsupported. kiro hosts hooks only inside user-owned per-agent
-  config files, and its run-default agent is a setting rather than a file, so there is no target
-  agentgear can own without editing the user's agent definitions.
-- **antigravity-cli**: only five event names are legal (`PreToolUse`, `PostToolUse`,
-  `PreInvocation`, `PostInvocation`, `Stop`), so CC's `SessionStart` is skipped and
-  `UserPromptSubmit` lands on `PreInvocation`. The two tool events take a grouped
-  `{matcher, hooks:[…]}` wrapper; a matcher-less CC hook groups under `*`.
-
-## MCP shapes
-
-stdio is the verified path on every backend. The rendered server body varies by tool: `{command,
-args, env}` for the json-`mcpServers` family; `type:"stdio"` prefixed for cursor/jetbrains/vscode;
-`type:"local"` with an array command for opencode/kilo; a `[mcp_servers.<name>]` inline table for
-codex; a yaml `extensions.<name>` block for goose. `copilot-cli` renders no mcp shape at all: its
-own plugin engine reads `.claude-plugin/plugin.json` directly.
-
-Remote (http/sse) servers render in each tool's own dialect: the majority take
-`{type, url, headers}`, cline gets its literal `streamableHttp` value, kimi/devin their
-`transport` key, qwen-code its key-presence form (`httpUrl` vs `url`), the antigravity family
-its `{serverUrl}` SSE form, zed its bare `{url, headers}`. A transport a tool cannot host
-faithfully is skipped rather than written wrong (antigravity http, goose/zed/vscode-copilot
-sse). The per-tool verdicts are on [Harness comparison](Harness-Comparison#remote-mcp-fidelity).
-Servers whose command or args carry `${CLAUDE_PLUGIN_ROOT}` are skipped on non-CC backends
-(that token only expands inside Claude Code).
+See [Capabilities](Capabilities) for the full index.
 
 ## Customization ceiling
 

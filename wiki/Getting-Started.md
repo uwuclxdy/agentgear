@@ -66,7 +66,7 @@ Attributes:
 | `github_repo` | required for github | `"owner/repo"` |
 | `agents` | `["claude"]` | which backends `setup` wires; an empty list is rejected at compile time |
 | `embed` | `true` | bake the compressed tree in via `include_bytes!`; set `false` (with `default-features = false` on the crate) for a `default_source = "github"` host that ships no baked tree |
-| `instructions_fn` | none | a path to a `fn() -> Option<String>`, called from `PluginHost::instructions`. Host-authored always-loaded guidance, delivered through each harness's native context channel. `opencode` is the only backend that writes it today (a `<plugin>-instructions.md` registered in `opencode.json`'s `instructions[]`); see [Harness comparison](Harness-Comparison) |
+| `instructions_fn` | none | a path to a `fn() -> Option<String>`, called from `PluginHost::instructions`. Host-authored always-loaded guidance, delivered through each harness's native context channel. `opencode` is the only backend that writes it today (a `<plugin>-instructions.md` registered in `opencode.json`'s `instructions[]`); see [Instructions](Capability-Instructions) |
 
 > [!IMPORTANT]
 > Every id in `agents = [...]` needs its cargo feature enabled on the `agentgear` dependency. The feature name is the id (`qwen-code`, `vscode-copilot`), and `claude` is on by default:
@@ -132,7 +132,7 @@ The scope-taking methods (`install`, `install_into`, `update`, `uninstall`) acce
 MyHost::install(Scope::Project { path: std::env::current_dir()? }, Source::Embedded)?;
 ```
 
-Scope support is per backend. One whose `capabilities().scopes` omits `"project"` is skipped silently, and `vscode-copilot` is project-only (user scope skips it the same way). The [Harness comparison](Harness-Comparison) has the per-backend split.
+Scope support is per backend. One whose `capabilities().scopes` omits `"project"` is skipped silently, and `vscode-copilot` is project-only (user scope skips it the same way). [Scopes & gates](Capability-Scopes) has the per-backend split and the trust gates.
 
 Point the plugin's hooks at subcommands. The `SessionStart` hook calls `MyHost::self_heal()`, a no-op on a healthy install that repairs a broken one without resurrecting an uninstall. The `UserPromptSubmit` hook calls a `check-restart` subcommand wrapping `MyHost::restart_pending()`: after an out-of-band `setup update`, it prints a notice that the running session still has the old plugin loaded and needs a `/reload-plugins`. Claude Code does not hot-reload plugin hooks, so ship the `UserPromptSubmit` hook from your first release. It fires from whatever version the running session already has. Both hooks live in `hooks/hooks.json` at the plugin root:
 

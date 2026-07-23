@@ -138,69 +138,19 @@ that cannot be read off disk.
 
 ## Remote MCP fidelity
 
-stdio is the verified path on every backend. Remote (http/sse) servers stay best-effort: some tools
-read the rendered `{type, url, headers}` shape as-is, some key the transport off a different field,
-some reject the shape and void the file. Per-tool fixes are queued.
-
-| harness | remote verdict |
-|---|---|
-| claude | native, no translation (Claude Code reads the tree itself) |
-| copilot-cli | native, no translation (copilot's own plugin engine reads the tree itself) |
-| amp | faithful. `type` is inert; the tool infers transport from `url` |
-| antigravity | faithful: sse rendered as native `{serverUrl}`; http skipped (no landing) |
-| antigravity-cli | faithful: sse rendered as native `{serverUrl}`; http skipped (no landing) |
-| augment | faithful. byte-matches the tool's own writer |
-| cline | faithful: rendered with cline's literal `streamableHttp`/`sse` transport values |
-| codex | faithful. streamable-HTTP only; sse maps onto the same `url` |
-| crush | faithful. both transports dial-proven |
-| cursor | faithful. `type` genuinely picks the transport |
-| devin | faithful: rendered with devin's native `{url, transport}` form |
-| droid | faithful. `type` is the live discriminator |
-| gemini | faithful. native `{url, type, headers?}` |
-| goose | http faithful; sse skipped (goose runtime-refuses sse, so a dead extension is never written) |
-| jetbrains-copilot | faithful: `{type, url}` (headers will nest under `requestInit.headers` once plugins carry them) |
-| kilo | faithful. `type` mandatory, dial-proven |
-| kimi | faithful: rendered with kimi's native `{url, transport}` form |
-| kiro | unproven (login-walled). native `{url, headers}`, examples carry no `type` |
-| omp | faithful. matches native exactly |
-| openclaw | faithful, canonical: renders `{url,headers,transport}` directly, matching the tool's own post-`doctor --fix` shape. no churn |
-| opencode | faithful. both transports collapse into `remote` |
-| pi | skipped. core pi has no native mcp surface |
-| qwen-code | faithful: rendered with qwen's key-presence form (http `{httpUrl}`, sse `{url}`) |
-| vscode-copilot | http faithful (byte-preserved); sse skipped (VS Code rewrites sse to http, so writing it would churn) |
-| zed | http faithful (native `{url, headers}`); sse skipped (zed has a single remote transport) |
+stdio is the verified path on every backend; remote (http/sse) fidelity varies per tool. The full
+per-harness verdict table now lives on the capability page:
+[MCP § remote fidelity](Capability-MCP#remote-httpsse-fidelity).
 
 ## Native Claude-Code-config interop
 
-Several tools read Claude Code's own config or plugin trees directly, the exact tree agentgear's
-materializer already produces. Where a tool ingests the full plugin tree natively, translating its
-config is redundant, so agentgear retires the overlapping translation where the native path already
-covers it (omp's agents, once its provider is on and CC's registry lists the plugin; cursor's whole
-translation, once CC's registry lists the plugin). copilot-cli goes further: as of 2026-07-18 this IS the backend's own mechanism, not a redundant
-path beside a translation (see the copilot-cli row in Support overview above). Scope of ingestion
-is the honest limit per tool.
-
-| harness | reads | scope |
-|---|---|---|
-| codex | `codex plugin marketplace add`/`add` parse `.claude-plugin/marketplace.json` + `plugin.json` | full tree. mcp live-merged at read, hooks copied but never fire |
-| cursor | aggregator reads `~/.claude/plugins/installed_plugins.json`, then loads `.claude-plugin/plugin.json` per install | full tree with `${CLAUDE_PLUGIN_ROOT}` substitution (source-proven, undocumented). agentgear's own translation retires (no-op) whenever CC's registry (HOME-based) lists the plugin; the gate does not check `enabledPlugins`, a documented conservative gap |
-| droid | `droid plugin marketplace add` reads `.claude-plugin/marketplace.json` + `plugin.json` | full tree → `~/.factory/plugins/` (binary-proven end to end) |
-| qwen-code | `qwen extensions install` converts a `.claude-plugin/plugin.json` dir into a qwen extension | full tree, install-time and manual. carries skills through too |
-| omp | first-class `claude-plugins` provider reads `~/.claude/plugins/installed_plugins.json` | agents only. agentgear retires its agent translation when omp's `claude-plugins` provider is on and CC's registry lists the plugin, so no double-register |
-| openclaw | `plugins.load.paths` append, or drop the tree at `~/.openclaw/extensions/<id>/` (auto-detect) | full tree, "Claude-compatible bundles". hooks still register nothing |
-| jetbrains-copilot | bundled agent's marketplace service reads `.claude-plugin/plugin.json`, `hooks/hooks.json`, `${CLAUDE_PLUGIN_ROOT}` | full tree per the format descriptor (source-proven, no IDE launched) |
-| antigravity-cli | `agy plugin import <path>` copies the source dir verbatim | full tree, path-only. skills + agents ingest; hooks copied raw and never fire; `mcpServers` dropped |
-| augment | `auggie plugin marketplace add` / `--plugin-dir` read `.augment-plugin/` or `.claude-plugin/` | full tree (vendor-documented; not exercised past the auth wall) |
-| vscode-copilot | VS Code core discovers `.claude-plugin/marketplace.json` + `plugin.json`, expands `${CLAUDE_PLUGIN_ROOT}` | full tree, plus default-on loose `.claude/` hooks, agents, skills |
-| devin | `read_config_from.claude` live-merges `~/.claude.json`, `.claude/settings.json`, `~/.claude/skills`, `~/.claude/agents`, `CLAUDE.md` | loose config only, not plugin bundles |
-| amp | reads `.claude/skills`, `~/.claude/skills`, and CC's plugin-cache skills | skills only |
-| crush | reads `.claude/skills` + `~/.claude/skills` as skill dirs | skills only |
-
-Clean negatives (no CC-tree ingestion): antigravity (the IDE, distinct from `agy`), cline, gemini,
-goose, kilo, kimi, kiro, opencode, pi, zed.
+Several tools read Claude Code's own config or plugin trees directly — the exact tree agentgear
+materializes — so a translation is redundant and agentgear retires it. The full who-reads-what table
+and the retirement rules moved to [Native ingestion](Capability-Native-Ingestion).
 
 ## See also
 
-- [Agent backends](Agent-Backends): per-backend detail, env overrides, hook event renames, adding
-  your own backend.
+- [Capabilities](Capabilities): the capability-first view — one page per surface, with the deep
+  per-harness tables (MCP shapes + fidelity, hook events, native ingestion).
+- [Agent backends](Agent-Backends): the trait mechanics and adding your own backend.
 - [How it works](How-It-Works): the Claude Code lifecycle, materialize, self-heal.

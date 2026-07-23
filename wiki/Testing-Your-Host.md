@@ -138,7 +138,7 @@ has to read the written file back to compare it.
 | `PATH` | every backend's `which(<tool>)` detection arm |
 
 Backends with their own config-dir env var are the `OVERRIDES` list above, described per backend in
-[Agent backends § Environment overrides](Agent-Backends#environment-overrides). Setting one
+[Detection § environment overrides](Capability-Detection#environment-overrides). Setting one
 redirects that tool without moving `HOME`, which is how `examples/multi-installer` keeps a codex
 config beside a gemini config in one temp root. Clear the rest in the same call: an override wins
 over the redirected `HOME`, so one left inherited from the dev's shell aims that backend at a real
