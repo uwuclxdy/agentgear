@@ -21,11 +21,11 @@ integration is to let the tool read the CC tree, not to write its config.
 | augment | `auggie plugin marketplace add` / `--plugin-dir` read `.augment-plugin/` or `.claude-plugin/` | full tree (vendor-documented; not exercised past the auth wall) |
 | vscode-copilot | VS Code core discovers `.claude-plugin/marketplace.json` + `plugin.json`, expands `${CLAUDE_PLUGIN_ROOT}` | full tree, plus default-on loose `.claude/` hooks, agents, skills |
 | devin | `read_config_from.claude` live-merges `~/.claude.json`, `.claude/settings.json`, `~/.claude/skills`, `~/.claude/agents`, `CLAUDE.md` | loose config only, **not** plugin bundles |
-| amp | reads `.claude/skills`, `~/.claude/skills`, and CC's plugin-cache skills | skills only |
-| crush | reads `.claude/skills` + `~/.claude/skills` as skill dirs | skills only |
+| amp | reads `.claude/skills`, `~/.claude/skills`, and CC's plugin-cache skills (`~/.claude/plugins/cache/**/skills/*`) | **partial**: skills only, but a plugin's skills surface via the cache |
 
-**Clean negatives** (no CC-tree ingestion): antigravity (the IDE, distinct from `agy`), cline,
-gemini, goose, kilo, kimi, kiro, opencode, pi, zed.
+**Clean negatives** (no plugin-tree ingestion): antigravity (the IDE, distinct from `agy`), cline,
+crush (reads loose `.claude/skills` as skill dirs only), gemini, goose, kilo, kimi, kiro, opencode,
+pi, zed.
 
 ## Where translation retires
 
@@ -46,9 +46,10 @@ covers the plugin, to avoid double-registration:
 - **Ingestion scope is the honest limit.** "full tree" for antigravity-cli still drops `mcpServers`
   and never fires the copied hooks; codex live-merges mcp but its copied hooks never register. Read
   the scope column, not just the ingests-or-not.
-- **Loose config ≠ plugin bundle.** devin, amp, and crush read loose `.claude/` files, not a
-  plugin-tracked tree — a skill inside a plugin never surfaces there, only a loose
-  `~/.claude/skills/<name>/SKILL.md` does.
+- **Loose config ≠ plugin bundle.** devin and crush read loose `.claude/` files rather than a
+  plugin-tracked tree, so a skill inside a plugin never surfaces there. Only a loose
+  `~/.claude/skills/<name>/SKILL.md` does. amp is the partial case: it reaches CC's plugin-cache
+  skills, so a plugin's skills do surface (skills only, never mcp/hooks/commands).
 
 ## See also
 
