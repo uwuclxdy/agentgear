@@ -117,6 +117,12 @@ Grep the tree afterward for the deleted symbols and any surviving `Command::new(
 - `install_into(scope, source, &["codex"])` narrows a single run to a subset of `AGENTS` at
   runtime (the `--agent <id>` pattern). `backend_for(id)` resolves one id to its backend for a
   status/picker view. `examples/multi-installer` is the reference.
+- **`${AGENTGEAR_CLIENT}` expands to each harness's own id** (`claude`, `codex`, …) in a hook's
+  `command` and an MCP server's `command`/`args`; `claude` and `copilot-cli` expand it across the
+  whole materialized tree. Migrate any baked-in `--client claude-code` to the token: the literal
+  rides through every backend unchanged and evaluates true on all of them, so a hook binary that
+  branches on its caller sees the wrong harness. Unlike `${CLAUDE_PLUGIN_ROOT}` (skipped, below),
+  this token is expanded, so a command carrying it stays portable.
 
 Per-harness fidelity (what each backend translates, what it skips and why) is in
 `docs/harness/<id>.md` and `docs/harness/matrix.md`. Read the target backend's doc before promising
@@ -131,10 +137,6 @@ Check these against the target plugin before promising a full migration. Each is
   surfaces (mcp servers, hooks, commands, agents, skills). A plugin that writes CC's `statusLine`
   into the user's `~/.claude/settings.json` (nyactx, ragcat) keeps hand-rolling that until the
   host-settings surface lands.
-- **per-client hook identity.** A hook command translated into a non-CC backend has no runtime
-  signal for which harness invoked it, so a baked-in `--client claude-code` rides through
-  unchanged. If the plugin's hook binary branches on which harness called it, its non-CC install
-  is a confirmed-buggy translation today. Keep those hooks CC-only until the gap closes.
 - **codex `notify` hooks / opencode hooks.** agentgear's codex backend writes `hooks.json`, which
   stays inert until the user trusts it via codex's `/hooks` TUI; opencode has no declarative hook
   surface at all (in-process JS/TS plugin only). A plugin relying on either (raawr) cannot fully
