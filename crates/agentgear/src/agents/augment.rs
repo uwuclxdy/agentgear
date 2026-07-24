@@ -62,6 +62,7 @@ impl AgentBackend for AugmentBackend {
             agents: true,
             skills: false,
             instructions: false,
+            statusline: false,
             scopes: &["user"],
         }
     }

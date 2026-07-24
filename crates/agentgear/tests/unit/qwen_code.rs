@@ -263,7 +263,15 @@ fn agentgear_client_token_expands_to_this_backend_id() {
     )
     .unwrap();
 
-    let plugin = Plugin { name: "ez-cid", marketplace: "ez-mkt", version: "0.1.0", agents: &["qwen-code"], instructions: None, blob: &[] };
+    let plugin = Plugin {
+        name: "ez-cid",
+        marketplace: "ez-mkt",
+        version: "0.1.0",
+        agents: &["qwen-code"],
+        instructions: None,
+        statusline: None,
+        blob: &[],
+    };
     let project = std::env::temp_dir().join(format!("ez-cidtok-dst-{:016x}", fastrand::u64(..)));
     let scope = Scope::Project { path: project.clone() };
     let source = Source::Path(src.clone());

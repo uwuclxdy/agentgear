@@ -50,6 +50,7 @@ impl AgentBackend for GeminiBackend {
             agents: true,
             skills: false,
             instructions: false,
+            statusline: false,
             scopes: &["user", "project"],
         }
     }

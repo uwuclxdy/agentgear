@@ -33,6 +33,7 @@ impl AgentBackend for FakeAgent {
             agents: false,
             skills: false,
             instructions: false,
+            statusline: false,
             scopes: &["user"],
         }
     }

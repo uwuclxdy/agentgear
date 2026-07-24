@@ -3,14 +3,14 @@
 //! `setup`/`self-heal`/`update`/`uninstall`/`doctor`/`mcp` subcommands. It lists
 //! every backend so `setup --agent <id>` can target any one of them.
 
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use agentgear::{PluginHost, Scope, Source};
+use agentgear::{PluginHost, Scope, Source, StatusLineDecl};
 
 #[derive(PluginHost)]
-#[plugin(name = "ez-fixture-plugin", instructions_fn = fixture_instructions, agents = [
+#[plugin(name = "ez-fixture-plugin", instructions_fn = fixture_instructions, statusline_fn = fixture_statusline, agents = [
     "claude", "codex", "opencode", "gemini", "cursor", "cline", "devin",
     "qwen-code", "copilot-cli", "vscode-copilot", "jetbrains-copilot",
     "kimi", "kiro", "zed", "omp", "openclaw", "kilo",
@@ -23,6 +23,24 @@ struct FixtureHost;
 /// (only opencode writes it today; other backends ignore `Plugin.instructions`).
 fn fixture_instructions() -> Option<String> {
     Some("ez-fixture always-loaded guidance line.".to_string())
+}
+
+/// The host-owned status line. `${AGENTGEAR_CLIENT}` expands to whichever backend
+/// wrote the slot, so the `statusline` subcommand below knows which client's marker
+/// to read the displaced original out of.
+fn fixture_statusline() -> Option<StatusLineDecl> {
+    Some(StatusLineDecl::new("host_fixture statusline --client ${AGENTGEAR_CLIENT}").with_padding(0))
+}
+
+/// The value of `--<name> <value>` anywhere after the subcommand.
+fn flag_value(name: &str) -> Option<String> {
+    let mut args = std::env::args().skip(2);
+    while let Some(arg) = args.next() {
+        if arg == name {
+            return args.next();
+        }
+    }
+    None
 }
 
 /// Parse `setup`/`install` flags: `--path <dir>` selects `Source::Path`, else the
@@ -99,6 +117,24 @@ fn main() -> ExitCode {
         }
         // The fixture plugin's own mcp server, so a harness's `mcp list` can connect.
         "mcp" => run_mcp_server(),
+        // The status-line entrypoint the declared command names: read the session
+        // JSON off stdin, print our own row, then whatever status line the user had
+        // before we took the slot. Exercises `agentgear::statusline::compose`.
+        "statusline" => {
+            let client = flag_value("--client").unwrap_or_else(|| "claude".to_string());
+            let mut session = String::new();
+            let _ = std::io::stdin().read_to_string(&mut session);
+            match agentgear::statusline::compose(&FixtureHost::descriptor(), &client, &session, "ez-fixture row") {
+                Ok(line) => {
+                    println!("{line}");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         "update" => report(FixtureHost::update(Scope::User)),
         "uninstall" => report(FixtureHost::uninstall(Scope::User)),
         "doctor" => match FixtureHost::doctor() {
@@ -113,7 +149,7 @@ fn main() -> ExitCode {
         },
         other => {
             eprintln!(
-                "usage: host_fixture <setup|setup-report|self-heal|self-heal-report|check-restart|mcp|update|uninstall|doctor> (got {other:?})"
+                "usage: host_fixture <setup|setup-report|self-heal|self-heal-report|check-restart|mcp|statusline|update|uninstall|doctor> (got {other:?})"
             );
             ExitCode::from(2)
         }

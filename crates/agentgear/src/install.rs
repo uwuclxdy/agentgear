@@ -50,14 +50,23 @@ pub(crate) fn uninstall_report(plugin: &Plugin, scope: Scope, default_source: So
     Ok(report)
 }
 
-/// One agent's uninstall slice; a failure here never aborts the fan-out. An
-/// absent tool has nothing of ours to remove, but the marker is agentgear's own
-/// state — cleared even for a skipped agent, so an explicit uninstall never
-/// orphans one. A FAILED remove keeps its marker (the install is still live;
-/// the next uninstall or self_heal picks it back up). The strip-set renders
-/// from this agent's OWN resolved source (marker-rehydrated `--path`, else
-/// `default_source`), mirroring `reconcile_agent` — including the github gate: a
-/// config backend under a github source was never installed, so it skips.
+/// One agent's uninstall slice; a failure here never aborts the fan-out. An absent
+/// tool has nothing of ours to remove *from its own registry* — but a backend may
+/// have written outside that registry too, and those writes outlive the tool: CC's
+/// `statusLine` sits in the user's `settings.json`, which resolves with no `claude`
+/// on PATH at all. So [`AgentBackend::forget`] runs on EVERY path, skips included,
+/// before the marker holding the data it restores from is cleared. Only
+/// `NotDetected` is reachable that way for claude today (it serves both scopes and
+/// sets `plugins`, so the other two skips cannot fire for it), but the call is
+/// unconditional rather than resting on that.
+///
+/// The marker is agentgear's own state — cleared even for a skipped agent, so an
+/// explicit uninstall never orphans one. A FAILED remove or forget keeps its marker
+/// (the install is still live, and for forget the marker is the only copy of the
+/// user's displaced value; the next uninstall or self_heal picks it back up). The
+/// strip-set renders from this agent's OWN resolved source (marker-rehydrated
+/// `--path`, else `default_source`), mirroring `reconcile_agent` — including the
+/// github gate: a config backend under a github source was never installed, so it skips.
 fn uninstall_agent(plugin: &Plugin, scope: &Scope, id: &'static str, default_source: &Source) -> AgentStatus {
     let backend = match resolve(id) {
         Ok(backend) => backend,
@@ -76,6 +85,12 @@ fn uninstall_agent(plugin: &Plugin, scope: &Scope, id: &'static str, default_sou
             Err(e) => return AgentStatus::Failed(e.to_string()),
         }
     };
+    // Idempotent on the converged path: `remove` already restored, so this second
+    // pass sees a value that is no longer ours and does nothing. `remove` keeps its
+    // own call so it stays complete for a backend driven directly.
+    if let Err(e) = backend.forget(plugin, scope) {
+        return AgentStatus::Failed(e.to_string());
+    }
     match stamp::clear(plugin, scope, id) {
         Ok(()) => status,
         Err(e) => AgentStatus::Failed(e.to_string()),

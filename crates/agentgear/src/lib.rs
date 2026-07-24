@@ -121,6 +121,7 @@ mod stamp;
 mod util;
 
 pub mod build;
+pub mod statusline;
 // The derive's compile-time listed-agent-vs-enabled-feature check reads these;
 // hidden because nothing else should (the module doc has the full story).
 #[doc(hidden)]
@@ -131,6 +132,7 @@ pub use components::{HookBinding, MarkdownDoc, McpKind, McpServer, PluginCompone
 pub use doctor::{CheckStatus, DoctorCheck, DoctorReport};
 pub use error::{Error, Result};
 pub use host::{AgentReport, AgentResult, AgentStatus, Capabilities, Desired, Outcome, Plugin, PluginHost, Scope, SkipReason, Source};
+pub use statusline::StatusLineDecl;
 
 #[cfg(feature = "derive")]
 pub use agentgear_derive::PluginHost;

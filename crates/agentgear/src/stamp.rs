@@ -34,6 +34,15 @@ pub(crate) struct Marker {
     /// toward `DEFAULT_SOURCE` on repair until a `setup --path` re-run refreshes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
+    /// The harness's own status-line value from before we overwrote it, kept as
+    /// raw JSON so any harness's shape round-trips losslessly. Absent when the slot
+    /// was empty at install time — `remove` then deletes the key outright instead of
+    /// restoring anything. Written by [`stash_statusline`] and carried forward by
+    /// every later [`write`]: the marker is rebuilt from scratch on each
+    /// install/update/self_heal, so without that carry an `update` between install
+    /// and uninstall would erase the user's original.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub statusline_original: Option<serde_json::Value>,
 }
 
 fn source_mode(source: &Source) -> &'static str {
@@ -67,12 +76,8 @@ pub(crate) fn read(plugin: &Plugin, scope: &Scope, agent: &str) -> Result<Option
     }
 }
 
-pub(crate) fn write(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str) -> Result<()> {
-    let path = marker_path(plugin, scope, agent)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).io_ctx(|| format!("creating {}", parent.display()))?;
-    }
-    let marker = Marker {
+fn base_marker(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str) -> Marker {
+    Marker {
         binary_version: plugin.version.to_string(),
         plugin_version: plugin.version.to_string(),
         source_mode: source_mode(source).to_string(),
@@ -88,9 +93,38 @@ pub(crate) fn write(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str
             Source::Path(p) => Some(p.display().to_string()),
             Source::Embedded | Source::GitHub { .. } => None,
         },
-    };
-    let bytes = serde_json::to_vec_pretty(&marker).map_err(|source| Error::Json { what: "stamp marker".into(), source })?;
-    fs::write(&path, bytes).io_ctx(|| format!("writing marker {}", path.display()))
+        statusline_original: None,
+    }
+}
+
+fn write_marker(path: &std::path::Path, marker: &Marker) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).io_ctx(|| format!("creating {}", parent.display()))?;
+    }
+    let bytes = serde_json::to_vec_pretty(marker).map_err(|source| Error::Json { what: "stamp marker".into(), source })?;
+    fs::write(path, bytes).io_ctx(|| format!("writing marker {}", path.display()))
+}
+
+pub(crate) fn write(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str) -> Result<()> {
+    let path = marker_path(plugin, scope, agent)?;
+    let mut marker = base_marker(plugin, scope, source, agent);
+    // Every install/update/self_heal rebuilds the marker, so the stash has to be
+    // carried across explicitly or the user's pre-existing status line is lost on
+    // the first re-write and uninstall has nothing to restore.
+    marker.statusline_original = read(plugin, scope, agent)?.and_then(|m| m.statusline_original);
+    write_marker(&path, &marker)
+}
+
+/// Record `original` as the status-line value that was in the harness's settings
+/// before this agent's backend wrote the host's own. Read-modify-write, and it
+/// creates the marker when the reconcile that found the value has not been stamped
+/// yet (the fan-out stamps only after a backend's whole reconcile succeeds).
+#[cfg(feature = "claude")]
+pub(crate) fn stash_statusline(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str, original: serde_json::Value) -> Result<()> {
+    let path = marker_path(plugin, scope, agent)?;
+    let mut marker = read(plugin, scope, agent)?.unwrap_or_else(|| base_marker(plugin, scope, source, agent));
+    marker.statusline_original = Some(original);
+    write_marker(&path, &marker)
 }
 
 pub(crate) fn clear(plugin: &Plugin, scope: &Scope, agent: &str) -> Result<()> {

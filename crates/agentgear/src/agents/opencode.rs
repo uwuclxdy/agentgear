@@ -55,6 +55,7 @@ impl AgentBackend for OpencodeBackend {
             agents: true,
             skills: false,
             instructions: true,
+            statusline: false,
             scopes: &["user", "project"],
         }
     }

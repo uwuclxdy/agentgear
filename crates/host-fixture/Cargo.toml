@@ -24,6 +24,12 @@ path = "src/bin/github_fixture.rs"
 name = "embedded_github_fixture"
 path = "src/bin/embedded_github_fixture.rs"
 
+# A `claude` CLI test double, copied onto a scratch PATH by the hermetic
+# claude-backend tests so they can run without a real (auth'd) claude.
+[[bin]]
+name = "fake_claude"
+path = "src/bin/fake_claude.rs"
+
 [lints]
 workspace = true
 
@@ -31,12 +37,14 @@ workspace = true
 # supplies derive + claude + embed).
 [dependencies]
 agentgear = { path = "../agentgear", features = ["all-agents"] }
+# The `fake_claude` bin renders and parses the registry JSON its double serves.
+serde_json = "1.0.150"
 
 [build-dependencies]
 agentgear = { path = "../agentgear" }
 
 # The hermetic harness tests parse the config files the backends write; serde
 # derive backs the zed test's transcription of zed's untagged settings enum.
+# (`serde_json` is a normal dependency above, which test targets also link.)
 [dev-dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"

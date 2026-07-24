@@ -84,8 +84,9 @@ pub(crate) fn yaml_edit(path: &Path, edit: impl FnOnce(&mut serde_norway::Value)
     use serde_norway::{Mapping, Value as Yaml};
     let mut root = match fs::read(path) {
         Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => Yaml::Mapping(Mapping::new()),
-        Ok(bytes) => serde_norway::from_slice(&bytes)
-            .map_err(|e| Error::Config { path: path.display().to_string(), detail: e.to_string() })?,
+        Ok(bytes) => {
+            serde_norway::from_slice(&bytes).map_err(|e| Error::Config { path: path.display().to_string(), detail: e.to_string() })?
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Yaml::Mapping(Mapping::new()),
         Err(source) => return Err(Error::Io { context: format!("reading {}", path.display()), source }),
     };

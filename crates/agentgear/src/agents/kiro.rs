@@ -50,6 +50,7 @@ impl AgentBackend for KiroBackend {
             agents: false,
             skills: true,
             instructions: false,
+            statusline: false,
             scopes: &["user", "project"],
         }
     }

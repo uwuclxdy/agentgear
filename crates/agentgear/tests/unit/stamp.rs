@@ -19,6 +19,7 @@ fn marker(source_mode: &str, source_path: Option<&str>) -> Marker {
         agent: "claude".into(),
         project_path: None,
         source_path: source_path.map(String::from),
+        statusline_original: None,
     }
 }
 
@@ -53,6 +54,43 @@ fn marker_with_source_path_round_trips() {
     let bytes = serde_json::to_vec(&marker).expect("marker must serialize");
     let round_tripped: Marker = serde_json::from_slice(&bytes).expect("round-tripped marker must parse");
     assert_eq!(round_tripped.source_path.as_deref(), Some("/tmp/some/plugin"));
+}
+
+#[test]
+fn marker_without_statusline_original_still_deserializes() {
+    // Every marker written before the statusLine surface existed carries no such
+    // key; it must load as "nothing was stashed", not fail the whole marker read
+    // (a failed read is treated as absent, which would silently re-adopt installs).
+    let json = r#"{
+        "binary_version": "0.1.0",
+        "plugin_version": "0.1.0",
+        "source_mode": "embedded",
+        "scope": "user",
+        "agent": "claude"
+    }"#;
+    let marker: Marker = serde_json::from_str(json).expect("an old marker without statusline_original must still load");
+    assert_eq!(marker.statusline_original, None);
+}
+
+#[test]
+fn statusline_original_round_trips_verbatim() {
+    // The stash is the user's own value in whatever shape their harness used, so it
+    // must survive serialization byte-for-byte — including keys we never write.
+    let raw = serde_json::json!({"type": "command", "command": "their-bar --wide", "padding": 2, "theirKey": ["a", 1]});
+    let mut m = marker("embedded", None);
+    m.statusline_original = Some(raw.clone());
+
+    let bytes = serde_json::to_vec(&m).expect("marker must serialize");
+    let back: Marker = serde_json::from_slice(&bytes).expect("round-tripped marker must parse");
+    assert_eq!(back.statusline_original, Some(raw));
+}
+
+#[test]
+fn an_absent_stash_writes_no_key() {
+    // `skip_serializing_if` keeps a stash-free marker byte-identical to what a
+    // pre-statusLine binary wrote, so an older binary reading it sees no change.
+    let rendered = serde_json::to_string(&marker("embedded", None)).expect("marker must serialize");
+    assert!(!rendered.contains("statusline_original"), "an empty stash must not emit the key: {rendered}");
 }
 
 #[test]

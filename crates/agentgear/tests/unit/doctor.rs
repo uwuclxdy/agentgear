@@ -6,7 +6,7 @@ use super::*;
 use crate::host::Plugin;
 
 fn plugin_with_agents(agents: &'static [&'static str]) -> Plugin {
-    Plugin { name: "doctor-test", marketplace: "doctor-test", version: "0.0.0", agents, instructions: None, blob: &[] }
+    Plugin { name: "doctor-test", marketplace: "doctor-test", version: "0.0.0", agents, instructions: None, statusline: None, blob: &[] }
 }
 
 /// An unresolvable agent id becomes a failed CHECK inside an `Ok` report — the

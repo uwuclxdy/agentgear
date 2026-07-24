@@ -59,6 +59,7 @@ impl AgentBackend for CopilotCliBackend {
             agents: true,
             skills: true,
             instructions: false,
+            statusline: false,
             scopes: &["user"],
         }
     }

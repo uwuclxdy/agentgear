@@ -66,6 +66,7 @@ impl AgentBackend for JetbrainsCopilotBackend {
             agents: false,
             skills: false,
             instructions: false,
+            statusline: false,
             scopes: &["user"],
         }
     }

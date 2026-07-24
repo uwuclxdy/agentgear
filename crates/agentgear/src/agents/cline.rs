@@ -69,6 +69,7 @@ impl AgentBackend for ClineBackend {
             agents: false,
             skills: false,
             instructions: false,
+            statusline: false,
             scopes: &["user", "project"],
         }
     }

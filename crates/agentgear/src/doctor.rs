@@ -186,10 +186,14 @@ pub(crate) fn claude_report(plugin: &Plugin, source: &Source) -> DoctorReport {
         checks.push(check_validate(plugin, source));
     }
 
-    // These are pure local checks (hash the tree, resolve hook commands on PATH)
-    // and stay useful even when `claude` is missing, so they run unconditionally.
+    // These are pure local checks (hash the tree, resolve hook commands on PATH,
+    // read settings.json) and stay useful even when `claude` is missing, so they run
+    // unconditionally. The statusLine check is absent entirely for a host that
+    // declares none, rather than reporting on a surface nobody asked for.
     checks.push(check_tree_hash(plugin, source));
     checks.push(check_hook_commands(plugin));
+    #[cfg(feature = "claude")]
+    checks.extend(crate::agents::claude::statusline_check(plugin));
 
     DoctorReport { checks }
 }

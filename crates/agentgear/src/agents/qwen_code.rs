@@ -62,6 +62,7 @@ impl AgentBackend for QwenCodeBackend {
             agents: true,
             skills: true,
             instructions: false,
+            statusline: false,
             scopes: &["user", "project"],
         }
     }

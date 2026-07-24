@@ -52,6 +52,7 @@ impl AgentBackend for ZedBackend {
             agents: false,
             skills: true,
             instructions: false,
+            statusline: false,
             scopes: &["user", "project"],
         }
     }

@@ -102,7 +102,17 @@ macro_rules! cfg_config_backends {
 // Shared config-writing helpers, compiled only when a non-CC backend needs them.
 // `allow(dead_code)`: not every enabled backend uses every helper, so a single-
 // feature build leaves parts of the shared surface unreferenced.
+// `confedit` is the one shared helper the `claude` backend needs too: CC's
+// `statusLine` slot lives in the user's own `settings.json`, so that backend
+// read-modify-writes exactly one config file on top of its CLI orchestration. Its
+// real gate is therefore "the config-backend set PLUS claude" — split into two
+// declarations because the shared macro carries only the non-CC set, and pulling
+// `claude` into the macro would drag the other four helpers into every default build.
+#[cfg(feature = "claude")]
+#[allow(dead_code)]
+pub(crate) mod confedit;
 cfg_config_backends! {
+    #[cfg(not(feature = "claude"))]
     #[allow(dead_code)]
     pub(crate) mod confedit;
 }
@@ -169,6 +179,33 @@ pub trait AgentBackend {
     /// drive their own CLI for removal and ignore it. Does not touch the stamp
     /// marker; the caller owns that.
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome>;
+    /// Undo any write this backend made OUTSIDE the harness's own registry or plugin
+    /// tree, before the stamp marker is cleared.
+    ///
+    /// Implement this whenever a backend writes into a file the USER owns and the
+    /// harness does not carry — CC's `statusLine` slot in `settings.json` is the first,
+    /// and every further status-line backend is the same shape. Such a write breaks the
+    /// premise the teardown paths were built on: *an absent or already-removed tool has
+    /// nothing of ours left behind.* It does not, because the user's settings file
+    /// outlives the tool's registry, its plugin tree, and the tool binary itself. Every
+    /// short-circuit on the way to `stamp::clear` — an undetected harness, an
+    /// unsupported scope or source, a plugin the user removed by hand — therefore
+    /// strands our value in their file and drops the marker that is the only copy of
+    /// what we displaced.
+    ///
+    /// Both teardown paths (`install::uninstall_agent`, `selfheal`'s
+    /// plugin-already-gone row) call this unconditionally, on every branch, and
+    /// propagate its error so a failed restore keeps the marker rather than clearing
+    /// the last copy of the user's data. Neither rests on any backend's current
+    /// `Capabilities` or `detect()` answer.
+    ///
+    /// The default does nothing, which stays right for every config-merge backend:
+    /// their writes ARE the plugin's translation, so tearing those down is `remove`'s
+    /// job, and the plugin-already-gone row must keep only forgetting a marker (never
+    /// resurrect, never delete on the user's behalf).
+    fn forget(&self, _plugin: &Plugin, _scope: &Scope) -> Result<()> {
+        Ok(())
+    }
     /// This agent's slice of `doctor`: one check per surface it manages.
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport;
 }

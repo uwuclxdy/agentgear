@@ -82,6 +82,7 @@ impl AgentBackend for OmpBackend {
             agents: true,
             skills: false,
             instructions: false,
+            statusline: false,
             scopes: &["user", "project"],
         }
     }
