@@ -187,15 +187,21 @@ pub(crate) fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Re
     }
 }
 
-/// Embedded/path: (re)materialize so `current` is fresh, then add-if-absent /
+/// Embedded/path: (re)materialize so `current@claude` is fresh, then add-if-absent /
 /// update-if-present. GitHub: send `owner/repo@ref` to pin the ref; when already
 /// present, `update` if the stored ref still matches, else re-`add` to re-point the
-/// pin (`update` never moves one — design §ref-pinning ground truth).
+/// pin (`update` never moves one — design §ref-pinning ground truth). Ceiling: an
+/// install predating client-scoping stays registered on a plain `current`; `update`
+/// refreshes that stale path, so it must be reinstalled to pick up client-scoped
+/// staging.
 fn ensure_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: &Source, scope: &Scope, present: Option<&MarketplaceEntry>) -> Result<()> {
+    // Client-scope the materialization under this backend's own id, so CC and copilot
+    // never collide on the shared data root (each bakes its own `${AGENTGEAR_CLIENT}`).
+    let client = ClaudeBackend.id();
     let source_str = match source {
-        Source::Embedded => materialize(plugin, TreeSource::Blob(plugin.blob()))?.display().to_string(),
+        Source::Embedded => materialize(plugin, TreeSource::Blob(plugin.blob()), client)?.display().to_string(),
         // A path source materializes its on-disk tree the same way embedded does.
-        Source::Path(p) => materialize(plugin, TreeSource::Dir(p))?.display().to_string(),
+        Source::Path(p) => materialize(plugin, TreeSource::Dir(p), client)?.display().to_string(),
         Source::GitHub { repo, ref_ } => github_source(repo, ref_),
     };
     match marketplace_op(source, present) {

@@ -91,7 +91,7 @@ impl AgentBackend for OmpBackend {
         // command or agent file behind a healthy mcp.json reads NeedsRepair. `source`
         // is the one self_heal resolved for this agent (rehydrated `--path`, else the
         // compile-time default), so probe and reconcile render identical bytes.
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         let base = surface_base(scope)?;
         let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
         let commands = report::probe_files(
@@ -115,7 +115,7 @@ impl AgentBackend for OmpBackend {
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
-        let comp = plugin.components(&desired.source)?;
+        let comp = plugin.components(&desired.source)?.with_client(self.id());
         let base = surface_base(scope)?;
 
         let mut changed = false;
@@ -143,7 +143,7 @@ impl AgentBackend for OmpBackend {
     }
 
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         let base = surface_base(scope)?;
 
         let mut changed = false;
@@ -334,7 +334,7 @@ fn report_checks(backend: &OmpBackend, plugin: &Plugin, source: &Source) -> Vec<
 
     let root = report::read_json_config(&mut checks, "mcp.json", &mcp);
 
-    let Some(comp) = report::components(&mut checks, plugin, source) else {
+    let Some(comp) = report::components(&mut checks, plugin, source).map(|c| c.with_client(backend.id())) else {
         return checks;
     };
 

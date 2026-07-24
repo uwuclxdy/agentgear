@@ -14,7 +14,12 @@ use crate::agents::claude::{MarketplaceHealth, find_marketplace, marketplace_hea
 use crate::cli::{CLAUDE_FLOOR, ClaudeCli, MIN_CLAUDE_VERSION, parse_version};
 use crate::error::Result;
 use crate::host::{Plugin, Scope, Source, data_root};
-use crate::materialize::{dir_hash, tree_hash};
+use crate::materialize::{dir_hash, dir_hash_for_client, tree_hash};
+
+/// The CC client id materialize scopes its tree under. doctor is CC-oriented (it runs
+/// `claude plugin validate` and hashes against the tree CC would run), so it reads and
+/// hashes the `@claude`-scoped materialization rather than any other backend's.
+const CLAUDE_CLIENT: &str = "claude";
 
 /// An ordered health report: one [`DoctorCheck`] per thing inspected, rendered by
 /// its [`Display`](std::fmt::Display) into a `[ ok ]`/`[warn]`/`[fail]` list.
@@ -314,9 +319,10 @@ fn check_validate(plugin: &Plugin, source: &Source) -> DoctorCheck {
 
 fn validate_target(plugin: &Plugin, source: &Source) -> Option<PathBuf> {
     match source {
-        // Both materialize `current`; the on-disk `current` is the validate target.
+        // Both materialize the CC-scoped `current@claude`; that on-disk tree is the
+        // validate target (doctor validates the tree CC would run).
         Source::Embedded | Source::Path(_) => {
-            let current = data_root(plugin).ok()?.join("current");
+            let current = data_root(plugin).ok()?.join(format!("current@{CLAUDE_CLIENT}"));
             current.exists().then_some(current)
         }
         Source::GitHub { .. } => None,
@@ -329,16 +335,18 @@ fn check_tree_hash(plugin: &Plugin, source: &Source) -> DoctorCheck {
         return DoctorCheck { name, status: CheckStatus::Ok("github source; not applicable".into()) };
     }
     let current = match data_root(plugin) {
-        Ok(root) => root.join("current"),
+        Ok(root) => root.join(format!("current@{CLAUDE_CLIENT}")),
         Err(e) => return DoctorCheck { name, status: CheckStatus::Warn(format!("no data root: {e}")) },
     };
     if !current.exists() {
         return DoctorCheck { name, status: CheckStatus::Warn("nothing materialized yet".into()) };
     }
-    // Embedded hashes the decompressed blob; Path hashes its on-disk tree.
+    // The on-disk `current@claude` is already token-substituted, so the baseline must
+    // substitute too (a no-op for a token-free tree, so existing plugins are unchanged).
+    // Embedded hashes the decompressed blob; Path hashes its on-disk source tree.
     let expected = match source {
-        Source::Path(p) => dir_hash(p),
-        _ => tree_hash(plugin.blob()),
+        Source::Path(p) => dir_hash_for_client(p, CLAUDE_CLIENT),
+        _ => tree_hash(plugin.blob(), CLAUDE_CLIENT),
     };
     match (dir_hash(&current), expected) {
         (Ok(on_disk), Ok(exp)) if on_disk == exp => DoctorCheck { name, status: CheckStatus::Ok("hashes match".into()) },

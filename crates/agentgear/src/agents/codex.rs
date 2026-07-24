@@ -63,7 +63,7 @@ impl AgentBackend for CodexBackend {
         // FILE presence is still what reconcile converges.) `source` is the one self_heal
         // resolved for this agent (rehydrated `--path`, else the compile-time default),
         // so probe and reconcile render identical bytes.
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         let base = codex_base(scope)?;
         let mcp = mcptoml::probe_surface(&base.join("config.toml"), &comp.mcp_servers)?;
         let hooks = report::probe_json_entries(&base.join("hooks.json"), &hook_entries(&comp.hooks))?;
@@ -85,7 +85,7 @@ impl AgentBackend for CodexBackend {
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
-        let comp = plugin.components(&desired.source)?;
+        let comp = plugin.components(&desired.source)?.with_client(self.id());
         let base = codex_base(scope)?;
 
         let mut changed = false;
@@ -108,7 +108,7 @@ impl AgentBackend for CodexBackend {
     }
 
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         let base = codex_base(scope)?;
 
         let mut changed = false;
@@ -379,7 +379,7 @@ fn report_checks(backend: &CodexBackend, plugin: &Plugin, source: &Source) -> Ve
         }
     };
 
-    let Some(comp) = report::components(&mut checks, plugin, source) else {
+    let Some(comp) = report::components(&mut checks, plugin, source).map(|c| c.with_client(backend.id())) else {
         return checks;
     };
 

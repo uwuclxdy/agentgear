@@ -125,7 +125,7 @@ impl Env {
     fn break_materialized_cache(&self) {
         let root = self.data.join("ez-fixture-plugin");
         let _ = std::fs::remove_dir_all(root.join("versions"));
-        let _ = std::fs::remove_file(root.join("current"));
+        let _ = std::fs::remove_file(root.join("current@claude"));
     }
 
     fn manual_disable(&self) {
@@ -289,7 +289,7 @@ fn self_heal_repairs_a_path_install_from_the_persisted_path() {
     // The re-materialized tree must carry the mutation: proof self_heal resolved
     // the SAME --path dir's current bytes, not the binary's baked blob (which
     // never saw the mutation and would fail this assertion).
-    let materialized = env.data.join("ez-fixture-plugin/current/commands/hello.md");
+    let materialized = env.data.join("ez-fixture-plugin/current@claude/commands/hello.md");
     let content = std::fs::read_to_string(&materialized).unwrap_or_default();
     assert!(content.contains("path-source-marker"), "self-heal did not re-materialize from the persisted --path source:\n{content}");
 
@@ -333,7 +333,7 @@ fn update_repairs_a_path_install_from_the_persisted_path() {
     assert!(ok, "update errored on a broken path install: {out}");
     assert_eq!(out, "Repaired", "expected repair of a files-missing path install, got {out}");
 
-    let materialized = env.data.join("ez-fixture-plugin/current/commands/hello.md");
+    let materialized = env.data.join("ez-fixture-plugin/current@claude/commands/hello.md");
     let content = std::fs::read_to_string(&materialized).unwrap_or_default();
     assert!(content.contains("path-source-marker"), "update did not re-materialize from the persisted --path source:\n{content}");
 

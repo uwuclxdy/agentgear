@@ -9,10 +9,16 @@
 //! `(rel-path, bytes)` entries before the write, so the rest of the pipeline is
 //! source-agnostic.
 //!
+//! The staging is client-scoped: CC and copilot copy the resulting tree verbatim
+//! into their own plugin caches and run its hooks, so the `${AGENTGEAR_CLIENT}`
+//! token is substituted per client into the tree before it is written, and the
+//! version dir + pointer carry a `@<client>` suffix so two plugin-native backends
+//! never collide on one shared dir.
+//!
 //! ```text
 //! <data_root>/
-//!   versions/<version>/         full tree + generated .claude-plugin/marketplace.json
-//!   current -> versions/<version>   symlink (unix) / junction (windows)
+//!   versions/<version>@<client>/       full tree + generated .claude-plugin/marketplace.json
+//!   current@<client> -> versions/<version>@<client>   symlink (unix) / junction (windows)
 //! ```
 
 use std::fs::{self, File};
@@ -21,6 +27,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use crate::components::AGENTGEAR_CLIENT_TOKEN;
 use crate::error::{Error, IoContext, Result};
 use crate::host::{Plugin, data_root};
 use crate::manifest::{MarketplaceManifest, MarketplacePlugin, PluginManifest};
@@ -54,7 +61,7 @@ impl TreeSource<'_> {
 /// `marketplace add`. Idempotent: an existing version dir is reused (dedup across
 /// coexisting binaries), and its tree is not re-read (the blob is only
 /// decompressed when a write is actually needed).
-pub(crate) fn materialize(plugin: &Plugin, tree: TreeSource<'_>) -> Result<PathBuf> {
+pub(crate) fn materialize(plugin: &Plugin, tree: TreeSource<'_>, client_id: &str) -> Result<PathBuf> {
     let version = plugin.version;
     let unsafe_segment =
         |c: char| c.is_whitespace() || c.is_control() || std::path::is_separator(c) || matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*');
@@ -68,14 +75,51 @@ pub(crate) fn materialize(plugin: &Plugin, tree: TreeSource<'_>) -> Result<PathB
     let versions = root.join("versions");
     fs::create_dir_all(&versions).io_ctx(|| format!("creating {}", versions.display()))?;
 
-    let version_dir = versions.join(version);
+    let version_dir = versions.join(format!("{version}@{client_id}"));
     if !version_dir.exists() {
-        let entries = tree.entries()?;
+        let mut entries = tree.entries()?;
+        // Client-scope the staging: each plugin-native backend bakes its own id into
+        // the tree it copies and runs, so the shared dir can't collide between them.
+        expand_client_entries(&mut entries, client_id);
         write_version_dir(plugin, &entries, &versions, &version_dir)?;
     }
 
-    flip_pointer(&root, version, &version_dir)?;
-    Ok(root.join("current"))
+    flip_pointer(&root, version, client_id, &version_dir)?;
+    Ok(root.join(format!("current@{client_id}")))
+}
+
+/// Substitute the ASCII [`AGENTGEAR_CLIENT_TOKEN`] with `client` across every file's
+/// bytes. The token is pure ASCII, so a byte-level replace never corrupts UTF-8 or
+/// binary content. The generated marketplace is produced fresh (not part of these
+/// entries) and never carries the token, so it is excluded the same way it is from
+/// hashing; when the token is absent every file is left untouched.
+fn expand_client_entries(entries: &mut [(String, Vec<u8>)], client: &str) {
+    let needle = AGENTGEAR_CLIENT_TOKEN.as_bytes();
+    let repl = client.as_bytes();
+    for (rel, bytes) in entries.iter_mut() {
+        if rel != GENERATED_MARKETPLACE && contains_subslice(bytes, needle) {
+            *bytes = replace_subslice(bytes, needle, repl);
+        }
+    }
+}
+
+fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty() && haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+fn replace_subslice(haystack: &[u8], needle: &[u8], repl: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(haystack.len());
+    let mut i = 0;
+    while i < haystack.len() {
+        if haystack[i..].starts_with(needle) {
+            out.extend_from_slice(repl);
+            i += needle.len();
+        } else {
+            out.push(haystack[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Write the tree into a temp sibling, then atomically rename onto the versioned
@@ -315,9 +359,9 @@ fn append_tree(builder: &mut tar::Builder<Vec<u8>>, base: &Path, dir: &Path) -> 
 
 // --- pointer flip ------------------------------------------------------------
 
-fn flip_pointer(root: &Path, version: &str, version_dir: &Path) -> Result<()> {
-    let current = root.join("current");
-    let rel_target = Path::new("versions").join(version);
+fn flip_pointer(root: &Path, version: &str, client_id: &str, version_dir: &Path) -> Result<()> {
+    let current = root.join(format!("current@{client_id}"));
+    let rel_target = Path::new("versions").join(format!("{version}@{client_id}"));
     make_pointer(root, &current, &rel_target, version_dir)
 }
 
@@ -362,14 +406,30 @@ fn rand_suffix() -> String {
 
 // --- content hashing ---------------------------------------------------------
 
-/// Stable hash of the embedded source tree (excludes the generated marketplace),
-/// for the doctor check that `current` has not gone stale or corrupt. Decompresses
-/// the blob first, so it errors without the `embed` feature.
-pub(crate) fn tree_hash(blob: &[u8]) -> Result<String> {
-    let entries = blob_entries(blob)?;
+/// Stable hash of the embedded tree AS MATERIALIZED for `client` (token-substituted,
+/// generated marketplace excluded), for the doctor check that `current@<client>` has
+/// not gone stale or corrupt. When the token is absent the substitution is a no-op,
+/// so the hash equals the raw tree's. Decompresses the blob first, so it errors
+/// without the `embed` feature.
+pub(crate) fn tree_hash(blob: &[u8], client: &str) -> Result<String> {
+    let mut entries = blob_entries(blob)?;
+    expand_client_entries(&mut entries, client);
+    Ok(hash_entries(&entries))
+}
+
+/// Like [`tree_hash`] but for a `Source::Path` on-disk source tree.
+pub(crate) fn dir_hash_for_client(dir: &Path, client: &str) -> Result<String> {
+    let mut entries = dir_entries(dir)?;
+    expand_client_entries(&mut entries, client);
+    Ok(hash_entries(&entries))
+}
+
+/// Hash flattened entries (generated marketplace excluded), for the client-scoped
+/// baselines that compare against a materialized `current@<client>` tree.
+fn hash_entries(entries: &[(String, Vec<u8>)]) -> String {
     let mut files: Vec<(String, &[u8])> =
         entries.iter().filter(|(rel, _)| rel != GENERATED_MARKETPLACE).map(|(rel, bytes)| (rel.clone(), bytes.as_slice())).collect();
-    Ok(hash_pairs(&mut files))
+    hash_pairs(&mut files)
 }
 
 /// Stable hash of a materialized tree on disk (same exclusion), for the doctor

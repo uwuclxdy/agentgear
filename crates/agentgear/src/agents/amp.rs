@@ -75,19 +75,19 @@ impl AgentBackend for AmpBackend {
         // plugin, so a present marker is never dropped. `source` is the one self_heal
         // resolved for this agent (rehydrated `--path`, else the compile-time default),
         // so probe and reconcile render identical bytes.
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         probe_mcp(&settings_path(scope)?, &comp.mcp_servers)
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         // `reenable` is unused: amp's mcp entry has no per-server disable flag (the
         // Plain shape carries none), so there is nothing self_heal could re-enable.
-        let comp = plugin.components(&desired.source)?;
+        let comp = plugin.components(&desired.source)?.with_client(self.id());
         reconcile_mcp(&settings_path(scope)?, &comp.mcp_servers)
     }
 
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         remove_mcp(&settings_path(scope)?, &comp.mcp_servers)
     }
 
@@ -226,7 +226,7 @@ fn report_checks(backend: &AmpBackend, plugin: &Plugin, source: &Source) -> Vec<
         }
     };
 
-    let Some(comp) = report::components(&mut checks, plugin, source) else {
+    let Some(comp) = report::components(&mut checks, plugin, source).map(|c| c.with_client(backend.id())) else {
         return checks;
     };
 

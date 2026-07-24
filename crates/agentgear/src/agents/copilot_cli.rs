@@ -160,16 +160,24 @@ fn reconcile(plugin: &Plugin, desired: &Desired) -> Result<Outcome> {
     }
 }
 
-/// Ensure our marketplace is registered, add-if-absent. Embedded/path materialize a
-/// local tree and add its `current` dir; github adds the bare `repo` (copilot clones
-/// its default branch). copilot has no `marketplace update`; the `current` pointer is
-/// stable across versions, so a re-materialize needs no re-add and `plugin update`
-/// re-reads the refreshed tree.
+/// Ensure our marketplace is registered, add-if-absent. Embedded/path add the
+/// client-scoped `current@copilot-cli` dir; github adds the bare `repo` (copilot
+/// clones its default branch). copilot has no `marketplace update`, but flipping
+/// `current@copilot-cli` in place re-points it across versions, so a re-materialize
+/// needs no re-add and `plugin update` re-reads the refreshed tree.
+///
+/// Ceiling: an install predating client-scoping sits on a plain `current` this code
+/// no longer writes, and copilot exposes no marketplace update/remove to re-point it,
+/// so such an install must be reinstalled (`uninstall` + `setup`) to migrate onto the
+/// client-scoped staging. Fresh installs are unaffected.
 fn ensure_marketplace(cli: &CopilotCli, plugin: &Plugin, source: &Source) -> Result<()> {
+    // Client-scope the materialization under this backend's own id, so copilot and CC
+    // never collide on the shared data root (each bakes its own `${AGENTGEAR_CLIENT}`).
+    let client = CopilotCliBackend.id();
     let add_source = match source {
-        Source::Embedded => materialize(plugin, TreeSource::Blob(plugin.blob()))?.display().to_string(),
+        Source::Embedded => materialize(plugin, TreeSource::Blob(plugin.blob()), client)?.display().to_string(),
         // A path source materializes its on-disk tree the same way embedded does.
-        Source::Path(p) => materialize(plugin, TreeSource::Dir(p))?.display().to_string(),
+        Source::Path(p) => materialize(plugin, TreeSource::Dir(p), client)?.display().to_string(),
         Source::GitHub { repo, ref_ } => github_marketplace_source(repo, ref_),
     };
     if !marketplace_present(cli, plugin.marketplace)? {
@@ -234,7 +242,7 @@ fn classify(source: &Source, entry: Option<&CopilotPlugin>, embedded: &str) -> B
 // --- remove ------------------------------------------------------------------
 
 /// Uninstall our plugin. copilot exposes no `marketplace remove`, so the local
-/// marketplace stays registered (a harmless dangling entry pointing at `current`).
+/// marketplace stays registered (a harmless dangling entry pointing at `current@copilot-cli`).
 fn remove(plugin: &Plugin) -> Result<Outcome> {
     let cli = CopilotCli::locate()?;
     if find_plugin(&cli, plugin)?.is_none() {

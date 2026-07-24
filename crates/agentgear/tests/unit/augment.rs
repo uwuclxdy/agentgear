@@ -223,3 +223,69 @@ fn mcp_probe_classifies_absent_healthy_and_needs_repair() {
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
+
+// --- ${AGENTGEAR_CLIENT} portability token -----------------------------------
+
+/// Recursively true if any file under `root` has contents containing `needle`.
+fn agentgear_token_dir_contains(root: &std::path::Path, needle: &str) -> bool {
+    let Ok(rd) = std::fs::read_dir(root) else { return false };
+    for entry in rd.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            if agentgear_token_dir_contains(&p, needle) {
+                return true;
+            }
+        } else if std::fs::read_to_string(&p).is_ok_and(|s| s.contains(needle)) {
+            return true;
+        }
+    }
+    false
+}
+
+/// A hook command AND an mcp arg both carry `${AGENTGEAR_CLIENT}`; after reconcile
+/// each must read this backend's own id, reconcile↔probe must stay Healthy (no
+/// perpetual NeedsRepair from a probe that forgot to substitute), and remove must
+/// strip the substituted entry it wrote.
+#[test]
+fn agentgear_client_token_expands_to_this_backend_id() {
+    use crate::agents::{AgentBackend, BackendState};
+    use crate::host::{Desired, Plugin, Scope, Source};
+
+    let backend = super::AugmentBackend;
+    let id = backend.id();
+
+    let src = std::env::temp_dir().join(format!("ez-cidtok-src-{:016x}", fastrand::u64(..)));
+    std::fs::create_dir_all(src.join(".claude-plugin")).unwrap();
+    std::fs::create_dir_all(src.join("hooks")).unwrap();
+    std::fs::write(
+        src.join(".claude-plugin").join("plugin.json"),
+        r#"{"name":"ez-cid","version":"0.1.0","mcpServers":{"srv":{"command":"host_fixture","args":["cid=${AGENTGEAR_CLIENT}"]}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("hooks").join("hooks.json"),
+        r#"{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"host_fixture up --client ${AGENTGEAR_CLIENT}"}]}]}}"#,
+    )
+    .unwrap();
+
+    let plugin = Plugin { name: "ez-cid", marketplace: "ez-mkt", version: "0.1.0", agents: &["augment"], instructions: None, blob: &[] };
+    let project = std::env::temp_dir().join(format!("ez-cidtok-dst-{:016x}", fastrand::u64(..)));
+    let scope = Scope::Project { path: project.clone() };
+    let source = Source::Path(src.clone());
+
+    backend.reconcile(&plugin, &Desired { source: source.clone(), reenable: true }, &scope).unwrap();
+
+    assert!(agentgear_token_dir_contains(&project, &format!("cid={id}")), "the mcp arg token did not expand to `{id}`");
+    assert!(!agentgear_token_dir_contains(&project, "${AGENTGEAR_CLIENT}"), "a raw ${{AGENTGEAR_CLIENT}} token leaked to disk");
+
+    assert!(
+        matches!(backend.probe(&plugin, &scope, &source).unwrap(), BackendState::Healthy),
+        "a token-bearing install must probe Healthy, not churn"
+    );
+
+    backend.remove(&plugin, &scope, &source).unwrap();
+    assert!(!agentgear_token_dir_contains(&project, &format!("cid={id}")), "remove left the substituted mcp entry behind");
+
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&project);
+}

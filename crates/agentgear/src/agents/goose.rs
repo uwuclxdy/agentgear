@@ -88,7 +88,7 @@ impl AgentBackend for GooseBackend {
         // still carries the Disabled classification for a user-flipped `enabled:false`.
         // `source` is the one self_heal resolved for this agent (rehydrated `--path`,
         // else the compile-time default), so probe and reconcile render identical bytes.
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         let mcp = if comp.mcp_servers.iter().any(is_writable) { Some(probe_mcp(&config_yaml()?, &comp.mcp_servers)?) } else { None };
         let hooks = probe_hooks(&hooks_json_path(scope, plugin.name)?, &comp.hooks)?;
         let skills = skillsdir::probe(&skills_dir(scope, plugin.name)?, plugin, &comp.skills)?;
@@ -96,7 +96,7 @@ impl AgentBackend for GooseBackend {
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
-        let comp = plugin.components(&desired.source)?;
+        let comp = plugin.components(&desired.source)?.with_client(self.id());
 
         let mut changed = false;
         changed |= reconcile_mcp(&config_yaml()?, &comp.mcp_servers, desired.reenable)?;
@@ -106,7 +106,7 @@ impl AgentBackend for GooseBackend {
     }
 
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
 
         let mut changed = false;
         changed |= remove_mcp(&config_yaml()?, &writable_names(&comp.mcp_servers))?;
@@ -491,7 +491,7 @@ fn report_checks(backend: &GooseBackend, plugin: &Plugin, source: &Source) -> Ve
         }
     };
 
-    let Some(comp) = report::components(&mut checks, plugin, source) else {
+    let Some(comp) = report::components(&mut checks, plugin, source).map(|c| c.with_client(backend.id())) else {
         return checks;
     };
 

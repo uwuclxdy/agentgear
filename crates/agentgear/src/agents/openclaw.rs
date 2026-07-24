@@ -81,21 +81,21 @@ impl AgentBackend for OpenclawBackend {
         // with the skills surface, so a deleted skill behind healthy mcp reads
         // NeedsRepair. `source` is the one self_heal resolved for this agent (rehydrated
         // `--path`, else the compile-time default), so probe/reconcile render identical bytes.
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         let mcp = mcpjson::probe(&config_path()?, MCP_KEY, &comp.mcp_servers, SHAPE)?;
         let skills = skillsdir::probe(&skills_root()?, plugin, &comp.skills)?;
         Ok(report::compose([Some(mcp), skills].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, _scope: &Scope) -> Result<Outcome> {
-        let comp = plugin.components(&desired.source)?;
+        let comp = plugin.components(&desired.source)?.with_client(self.id());
         let mut changed = mcpjson::reconcile(&config_path()?, MCP_KEY, &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= skillsdir::reconcile(&skills_root()?, plugin, &comp.skills)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
     fn remove(&self, plugin: &Plugin, _scope: &Scope, source: &Source) -> Result<Outcome> {
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         let mut changed = mcpjson::remove(&config_path()?, MCP_KEY, &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= skillsdir::remove(&skills_root()?, plugin, &comp.skills)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
@@ -219,7 +219,7 @@ fn report_checks(backend: &OpenclawBackend, plugin: &Plugin, source: &Source) ->
         }
     };
 
-    let Some(comp) = report::components(&mut checks, plugin, source) else {
+    let Some(comp) = report::components(&mut checks, plugin, source).map(|c| c.with_client(backend.id())) else {
         return checks;
     };
 

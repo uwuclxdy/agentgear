@@ -99,7 +99,7 @@ impl AgentBackend for CursorBackend {
         // NeedsRepair. `source` is the one self_heal resolved for this agent (rehydrated
         // `--path`, else the compile-time default), so probe and reconcile render
         // identical bytes.
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         let base = cursor_dir(scope)?;
         let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::typed())?;
         let hooks = report::probe_json_entries(&base.join("hooks.json"), &hook_entries(&comp.hooks))?;
@@ -122,7 +122,7 @@ impl AgentBackend for CursorBackend {
         if cc_registry_covers(plugin) {
             return Ok(Outcome::NoOp);
         }
-        let comp = plugin.components(&desired.source)?;
+        let comp = plugin.components(&desired.source)?.with_client(self.id());
         let base = cursor_dir(scope)?;
 
         let mut changed = false;
@@ -142,7 +142,7 @@ impl AgentBackend for CursorBackend {
     }
 
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         let base = cursor_dir(scope)?;
 
         let mut changed = false;
@@ -395,7 +395,7 @@ fn report_checks(backend: &CursorBackend, plugin: &Plugin, source: &Source) -> V
 
     let root = report::read_json_config(&mut checks, "mcp.json", &mcp);
 
-    let Some(comp) = report::components(&mut checks, plugin, source) else {
+    let Some(comp) = report::components(&mut checks, plugin, source).map(|c| c.with_client(backend.id())) else {
         return checks;
     };
 

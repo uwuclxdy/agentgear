@@ -60,7 +60,7 @@ impl AgentBackend for GeminiBackend {
         // mcp map reads NeedsRepair. `source` is the one self_heal resolved for
         // this agent (rehydrated `--path`, else the compile-time default), so
         // probe and reconcile render identical bytes.
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         let base = gemini_dir(scope)?;
         let settings = base.join("settings.json");
         let mcp = mcpjson::probe_surface(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
@@ -73,7 +73,7 @@ impl AgentBackend for GeminiBackend {
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
-        let comp = plugin.components(&desired.source)?;
+        let comp = plugin.components(&desired.source)?.with_client(self.id());
         let base = gemini_dir(scope)?;
         let settings = base.join("settings.json");
 
@@ -96,7 +96,7 @@ impl AgentBackend for GeminiBackend {
     }
 
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         let base = gemini_dir(scope)?;
         let settings = base.join("settings.json");
 
@@ -345,7 +345,7 @@ fn report_checks(backend: &GeminiBackend, plugin: &Plugin, source: &Source) -> V
 
     let root = report::read_json_config(&mut checks, "settings file", &settings);
 
-    let Some(comp) = report::components(&mut checks, plugin, source) else {
+    let Some(comp) = report::components(&mut checks, plugin, source).map(|c| c.with_client(backend.id())) else {
         return checks;
     };
 

@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::{blob_entries, compress_dir, dir_hash, generate_marketplace, tree_hash, write_version_dir};
+use super::{
+    blob_entries, compress_dir, dir_hash, dir_hash_for_client, expand_client_entries, generate_marketplace, tree_hash, write_version_dir,
+};
 use crate::host::Plugin;
 
 const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/plugin");
@@ -32,19 +34,66 @@ fn scratch() -> PathBuf {
 fn embedded_hash_equals_materialized_hash() {
     let plugin = test_plugin();
     let blob = fixture_blob();
-    let entries = blob_entries(&blob).unwrap();
+    let mut entries = blob_entries(&blob).unwrap();
+    // Materialize as the CC client does (token-substituted); the fixture carries no
+    // token, so this is a no-op and the equality is the same one doctor relies on.
+    expand_client_entries(&mut entries, "claude");
     let root = scratch();
     let versions = root.join("versions");
     std::fs::create_dir_all(&versions).unwrap();
-    let version_dir = versions.join("0.1.0");
+    let version_dir = versions.join("0.1.0@claude");
 
     write_version_dir(&plugin, &entries, &versions, &version_dir).unwrap();
 
     // The generated marketplace.json lives in the materialized tree but is
     // excluded from the hash, so the two sides must match exactly.
     assert!(version_dir.join(".claude-plugin/marketplace.json").exists());
-    assert_eq!(dir_hash(&version_dir).unwrap(), tree_hash(&blob).unwrap());
+    assert_eq!(dir_hash(&version_dir).unwrap(), tree_hash(&blob, "claude").unwrap());
 
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn client_token_materializes_per_client_and_hashes_match_baseline() {
+    // A tree carrying ${AGENTGEAR_CLIENT} materializes with the token replaced by the
+    // passed client id; the on-disk tree hashes equal to the client-scoped baseline
+    // (the exact equality doctor's check_tree_hash keys on), and two clients differ.
+    let src = scratch();
+    let cp = src.join(".claude-plugin");
+    std::fs::create_dir_all(&cp).unwrap();
+    std::fs::write(cp.join("plugin.json"), br#"{"name":"tok","version":"0.1.0","description":"d","author":{"name":"a"}}"#).unwrap();
+    std::fs::create_dir_all(src.join("hooks")).unwrap();
+    std::fs::write(
+        src.join("hooks").join("hooks.json"),
+        br#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"h --client ${AGENTGEAR_CLIENT}"}]}]}}"#,
+    )
+    .unwrap();
+
+    let blob = compress_dir(&src).unwrap();
+    let plugin = Plugin { name: "tok", marketplace: "tok-mkt", version: "0.1.0", agents: &["claude"], instructions: None, blob: &[] };
+
+    let root = scratch();
+    let versions = root.join("versions");
+    std::fs::create_dir_all(&versions).unwrap();
+    let mut entries = blob_entries(&blob).unwrap();
+    expand_client_entries(&mut entries, "claude");
+    let version_dir = versions.join("0.1.0@claude");
+    write_version_dir(&plugin, &entries, &versions, &version_dir).unwrap();
+
+    // The token was substituted on disk, not left raw.
+    let h = std::fs::read_to_string(version_dir.join("hooks/hooks.json")).unwrap();
+    assert!(h.contains("--client claude"), "token not substituted:\n{h}");
+    assert!(!h.contains("${AGENTGEAR_CLIENT}"), "raw token survived on disk:\n{h}");
+
+    // doctor's exact equality: on-disk current@claude == the substituted baseline,
+    // from both the blob and the source-dir hashers.
+    assert_eq!(dir_hash(&version_dir).unwrap(), tree_hash(&blob, "claude").unwrap());
+    assert_eq!(dir_hash(&version_dir).unwrap(), dir_hash_for_client(&src, "claude").unwrap());
+    // Per-client staging: a different client bakes different bytes, so the shared
+    // data root can never collide between two plugin-native backends.
+    assert_ne!(tree_hash(&blob, "claude").unwrap(), tree_hash(&blob, "copilot-cli").unwrap());
+
+    std::fs::remove_dir_all(&src).ok();
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -55,7 +104,7 @@ fn write_version_dir_is_idempotent_when_target_exists() {
     let root = scratch();
     let versions = root.join("versions");
     std::fs::create_dir_all(&versions).unwrap();
-    let version_dir = versions.join("0.1.0");
+    let version_dir = versions.join("0.1.0@claude");
 
     write_version_dir(&plugin, &entries, &versions, &version_dir).unwrap();
     let first = dir_hash(&version_dir).unwrap();

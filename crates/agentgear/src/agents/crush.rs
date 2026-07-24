@@ -87,7 +87,7 @@ impl AgentBackend for CrushBackend {
         // surface now reads NeedsRepair instead of Healthy. `source` is the one
         // self_heal resolved for this agent (rehydrated `--path`, else the
         // compile-time default), so probe and reconcile render identical bytes.
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         let config = config_file(scope)?;
         let mcp = mcpjson::probe_surface(&config, &["mcp"], &comp.mcp_servers, ServerShape::typed())?;
         let hooks = report::probe_json_entries(&config, &hook_entries(&comp.hooks))?;
@@ -98,7 +98,7 @@ impl AgentBackend for CrushBackend {
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
-        let comp = plugin.components(&desired.source)?;
+        let comp = plugin.components(&desired.source)?.with_client(self.id());
         let mut changed = reconcile_config(&config_file(scope)?, &comp.mcp_servers, &comp.hooks)?;
         changed |= skillsdir::reconcile(&skills_root(scope)?, plugin, &comp.skills)?;
         let cmd_root = commands_root(scope)?.join(plugin.name);
@@ -109,7 +109,7 @@ impl AgentBackend for CrushBackend {
     }
 
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         let mut changed = remove_config(&config_file(scope)?, &portable_names(&comp.mcp_servers), &comp.hooks)?;
         changed |= skillsdir::remove(&skills_root(scope)?, plugin, &comp.skills)?;
         // We own the whole `commands/<plugin>/` subtree (crush walks it recursively),
@@ -358,7 +358,7 @@ fn report_checks(backend: &CrushBackend, plugin: &Plugin, source: &Source) -> Ve
 
     let root = report::read_json_config(&mut checks, "config file", &config);
 
-    let Some(comp) = report::components(&mut checks, plugin, source) else {
+    let Some(comp) = report::components(&mut checks, plugin, source).map(|c| c.with_client(backend.id())) else {
         return checks;
     };
 

@@ -132,6 +132,62 @@ fn referenced_mcp_json_may_be_a_bare_map() {
 }
 
 #[test]
+fn expand_client_replaces_the_token() {
+    assert_eq!(expand_client("run --client ${AGENTGEAR_CLIENT} now", "codex"), "run --client codex now");
+    // absent -> unchanged
+    assert_eq!(expand_client("no token here", "codex"), "no token here");
+    // every occurrence is replaced
+    assert_eq!(expand_client("${AGENTGEAR_CLIENT}/${AGENTGEAR_CLIENT}", "gemini"), "gemini/gemini");
+}
+
+#[test]
+fn with_client_expands_only_command_surfaces() {
+    let entries = vec![
+        e(
+            ".claude-plugin/plugin.json",
+            r#"{"name":"p","version":"0.1.0","author":{"name":"a"},
+              "mcpServers":{"tok":{"command":"${AGENTGEAR_CLIENT}-bin","args":["--client","${AGENTGEAR_CLIENT}"],"env":{"C":"${AGENTGEAR_CLIENT}"}}}}"#,
+        ),
+        e(
+            "hooks/hooks.json",
+            r#"{"hooks":{"UserPromptSubmit":[{"matcher":"${AGENTGEAR_CLIENT}","hooks":[{"type":"command","command":"host up --client ${AGENTGEAR_CLIENT}"}]}]}}"#,
+        ),
+    ];
+    let c = parse(&entries).with_client("codex");
+
+    let srv = c.mcp_servers.iter().find(|s| s.name == "tok").unwrap();
+    assert_eq!(srv.command, "codex-bin", "mcp command must be substituted");
+    assert_eq!(srv.args, vec!["--client".to_string(), "codex".to_string()], "each mcp arg must be substituted");
+    // env is not an executable-command surface -> left verbatim.
+    assert_eq!(srv.env.get("C").map(String::as_str), Some("${AGENTGEAR_CLIENT}"));
+
+    let hook = c.hooks.iter().find(|h| h.event == "UserPromptSubmit").unwrap();
+    assert_eq!(hook.command, "host up --client codex", "hook command must be substituted");
+    // matcher is not a command surface -> verbatim.
+    assert_eq!(hook.matcher.as_deref(), Some("${AGENTGEAR_CLIENT}"));
+}
+
+#[test]
+fn agentgear_client_token_stays_portable() {
+    // Unlike ${CLAUDE_PLUGIN_ROOT} (a skip), the client token is a known, expanded
+    // token, so a hook/server carrying ONLY it must stay portable — build.rs's
+    // non-portability lint reuses is_portable, so it must not warn on this token.
+    let entries = vec![
+        e(
+            ".claude-plugin/plugin.json",
+            r#"{"name":"p","mcpServers":{"tok":{"command":"host","args":["--client","${AGENTGEAR_CLIENT}"]}}}"#,
+        ),
+        e("hooks/hooks.json", r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"host stop --client ${AGENTGEAR_CLIENT}"}]}]}}"#),
+    ];
+    let c = parse(&entries);
+    assert!(
+        c.mcp_servers.iter().find(|s| s.name == "tok").unwrap().is_portable(),
+        "a ${{AGENTGEAR_CLIENT}}-only server must stay portable"
+    );
+    assert!(c.hooks.iter().find(|h| h.event == "Stop").unwrap().is_portable(), "a ${{AGENTGEAR_CLIENT}}-only hook must stay portable");
+}
+
+#[test]
 fn groups_skills_by_top_dir() {
     let entries = vec![e("skills/demo/SKILL.md", "---\nname: demo\n---\nbody"), e("skills/demo/assets/x.txt", "asset")];
     let c = parse(&entries);

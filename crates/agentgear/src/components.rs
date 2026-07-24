@@ -9,6 +9,22 @@ use serde_json::{Map, Value};
 
 use crate::error::{Error, Result};
 
+/// The portability token every backend expands to ITS OWN canonical client id
+/// (`claude`, `codex`, `copilot-cli`, ...). Unlike `${CLAUDE_PLUGIN_ROOT}` — which
+/// only Claude Code expands, so [`is_portable`](HookBinding::is_portable) flags it as
+/// a skip — this token is known to agentgear and expanded per harness in an
+/// executable command, so an author writes the client id once and each harness sees
+/// its own. Plugin-native backends (CC/copilot) copy the whole tree and substitute it
+/// everywhere (see materialize); the config-translating backends expand only the
+/// command surfaces they render — hook commands and mcp command/args ([`with_client`]).
+pub(crate) const AGENTGEAR_CLIENT_TOKEN: &str = "${AGENTGEAR_CLIENT}";
+
+/// Replace every [`AGENTGEAR_CLIENT_TOKEN`] in `s` with `client`. A no-op when the
+/// token is absent.
+pub(crate) fn expand_client(s: &str, client: &str) -> String {
+    s.replace(AGENTGEAR_CLIENT_TOKEN, client)
+}
+
 /// A plugin tree parsed into a harness-agnostic shape. Lossless: a backend that
 /// lacks a surface skips that field, the parser never drops one.
 #[derive(Debug, Clone, Default)]
@@ -116,6 +132,29 @@ pub struct SkillDir {
 }
 
 impl PluginComponents {
+    /// Expand every [`AGENTGEAR_CLIENT_TOKEN`] to `client` across the surfaces that
+    /// carry an executable command — hook commands and mcp command/args — so each
+    /// backend renders its own canonical client id. Matchers, env, and markdown are
+    /// left verbatim; a token-free plugin is unchanged.
+    pub(crate) fn with_client(mut self, client: &str) -> Self {
+        for hook in &mut self.hooks {
+            if hook.command.contains(AGENTGEAR_CLIENT_TOKEN) {
+                hook.command = expand_client(&hook.command, client);
+            }
+        }
+        for server in &mut self.mcp_servers {
+            if server.command.contains(AGENTGEAR_CLIENT_TOKEN) {
+                server.command = expand_client(&server.command, client);
+            }
+            for arg in &mut server.args {
+                if arg.contains(AGENTGEAR_CLIENT_TOKEN) {
+                    *arg = expand_client(arg, client);
+                }
+            }
+        }
+        self
+    }
+
     /// Parse from flattened `(rel-path, bytes)` tree entries.
     pub(crate) fn parse(entries: &[(String, Vec<u8>)]) -> Result<Self> {
         let mut out = PluginComponents::default();

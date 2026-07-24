@@ -81,7 +81,7 @@ impl AgentBackend for VscodeCopilotBackend {
         // one self_heal resolved for this agent (rehydrated `--path`, else the
         // compile-time default), so probe and reconcile render identical bytes.
         let root = project_root(scope)?;
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
         let mcp = mcpjson::probe_surface(&mcp_path(root), MCP_KEY, &comp.mcp_servers, SHAPE)?;
         let hooks = probe_hooks(&hooks_path(root, plugin.name), &comp.hooks)?;
         let agents = report::probe_files(&expected_agents(&agents_dir(root), plugin.name, &comp.agents), |_, _| true)?;
@@ -90,7 +90,7 @@ impl AgentBackend for VscodeCopilotBackend {
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         let root = project_root(scope)?;
-        let comp = plugin.components(&desired.source)?;
+        let comp = plugin.components(&desired.source)?.with_client(self.id());
 
         let mut changed = false;
         changed |= mcpjson::reconcile(&mcp_path(root), MCP_KEY, &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
@@ -105,7 +105,7 @@ impl AgentBackend for VscodeCopilotBackend {
 
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
         let root = project_root(scope)?;
-        let comp = plugin.components(source)?;
+        let comp = plugin.components(source)?.with_client(self.id());
 
         let mut changed = false;
         // Key removal off the same portable set reconcile writes: an unfiltered name
@@ -387,7 +387,7 @@ fn report_checks(backend: &VscodeCopilotBackend, plugin: &Plugin, source: &Sourc
         }
     };
 
-    let Some(comp) = report::components(&mut checks, plugin, source) else {
+    let Some(comp) = report::components(&mut checks, plugin, source).map(|c| c.with_client(backend.id())) else {
         return checks;
     };
 
