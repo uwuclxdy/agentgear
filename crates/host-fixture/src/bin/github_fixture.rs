@@ -2,8 +2,9 @@
 //! shape that used to hard-error mid-fan-out for every config-merge backend
 //! (`entries_for` has no local tree for `Source::GitHub`). The fanout-report
 //! hermetic test drives it to pin the decided behavior instead: a non-plugin-
-//! native backend is a visible skip in `setup`'s report and a Warn in `doctor`,
-//! while the plugin-native pair (claude, copilot-cli) stays eligible. No test
+//! native backend is a visible skip in every lifecycle report
+//! (`setup`/`self-heal`/`update`/`uninstall`) and a Warn in `doctor`, while the
+//! plugin-native pair (claude, copilot-cli) stays eligible. No test
 //! path ever reaches the network: the plugin-native backends are undetected in
 //! the hermetic env, and skipped agents never touch the source.
 
@@ -65,8 +66,53 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Some("self-heal-report") => match GithubFixture::self_heal_report() {
+            Ok(report) => {
+                print!("{report}");
+                if report.is_healthy() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        // Legacy merged path: a source-skipped backend must collapse to `Ok`,
+        // never an error telling the user to stop using the source they're on.
+        Some("self-heal") => match GithubFixture::self_heal() {
+            Ok(outcome) => {
+                println!("{outcome:?}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some("update-report") => match GithubFixture::update_report(Scope::User) {
+            Ok(report) => {
+                print!("{report}");
+                if report.is_healthy() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        // Legacy merged path: same source-skip-collapses-to-Ok contract as `self-heal`.
+        Some("update") => match GithubFixture::update(Scope::User) {
+            Ok(outcome) => {
+                println!("{outcome:?}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
         other => {
-            eprintln!("usage: github_fixture <setup-report|uninstall|uninstall-report|doctor> (got {other:?})");
+            eprintln!(
+                "usage: github_fixture <setup-report|uninstall|uninstall-report|doctor|self-heal-report|self-heal|update-report|update> (got {other:?})"
+            );
             ExitCode::from(2)
         }
     }

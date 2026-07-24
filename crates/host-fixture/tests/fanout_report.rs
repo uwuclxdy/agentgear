@@ -174,3 +174,43 @@ fn zero_embed_github_uninstall_skips_config_backends() {
     assert!(ok, "legacy uninstall must collapse a source skip to Ok, got: {out}");
     assert_eq!(out, "NoOp", "nothing was installed, so nothing changed: {out}");
 }
+
+/// The other two lifecycle entry points against the same zero-embed github
+/// host: `self_heal` (the SessionStart entrypoint) and `update` must exhibit the
+/// same visible-skip contract as `setup`/`uninstall` above — never a mid-fan-out
+/// error, never a silent drop, and the legacy merged path collapses to `Ok`.
+/// Nothing was ever installed, so both report/legacy pairs converge on the same
+/// skip lines and a `NoOp` merge.
+#[test]
+fn github_source_skips_config_backends_visibly_on_self_heal_and_update() {
+    let env = Env::new("gh-heal-update");
+    let settings = env.root.join(".gemini").join("settings.json");
+
+    let (ok, out) = env.run(GITHUB_BIN, &["self-heal-report"]);
+    assert!(ok, "a source skip is not a failure: {out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(
+        lines.contains(&"gemini: skipped (cannot serve a github source; use an embedded or path source)"),
+        "gemini must skip visibly:\n{out}"
+    );
+    assert!(lines.contains(&"claude: skipped (not installed on this machine)"), "claude line missing:\n{out}");
+    assert!(!settings.exists(), "a skipped backend must write nothing");
+
+    let (ok, out) = env.run(GITHUB_BIN, &["self-heal"]);
+    assert!(ok, "legacy self_heal must collapse a source skip to Ok, got: {out}");
+    assert_eq!(out, "NoOp", "nothing was installed, so nothing changed: {out}");
+
+    let (ok, out) = env.run(GITHUB_BIN, &["update-report"]);
+    assert!(ok, "a source skip is not a failure: {out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(
+        lines.contains(&"gemini: skipped (cannot serve a github source; use an embedded or path source)"),
+        "gemini must skip visibly:\n{out}"
+    );
+    assert!(lines.contains(&"claude: skipped (not installed on this machine)"), "claude line missing:\n{out}");
+    assert!(!settings.exists(), "a skipped backend must write nothing");
+
+    let (ok, out) = env.run(GITHUB_BIN, &["update"]);
+    assert!(ok, "legacy update must collapse a source skip to Ok, got: {out}");
+    assert_eq!(out, "NoOp", "nothing was installed, so nothing changed: {out}");
+}
