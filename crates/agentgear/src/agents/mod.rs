@@ -194,10 +194,12 @@ pub trait AgentBackend {
     /// what we displaced.
     ///
     /// Both teardown paths (`install::uninstall_agent`, `selfheal`'s
-    /// plugin-already-gone row) call this unconditionally, on every branch, and
-    /// propagate its error so a failed restore keeps the marker rather than clearing
-    /// the last copy of the user's data. Neither rests on any backend's current
-    /// `Capabilities` or `detect()` answer.
+    /// plugin-already-gone row) call this on every branch that reaches the marker
+    /// clear, including the skips, and propagate its error so a failed restore keeps
+    /// the marker rather than clearing the last copy of the user's data. Neither rests
+    /// on any backend's current `Capabilities` or `detect()` answer. The one branch
+    /// that skips it is a failed `remove`, which returns before the clear, so the
+    /// marker survives there too.
     ///
     /// The default does nothing, which stays right for every config-merge backend:
     /// their writes ARE the plugin's translation, so tearing those down is `remove`'s
