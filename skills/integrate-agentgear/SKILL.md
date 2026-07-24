@@ -92,6 +92,7 @@ plumbing it replaces. Delete in this order, verifying after each:
 | a hand-rolled tree materialize / diff-copy | agentgear's `materialize` (tree hashing, atomic versioned-dir flip) |
 | manual `SessionStart` self-heal logic | point the existing hook at `self_heal()` |
 | a hand-maintained CC-version floor check | agentgear gates on `claude --version` before any mutating call |
+| a hand-written `statusLine` writer in `~/.claude/settings.json` (refuse/force flags on a foreign value) | `#[plugin(statusline_fn = <path>)]`; agentgear writes the slot, stashes the user's value, restores it on uninstall |
 
 nyactx is the worked example: adopting the derive deleted ~1,100 net lines (20 per-client
 descriptor files plus a parse-and-merge engine plus its tests), replaced by ~160 lines of
@@ -133,10 +134,13 @@ a surface reaches it.
 Check these against the target plugin before promising a full migration. Each is an open item in
 `docs/todo.md`; some in depth in `docs/fox-nyactx-integration.md`.
 
-- **statusLine / any harness settings key outside the plugin tree.** The components IR models five
-  surfaces (mcp servers, hooks, commands, agents, skills). A plugin that writes CC's `statusLine`
-  into the user's `~/.claude/settings.json` (nyactx, ragcat) keeps hand-rolling that until the
-  host-settings surface lands.
+- **statusLine past Claude Code.** On CC this is no longer a gap but a migration step: declare the
+  line with `statusline_fn` and delete the hand-rolled `settings.json` writer (see the table
+  above). The declaration is harness-agnostic, but only the `claude` backend writes a slot today.
+  Four others have one (qwen-code, antigravity-cli, droid, copilot-cli) and none is wired, so a
+  plugin that needs its line there still has nowhere to put it. Any *other* settings key
+  outside the plugin tree is unmodeled: the components IR carries five surfaces (mcp servers,
+  hooks, commands, agents, skills) and nothing else reaches a harness's own settings file.
 - **codex `notify` hooks / opencode hooks.** agentgear's codex backend writes `hooks.json`, which
   stays inert until the user trusts it via codex's `/hooks` TUI; opencode has no declarative hook
   surface at all (in-process JS/TS plugin only). A plugin relying on either (raawr) cannot fully

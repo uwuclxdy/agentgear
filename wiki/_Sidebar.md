@@ -13,6 +13,7 @@
   - [Agents](Capability-Agents)
   - [Skills](Capability-Skills)
   - [Instructions](Capability-Instructions)
+  - [Status line](Capability-Status-Line)
   - [Detection & config roots](Capability-Detection)
   - [Scopes & gates](Capability-Scopes)
   - [Native ingestion](Capability-Native-Ingestion)

@@ -12,7 +12,8 @@ The report fans out over the host's configured agents. It opens with one shared 
 
 ## Claude Code checks
 
-The `claude` backend adds six. A claude-only host sees exactly these plus the shared check above:
+The `claude` backend adds six, or seven for a host that declares a status line. A claude-only host
+sees exactly these plus the shared check above:
 
 | # | check | passes when | on failure |
 |---|---|---|---|
@@ -22,8 +23,12 @@ The `claude` backend adds six. A claude-only host sees exactly these plus the sh
 | 4 | manifest validates | `claude plugin validate <current> --strict` is clean | fix the reported manifest issue, then `update` |
 | 5 | current tree matches embedded | the materialized tree hashes equal the embedded tree | re-run `update` to re-materialize a stale or corrupt pointer |
 | 6 | hook commands on PATH | every bare command the plugin's hooks call resolves | install the missing binaries |
+| 7 | status line installed | the `statusLine` slot in the user's `settings.json` holds exactly the host's declared line | run the host's `setup` |
 
-Checks 5 and 6 need no `claude`, so they run even when Claude Code is absent.
+Checks 5 to 7 need no `claude`, so they run even when Claude Code is absent. Check 7 exists only
+for a host that declares a [status line](Capability-Status-Line), and warns rather than fails when
+another tool holds the slot: it holds one value, so being displaced is a real state the user can
+see, not a broken install.
 
 On a zero-embed host (`embed = false`, github source) check 5 reports `github source; not applicable`, but check 6 still reads the baked tree and warns `could not read the embedded tree` on every run. That warning is the expected steady state for such a host today, not a break.
 

@@ -1,9 +1,10 @@
 # Capabilities
 
-A plugin ships up to six kinds of thing: MCP servers, hooks, commands, agents, skills, and
-instructions. A harness hosts some subset of those, in its own config shape. This page is the
-index: what each capability is, how many harnesses host it, and where the per-harness detail
-lives. Start here, then open the capability you care about.
+A plugin ships five kinds of thing in its tree — MCP servers, hooks, commands, agents, skills —
+and its host declares two more at runtime: instructions and a status line. A harness hosts some
+subset of those, in its own config shape. This page is the index: what each capability is, how
+many harnesses host it, and where the per-harness detail lives. Start here, then open the
+capability you care about.
 
 For the mirror axis — one harness at a time, everything it does — see
 [Harness comparison](Harness-Comparison).
@@ -35,6 +36,7 @@ The plugin surfaces, most-to-least widely hosted. "Hosts" counts backends that l
 | Agents | `agents/**/*.md` | 13 | [Agents](Capability-Agents) |
 | Skills | `skills/<name>/SKILL.md` | 13 | [Skills](Capability-Skills) |
 | Instructions | `PluginHost::instructions` (not a tree file) | 2 | [Instructions](Capability-Instructions) |
+| Status line | `PluginHost::statusline` (not a tree file) | 1 (`claude`) | [Status line](Capability-Status-Line) |
 
 Counts move as coverage lands; the linked page carries the exact per-harness list and the reason
 behind every skip.
@@ -63,6 +65,10 @@ Uniform across all 23 config-merge backends, regardless of capability:
   including a retired-path sweep that only deletes tag-owned files.
 - **Never resurrect / re-enable.** A user who deletes or disables an entry keeps it that way; only an
   explicit `install`/`update` re-enables.
+
+The [status line](Capability-Status-Line) is the one surface these cannot cover as written: its
+slot holds a single value, so there is nothing to merge beside. It keeps the same promise a
+different way — stash the value it displaces, restore it on uninstall.
 
 ## The `${CLAUDE_PLUGIN_ROOT}` portability filter
 

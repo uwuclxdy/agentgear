@@ -77,6 +77,7 @@ the tool it targets, not runtime detection.
 | `agents` | `bool` | can host agent (subagent) definitions |
 | `skills` | `bool` | can host skill directories |
 | `instructions` | `bool` | can receive host-authored always-loaded guidance through its own native context channel (a dedicated file plus any registration); `false` for a plugin-native backend, which delivers guidance through its own channel instead |
+| `statusline` | `bool` | manages the tool's status-line slot from `PluginHost::statusline`. Not implied by `plugins`: the slot lives in the tool's own settings file, outside any plugin tree, so a plugin-native backend still writes it (`claude` does, and is the only `true` today) |
 | `scopes` | `&'static [&'static str]` | which of `"user"`/`"project"` this backend can target |
 
 `setup` reads this to report a partial fit ("this agent hosts MCP servers, not hooks") instead of

@@ -55,11 +55,17 @@ every entry in it survives. `claude` and `copilot-cli` never run this filter, si
 tree verbatim: Claude Code expands the token in its own runtime, and whether copilot's raw-shape
 copy of `hooks/hooks.json` fires at all is unconfirmed.
 
-A sixth surface, **instructions** (a host's always-loaded guidance text, from
-`PluginHost::instructions`), sits outside these five IR surfaces. It rides the plugin descriptor,
-which the components IR has no field for. Only `opencode` writes it today (a dedicated file
-registered in its `instructions[]` array); `claude` receives the same text through the MCP
-`initialize.instructions` field instead.
+Two more surfaces sit outside these five, both declared by the host rather than shipped in the
+tree, so neither rides the components IR:
+
+- **instructions** (`PluginHost::instructions`, always-loaded guidance text). Only `opencode`
+  writes it today, a dedicated file registered in its `instructions[]` array; `claude` receives
+  the same text through the MCP `initialize.instructions` field instead.
+- **status line** (`PluginHost::statusline`). Only `claude` writes it, into the single `statusLine`
+  slot in the user's `settings.json`. That slot holds one value, so agentgear stashes whatever it
+  displaces and restores it on uninstall. Four harnesses have a slot of their own (`qwen-code`,
+  `antigravity-cli`, `droid`, `copilot-cli`); none is wired. Full rule:
+  [Status line](Capability-Status-Line).
 
 ## Config locations
 
@@ -71,7 +77,7 @@ tree.
 
 | harness | user config file |
 |---|---|
-| claude | `<config>/plugins/` (via `claude plugin`; `CLAUDE_CONFIG_DIR`) |
+| claude | `<config>/plugins/` (via `claude plugin`; `CLAUDE_CONFIG_DIR`); `<config>/settings.json` for a declared status line |
 | copilot-cli | `~/.copilot/installed-plugins/<mkt>/<plugin>/` (via `copilot plugin`; native, whole tree copied) |
 | amp | `~/.config/amp/settings.json` |
 | antigravity | `~/.gemini/config/mcp_config.json` |

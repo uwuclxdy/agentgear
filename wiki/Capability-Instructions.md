@@ -1,9 +1,9 @@
 # Instructions
 
 Instructions are a host's always-loaded guidance text, supplied through `PluginHost::instructions`
-(the derive exposes it as `instructions_fn`). Unlike the other five capabilities, this one does not
-ride a file in the plugin tree — it is a string the host returns at runtime, delivered through each
-harness's native context channel.
+(the derive exposes it as `instructions_fn`). Like the [status line](Capability-Status-Line) and
+unlike the five tree surfaces, this one does not ride a file in the plugin tree — it is a string
+the host returns at runtime, delivered through each harness's native context channel.
 
 **2 backends deliver it today.**
 

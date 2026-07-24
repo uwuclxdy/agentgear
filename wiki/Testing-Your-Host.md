@@ -169,7 +169,10 @@ one at a time.
 ## What a hermetic test cannot cover
 
 The two plugin-native backends, `claude` and `copilot-cli`. Both detect on `which` alone and both
-drive the real CLI as the transaction boundary, so there is no file-level path to assert against.
+drive the real CLI as the transaction boundary, so registry state has no file-level path to assert
+against. One exception: a host that declares a [status line](Capability-Status-Line) can assert
+the `statusLine` key in `<CLAUDE_CONFIG_DIR>/settings.json` like any config-merge write, since
+that slot is a plain file the backend read-modify-writes.
 
 `examples/from-github/tests/wiring.rs` shows how far a stub gets you: a `/bin/sh` shim answering
 `--version` with a supported version and `list --json` with `[]` is enough for the claude backend to
