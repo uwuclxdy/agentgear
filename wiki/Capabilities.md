@@ -73,6 +73,14 @@ path that would fail to launch. It affects the [MCP](Capability-MCP) and [Hooks]
 surfaces; the plugin-native backends never run it. Full rule and the "installs clean, does nothing"
 symptom: [Plugin tree](Plugin-Tree#claude_plugin_root-portability).
 
+## The `${AGENTGEAR_CLIENT}` client-id token
+
+`${AGENTGEAR_CLIENT}` is the portability filter's counterpart: agentgear knows this token too, and
+**expands** it to each backend's own id (`claude`, `codex`, `copilot-cli`, …) in a hook `command`
+and an MCP server's `command`/`args`, rather than skipping it. Write it once in your plugin tree
+and every harness renders its own id. Full rule:
+[Plugin tree](Plugin-Tree#agentgear_client-per-harness-client-id).
+
 ## See also
 
 - [Harness comparison](Harness-Comparison) — the harness-first at-a-glance grid.

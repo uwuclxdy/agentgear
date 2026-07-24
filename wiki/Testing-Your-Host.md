@@ -133,7 +133,7 @@ has to read the written file back to compare it.
 |---|---|
 | `HOME` | every HOME-based config dir (`~/.gemini`, `~/.cursor`, `~/.codex`, …) and the fallback under each XDG var |
 | `XDG_CONFIG_HOME` | the config-dir family (amp, crush, zed, kilo, devin, jetbrains-copilot, goose, opencode) |
-| `XDG_DATA_HOME` | agentgear's own `<data dir>/<plugin-name>/`: the materialized tree, the `current` pointer, the stamp markers, the restart flag |
+| `XDG_DATA_HOME` | agentgear's own `<data dir>/<plugin-name>/`: the materialized tree, the per-client `current@<client>` pointer, the stamp markers, the restart flag |
 | `XDG_RUNTIME_DIR` | the shared lock file (see below) |
 | `PATH` | every backend's `which(<tool>)` detection arm |
 

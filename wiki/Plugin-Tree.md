@@ -152,6 +152,29 @@ When every server is non-portable, the same check still passes, with no server n
 
 Hook checks follow the same shape where a backend has one, such as antigravity-cli's `hooks registered` reporting `no portable, mappable hooks to register`. A "no portable" detail on a plugin that declares servers or hooks means they were dropped on the portability rule.
 
+## `${AGENTGEAR_CLIENT}` per-harness client id
+
+`${AGENTGEAR_CLIENT}` is the counterpart to `${CLAUDE_PLUGIN_ROOT}` above: agentgear knows this
+token too, but **expands** it instead of skipping it. Every backend substitutes it for its own
+client id (`claude` → `claude`, `codex` → `codex`, `copilot-cli` → `copilot-cli`, …) in a hook's
+`command` and an MCP server's `command`/`args`. Write the token once and each harness's rendered
+config carries its own id — handy for a hook binary that needs to know which harness invoked it,
+without hardcoding one harness's name:
+
+```json
+{
+  "mcpServers": {
+    "mytool": { "command": "mytool", "args": ["mcp", "--client", "${AGENTGEAR_CLIENT}"] }
+  }
+}
+```
+
+For the 23 config-merge backends, only a hook's `command` and an MCP server's `command`/`args`
+expand the token — a matcher, an `env` value, or a markdown body are left verbatim. `claude` and
+`copilot-cli` substitute it across the *whole* materialized tree instead, since those two copy the
+tree verbatim rather than rendering each surface; the token can appear anywhere in those trees
+(env values, markdown, …) and still expands.
+
 ## marketplace.json
 
 You never ship one. Materialize generates `.claude-plugin/marketplace.json` into the versioned directory from `plugin.json`, mapping `author` to `owner` and `description` through, then points `marketplace add` at it. A `marketplace.json` present in your source tree never survives into the materialized tree; the generated file lands on top of it.

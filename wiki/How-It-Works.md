@@ -18,16 +18,16 @@ Each op above has a `_report` twin (`install_report`, `install_into_report`, `up
 
 ## Materialize (embedded and path sources)
 
-The plugin tree ships as a compressed `.tar.br` blob baked into the binary (a pure-Rust brotli archive, roughly a quarter of the raw text size). Materialize decompresses it (`Source::Embedded`) or copies an on-disk tree (`Source::Path`) into a content-keyed versioned directory with an atomic pointer flip:
+The plugin tree ships as a compressed `.tar.br` blob baked into the binary (a pure-Rust brotli archive, roughly a quarter of the raw text size). Materialize decompresses it (`Source::Embedded`) or copies an on-disk tree (`Source::Path`) into a content-keyed versioned directory with an atomic pointer flip, scoped to the consuming client (`claude`, or `copilot-cli` for that backend; see [Agent backends](Agent-Backends)):
 
 ```text
 ~/.local/share/<name>/
-  versions/<version>/               full tree + generated .claude-plugin/marketplace.json
-  current -> versions/<version>     symlink (unix) / junction (windows)
+  versions/<version>@claude/        full tree + generated .claude-plugin/marketplace.json, ${AGENTGEAR_CLIENT} substituted for "claude"
+  current@claude -> versions/<version>@claude     symlink (unix) / junction (windows)
   markers/<hash>                    per-(plugin, scope, project) stamp
 ```
 
-The tree is written to a temp sibling and fsynced, then renamed onto the versioned target, which is created once so a rename never lands on a non-empty directory. `current` is flipped by renaming a fresh pointer over it. A crash mid-materialize leaves the previous `current` intact. An existing version dir is reused without re-decompressing. `marketplace add` points at `current`, which Claude Code copies into its own cache keyed by version.
+The tree is written to a temp sibling and fsynced, then renamed onto the versioned target, which is created once so a rename never lands on a non-empty directory. `current@claude` is flipped by renaming a fresh pointer over it. A crash mid-materialize leaves the previous `current@claude` intact. An existing version dir is reused without re-decompressing. `marketplace add` points at `current@claude`, which Claude Code copies into its own cache keyed by version. The client scoping keeps Claude Code and copilot-cli from colliding on one shared dir, since both copy the tree verbatim and each needs its own `${AGENTGEAR_CLIENT}` substitution.
 
 ## Self-heal state table
 

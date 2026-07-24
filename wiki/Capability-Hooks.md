@@ -63,6 +63,9 @@ included, rather than going through the event mapper.
 - **Portability skip.** A hook whose `command` carries `${CLAUDE_PLUGIN_ROOT}` is dropped on every
   config-merge backend. Point hooks at your own binary by name (`mytool self-heal`), which is what the
   `hooks-everywhere` example ships. See [Plugin tree](Plugin-Tree#claude_plugin_root-portability).
+- **`${AGENTGEAR_CLIENT}` expands instead of skipping.** Each backend substitutes it for its own
+  client id in the hook `command`, so one hook can tell which harness invoked it. See
+  [Plugin tree](Plugin-Tree#agentgear_client-per-harness-client-id).
 - **codex writes but stays inert** until the user trusts the hook in codex's `/hooks` TUI (a
   content-hash gate) — not a bug. kimi has no such gate; its hooks fire as soon as written.
 - **Matcher drift (`⚠️`).** gemini's `BeforeTool`/`AfterTool` and the antigravity-cli tool events

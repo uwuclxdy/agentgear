@@ -14,7 +14,7 @@ your binary  ──derive──▶  PluginHost  ──reconcile──▶  AgentB
                      claude / copilot-cli ──▶ the tool's own plugin CLI (marketplace + materialize)
                      23 config-merge agents (codex, cursor, gemini, …) ──▶ each tool's own config file
 
-embeds plugin/ (.tar.br blob) ── materialize ──▶ ~/.local/share/<name>/current   (claude + copilot-cli only)
+embeds plugin/ (.tar.br blob) ── materialize ──▶ ~/.local/share/<name>/current@<client>   (claude + copilot-cli, each its own <client>)
 ```
 
 ## Pages

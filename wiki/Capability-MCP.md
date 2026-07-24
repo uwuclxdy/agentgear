@@ -96,6 +96,9 @@ The file and the key path each backend writes, with the stdio body and the remot
   dropped on every config-merge backend — the token expands only inside Claude Code. Doctor's MCP
   check then reports "no portable mcp servers to register" instead of naming a server. Write a bare
   executable name. See [Plugin tree](Plugin-Tree#claude_plugin_root-portability).
+- **`${AGENTGEAR_CLIENT}` expands instead of skipping.** Each backend substitutes it for its own
+  client id in the server's `command`/`args`. See
+  [Plugin tree](Plugin-Tree#agentgear_client-per-harness-client-id).
 - **`pi`** ships no MCP surface at all; its `~/.pi/agent/mcp.json` belongs to a third-party extension,
   so agentgear writes nothing there.
 - **Skipped transports are silent by design.** antigravity http, and goose/zed/vscode-copilot sse,

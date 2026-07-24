@@ -49,7 +49,7 @@ $ mytool doctor
 [ ok ] claude version: 2.1.201 (Claude Code)
 [ ok ] plugin registered: mytool@mytool v0.4.0 (enabled)
 [ ok ] marketplace registered: `mytool` registered
-[ ok ] manifest validates: ~/.local/share/mytool/current --strict clean
+[ ok ] manifest validates: ~/.local/share/mytool/current@claude --strict clean
 [ ok ] current tree matches embedded: hashes match
 [fail] hook commands on PATH: hook command(s) not on PATH: mytool
        fix: install the missing binaries into a PATH directory
@@ -57,4 +57,4 @@ $ mytool doctor
 
 A multi-agent host appends each detected agent's checks below these, or a single `[ ok ] codex: not installed on this host; skipped` for one that is absent.
 
-A common real breakage is check 6 (the last row): the plugin's hooks call the host binary by name, but it is not on the user's PATH. Check 5 catches a `current` pointer that went stale or corrupt in a way the version number cannot, since a matching version can still front a broken tree.
+A common real breakage is check 6 (the last row): the plugin's hooks call the host binary by name, but it is not on the user's PATH. Check 5 catches a `current@claude` pointer that went stale or corrupt in a way the version number cannot, since a matching version can still front a broken tree.
