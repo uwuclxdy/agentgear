@@ -12,6 +12,7 @@ use serde_json::Value;
 #[cfg(feature = "claude")]
 use crate::agents::claude::{MarketplaceHealth, find_marketplace, marketplace_health};
 use crate::cli::{CLAUDE_FLOOR, ClaudeCli, MIN_CLAUDE_VERSION, parse_version};
+use crate::components::AGENTGEAR_CLIENT_TOKEN;
 use crate::error::Result;
 use crate::host::{Plugin, Scope, Source, data_root};
 use crate::materialize::{dir_hash, dir_hash_for_client, tree_hash};
@@ -108,7 +109,10 @@ impl fmt::Display for DoctorReport {
 /// calls this; a claude-only host gets the host-binary check followed by the
 /// claude backend's own report, in order.
 pub(crate) fn doctor(plugin: &Plugin, source: &Source) -> Result<DoctorReport> {
+    // Both openers are about the HOST's own authoring, not any one agent's state, so
+    // they run once before the fan-out rather than inside a backend's report.
     let mut checks = vec![check_host_binary()];
+    checks.extend(check_statusline_client(plugin));
     for id in plugin.agents {
         // An unresolvable id is a failed CHECK, never an aborted report: a health
         // command that throws away every check it already collected is useless
@@ -393,6 +397,45 @@ fn check_hook_commands(plugin: &Plugin) -> DoctorCheck {
             },
         }
     }
+}
+
+/// A host-AUTHORING check, like [`check_hook_commands`] above: the declared
+/// status-line command must carry `${AGENTGEAR_CLIENT}` once two or more of the
+/// host's agents can write a slot.
+///
+/// Each backend expands the token to its own id, and the host's own status-line
+/// subcommand reads the stash of the client it was invoked for
+/// ([`crate::statusline::user_original`]). Hardcode the client and every harness gets
+/// the SAME literal command, so the host reads one backend's stash from all of them:
+/// the user's own row is dropped, or another harness's stashed command runs inside
+/// this one.
+///
+/// `None` — no check at all, not an `Ok` line — below two capable agents or with the
+/// token present. There is nothing for the user to act on, and the slot's other
+/// doctor check is opt-in by declaration the same way.
+fn check_statusline_client(plugin: &Plugin) -> Option<DoctorCheck> {
+    let command = plugin.statusline.as_ref().map(|decl| decl.command.as_str())?;
+    if command.trim().is_empty() || command.contains(AGENTGEAR_CLIENT_TOKEN) {
+        return None;
+    }
+    let capable: Vec<&str> = plugin
+        .agents
+        .iter()
+        .copied()
+        .filter(|id| crate::agents::backend_for(id).is_some_and(|backend| backend.capabilities().statusline))
+        .collect();
+    if capable.len() < 2 {
+        return None;
+    }
+    Some(DoctorCheck {
+        name: "status line client token",
+        status: CheckStatus::Warn(format!(
+            "the declared status-line command names no client, but {} each write their own status-line slot: \
+             all of them get the same command, so the host reads one backend's displaced status line from every harness. \
+             put {AGENTGEAR_CLIENT_TOKEN} in the command — each backend expands it to its own id",
+            capable.join(", ")
+        )),
+    })
 }
 
 fn collect_hook_commands(plugin: &Plugin, out: &mut Vec<String>) -> Result<()> {

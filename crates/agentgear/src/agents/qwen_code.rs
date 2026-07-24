@@ -15,6 +15,12 @@
 //! HOME-based. Skills land as bare `~/.qwen/skills/<name>/SKILL.md` (both scopes),
 //! tagged for ownership so `remove` only deletes skills we wrote (see
 //! `docs/harness/qwen-code.md`).
+//!
+//! One surface breaks that key-ownership pattern: qwen-code copied CC's status-line
+//! object into its own `ui.statusLine`, which is a single-valued, last-writer-wins
+//! SLOT. It runs through the shared [`super::statuslinejson`] lifecycle
+//! (stash-before-write, restore-on-remove, and a `forget` that restores on every
+//! teardown branch — the settings file outlives qwen-code itself).
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -27,6 +33,7 @@ use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem}
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
 use super::skillsdir;
+use super::statuslinejson::{self, SlotShape};
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, MarkdownDoc};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -38,6 +45,18 @@ pub(crate) struct QwenCodeBackend;
 /// qwen picks transport purely by key presence (`httpUrl` = http, `url` = sse;
 /// `type` is never read), so a `url`-keyed http server would silently load over SSE.
 const SHAPE: ServerShape = ServerShape::plain().with_remote(RemoteShape::HttpUrlKeyed);
+
+/// qwen-code's status-line slot: CC's key, nested under its own `ui` block.
+const STATUSLINE_SLOT: &[&str] = &["ui", "statusLine"];
+
+/// The body is CC's, copied verbatim (`docs/harness/matrix.md` § status line).
+///
+/// qwen-code reads `type`/`command`/`refreshInterval`/`respectUserColors`/
+/// `hideContextIndicator` into a fresh object and silently drops CC's `padding`, so a
+/// declared padding lands in the file and does nothing there — deliberate, not an
+/// oversight to "fix": qwen never rewrites the value on read, so convergence against
+/// what we wrote still holds (`docs/research/statusline-survey.md` §1).
+const STATUSLINE_SHAPE: SlotShape = SlotShape::typed_command();
 
 impl AgentBackend for QwenCodeBackend {
     fn id(&self) -> &'static str {
@@ -53,7 +72,8 @@ impl AgentBackend for QwenCodeBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // Claude-Code-shaped fork: mcp + hooks + commands + agents + skills all translate.
+        // Claude-Code-shaped fork: mcp + hooks + commands + agents + skills all
+        // translate, and it copied CC's status-line object into its own `ui` block.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -62,15 +82,16 @@ impl AgentBackend for QwenCodeBackend {
             agents: true,
             skills: true,
             instructions: false,
-            statusline: false,
+            statusline: true,
             scopes: &["user", "project"],
         }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
-        // Compose every surface (mcp + hooks in settings.json, command + agent files),
-        // so a dropped hook group or missing command/agent behind healthy mcp keys reads
-        // NeedsRepair. `source` is the one self_heal resolved for this agent (rehydrated
+        // Compose every surface we write (mcp + hooks + the status-line slot in
+        // settings.json, command/agent/skill files), so a dropped hook group or missing
+        // command behind healthy mcp keys reads NeedsRepair rather than Healthy.
+        // `source` is the one self_heal resolved for this agent (rehydrated
         // `--path`, else the compile-time default), so probe and reconcile render
         // identical bytes.
         let comp = plugin.components(source)?.with_client(self.id());
@@ -93,7 +114,13 @@ impl AgentBackend for QwenCodeBackend {
             |_, _| true,
         )?;
         let skills = skillsdir::probe(&base.join("skills"), plugin, &comp.skills)?;
-        Ok(report::compose([mcp, hooks, commands, agents, skills].into_iter().flatten()))
+        // The slot folds in beside the rest, but it is the one key we do NOT own, so
+        // it can never carry presence on its own: a foreign line reads `Absent` (see
+        // `statuslinejson::state`), which keeps an uninstalled plugin at `Absent`
+        // instead of handing self_heal's adopt row a reason to reinstall the whole
+        // translation over the user's own status line.
+        let statusline = statuslinejson::state(&settings, STATUSLINE_SLOT, plugin, self.id(), STATUSLINE_SHAPE)?;
+        Ok(report::compose([mcp, hooks, commands, agents, skills, statusline].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -118,6 +145,7 @@ impl AgentBackend for QwenCodeBackend {
             changed |= write_file_idem(&agent_root.join(agent_file(plugin.name, doc)), render_agent(plugin.name, doc).as_bytes())?;
         }
         changed |= skillsdir::reconcile(&base.join("skills"), plugin, &comp.skills)?;
+        changed |= statuslinejson::reconcile(&settings, STATUSLINE_SLOT, plugin, &desired.source, scope, self.id(), STATUSLINE_SHAPE)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -143,7 +171,22 @@ impl AgentBackend for QwenCodeBackend {
             changed |= remove_file_idem(&agent_root.join(agent_file(plugin.name, doc)))?;
         }
         changed |= skillsdir::remove(&base.join("skills"), plugin, &comp.skills)?;
+        // Exact-remove for a slot means RESTORE: put back what our write displaced,
+        // or drop the key when the slot was empty before us.
+        changed |= statuslinejson::remove(&settings, STATUSLINE_SLOT, plugin, scope, self.id(), STATUSLINE_SHAPE)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
+    }
+
+    /// The `ui.statusLine` slot lives in the user's own settings file, which outlives
+    /// qwen-code's config tree and the `qwen` binary itself, so every teardown branch
+    /// that reaches the marker clear — an undetected harness, an unsupported scope or
+    /// source, a plugin the user removed by hand — must put their value back first.
+    /// The marker is the only copy of it.
+    fn forget(&self, plugin: &Plugin, scope: &Scope) -> Result<()> {
+        let Some(settings) = statusline_target(plugin, scope)? else {
+            return Ok(());
+        };
+        statuslinejson::remove(&settings, STATUSLINE_SLOT, plugin, scope, self.id(), STATUSLINE_SHAPE).map(|_| ())
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {
@@ -172,6 +215,14 @@ fn qwen_dir(scope: &Scope) -> Result<PathBuf> {
         Scope::User => user_qwen_base(),
         Scope::Project { path } => Ok(path.join(".qwen")),
     }
+}
+
+/// The settings file the slot lifecycle writes, or `None` when the host declares no
+/// status line. Only `forget` needs it: the other three lifecycle methods already
+/// resolve the config base for their own surfaces, while `forget` touches nothing
+/// else and must not fail a teardown over a config-dir lookup it has no use for.
+fn statusline_target(plugin: &Plugin, scope: &Scope) -> Result<Option<PathBuf>> {
+    statuslinejson::target(plugin, QwenCodeBackend.id(), STATUSLINE_SHAPE, || Ok(qwen_dir(scope)?.join("settings.json")))
 }
 
 // --- hooks -------------------------------------------------------------------
@@ -353,6 +404,9 @@ fn report_checks(backend: &QwenCodeBackend, plugin: &Plugin, source: &Source) ->
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_commands_present(&comp.commands, &base.join("commands").join(plugin.name)));
     checks.push(check_agents_present(&comp.agents, &base.join("agents"), plugin.name));
+    // Absent entirely for a host that declares no status line, rather than reporting
+    // on a surface nobody asked for.
+    checks.extend(statuslinejson::check(Ok(settings), STATUSLINE_SLOT, plugin, backend.id(), STATUSLINE_SHAPE, "qwen-code"));
 
     checks
 }

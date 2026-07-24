@@ -22,7 +22,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::error::Result;
 use crate::host::{Plugin, Scope};
@@ -78,24 +78,6 @@ impl StatusLineDecl {
     pub fn with_padding(mut self, padding: u8) -> Self {
         self.padding = Some(padding);
         self
-    }
-
-    /// Claude Code's `statusLine` object shape: `{"type":"command","command":…}`
-    /// plus `padding` when set. A single object, never an array — the slot holds
-    /// exactly one value.
-    ///
-    /// `allow(dead_code)`: only the feature-gated backends render it, so a build
-    /// with every backend off leaves it unreferenced (same idiom as the shared
-    /// config helpers in `agents/mod.rs`).
-    #[allow(dead_code)]
-    pub(crate) fn to_value(&self) -> Value {
-        let mut map = Map::new();
-        map.insert("type".to_string(), Value::String("command".to_string()));
-        map.insert("command".to_string(), Value::String(self.command.clone()));
-        if let Some(padding) = self.padding {
-            map.insert("padding".to_string(), Value::from(padding));
-        }
-        Value::Object(map)
     }
 
     /// Read a declaration back out of a stashed raw value. `None` when the value

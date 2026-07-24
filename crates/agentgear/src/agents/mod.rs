@@ -116,6 +116,11 @@ cfg_config_backends! {
     #[allow(dead_code)]
     pub(crate) mod confedit;
 }
+// The host-owned status-line slot, shared by every backend whose harness has one
+// (`Capabilities::statusline`) — plugin-native or config-merge alike, which is why
+// its gate is that set rather than either family's.
+#[cfg(any(feature = "claude", feature = "qwen-code"))]
+pub(crate) mod statuslinejson;
 cfg_config_backends! {
     #[allow(dead_code)]
     pub(crate) mod mcpjson;

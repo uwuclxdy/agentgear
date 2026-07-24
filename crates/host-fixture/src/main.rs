@@ -43,6 +43,15 @@ fn flag_value(name: &str) -> Option<String> {
     None
 }
 
+/// The scope every lifecycle subcommand runs at: `--project <dir>` selects
+/// `Scope::Project`, absent selects user scope. Project scope is what makes a
+/// harness's own config-dir detection independent of where its config was written,
+/// which is the only way to drive an undetected-harness teardown for a backend whose
+/// detection signal IS its user config dir.
+fn scope_flag() -> Scope {
+    flag_value("--project").map(|dir| Scope::Project { path: PathBuf::from(dir) }).unwrap_or(Scope::User)
+}
+
 /// Parse `setup`/`install` flags: `--path <dir>` selects `Source::Path`, else the
 /// embedded blob; each `--agent <id>` narrows install to those backends (none = all).
 fn parse_flags() -> (Source, Vec<String>) {
@@ -73,7 +82,7 @@ fn main() -> ExitCode {
         "setup" | "install" => {
             let (source, agents) = parse_flags();
             let refs: Vec<&str> = agents.iter().map(String::as_str).collect();
-            report(FixtureHost::install_into(Scope::User, source, &refs))
+            report(FixtureHost::install_into(scope_flag(), source, &refs))
         }
         // Same install, but printing the per-agent summary (`AgentReport`'s
         // Display) instead of the merged outcome; exercised by the fanout-report
@@ -81,7 +90,7 @@ fn main() -> ExitCode {
         "setup-report" => {
             let (source, agents) = parse_flags();
             let refs: Vec<&str> = agents.iter().map(String::as_str).collect();
-            match FixtureHost::install_into_report(Scope::User, source, &refs) {
+            match FixtureHost::install_into_report(scope_flag(), source, &refs) {
                 Ok(report) => {
                     print!("{report}");
                     if report.is_healthy() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
@@ -135,8 +144,8 @@ fn main() -> ExitCode {
                 }
             }
         }
-        "update" => report(FixtureHost::update(Scope::User)),
-        "uninstall" => report(FixtureHost::uninstall(Scope::User)),
+        "update" => report(FixtureHost::update(scope_flag())),
+        "uninstall" => report(FixtureHost::uninstall(scope_flag())),
         "doctor" => match FixtureHost::doctor() {
             Ok(report) => {
                 print!("{report}");

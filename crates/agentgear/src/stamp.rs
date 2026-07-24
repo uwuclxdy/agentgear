@@ -119,7 +119,7 @@ pub(crate) fn write(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str
 /// before this agent's backend wrote the host's own. Read-modify-write, and it
 /// creates the marker when the reconcile that found the value has not been stamped
 /// yet (the fan-out stamps only after a backend's whole reconcile succeeds).
-#[cfg(feature = "claude")]
+#[cfg(any(feature = "claude", feature = "qwen-code"))]
 pub(crate) fn stash_statusline(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str, original: serde_json::Value) -> Result<()> {
     let path = marker_path(plugin, scope, agent)?;
     let mut marker = read(plugin, scope, agent)?.unwrap_or_else(|| base_marker(plugin, scope, source, agent));

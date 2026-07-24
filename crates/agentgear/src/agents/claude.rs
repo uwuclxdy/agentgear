@@ -4,30 +4,28 @@
 //!
 //! One exception to "no config file": CC's `statusLine` slot lives in the user's
 //! own `settings.json`, not in a plugin tree, so a host that declares a status line
-//! gets it written here through the shared [`confedit`] read-modify-write. The slot
-//! holds a single value and is last-writer-wins, so reconcile stashes whatever was
-//! there into the stamp marker and remove puts it back — but only while the live
-//! value is still one of ours, which [`is_ours`] decides on the command string.
+//! gets it written here through the shared [`super::statuslinejson`] lifecycle. That
+//! module owns the whole slot contract (stash-before-write, restore-on-remove,
+//! command-string ownership); this backend supplies only CC's settings path, key
+//! path, and value shape.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
-
-use super::{AgentBackend, BackendState, confedit};
+use super::statuslinejson::{self, SlotShape};
+use super::{AgentBackend, BackendState};
 use crate::cli::{ClaudeCli, version_lt};
-use crate::components::expand_client;
-use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
+use crate::doctor::{DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 use crate::manifest::{MarketplaceEntry, PluginEntry};
 use crate::materialize::{TreeSource, materialize};
-use crate::stamp;
-use crate::statusline::StatusLineDecl;
 
-/// CC's settings key for the status-line slot. A single object
-/// (`{"type":"command","command":…}`), never an array.
-const STATUSLINE_KEY: &str = "statusLine";
+/// CC's settings key path for the status-line slot: one top-level key holding a
+/// single object (`{"type":"command","command":…}`), never an array.
+const STATUSLINE_SLOT: &[&str] = &["statusLine"];
+
+/// CC's own slot body, which qwen-code then copied verbatim.
+const STATUSLINE_SHAPE: SlotShape = SlotShape::typed_command();
 
 pub(crate) struct ClaudeBackend;
 
@@ -378,157 +376,38 @@ fn cc_config_dir() -> Result<PathBuf> {
         .ok_or_else(|| Error::Tree("no home directory (HOME unset); cannot locate ~/.claude".into()))
 }
 
-/// This host's status line rendered into CC's slot shape, paired with the bare
-/// command string it carries; both have `${AGENTGEAR_CLIENT}` expanded to this
-/// backend's own client id. `None` when the host declares none, which makes every
-/// statusLine step below a no-op.
-///
-/// A blank command reads as "declares none" too. `StatusLineDecl::default()` carries
-/// one, and rendering it would displace (and stash) the user's real status line in
-/// exchange for a command that does nothing — a host bug that should cost them
-/// nothing.
-fn rendered_statusline(plugin: &Plugin) -> Option<(Value, String)> {
-    let decl = plugin.statusline.as_ref()?;
-    let command = expand_client(&decl.command, ClaudeBackend.id());
-    if command.trim().is_empty() {
-        return None;
-    }
-    Some((StatusLineDecl { command: command.clone(), ..decl.clone() }.to_value(), command))
+/// CC's settings file for the slot lifecycle, or `None` when the host declares no
+/// status line. Resolved through the shared [`statuslinejson::target`] guard so a
+/// declaration-free host never pays for — or fails on — a config-dir lookup it has
+/// no use for.
+fn statusline_target(plugin: &Plugin, scope: &Scope) -> Result<Option<PathBuf>> {
+    statuslinejson::target(plugin, ClaudeBackend.id(), STATUSLINE_SHAPE, || settings_file(scope))
 }
 
-/// Whether the slot's live value is one of OUR renderings — matched on the command
-/// string, NOT on the whole object. Deliberately a different test from the one
-/// [`statusline_state`] uses for convergence: any field drifting from what we render
-/// is drift to repair, but only the command decides whose value it is.
-///
-/// Whole-value equality here would read our own earlier rendering as foreign the
-/// moment a host release changes its padding. That misreading is not cosmetic:
-/// reconcile would stash our command as "the user's original", destroying their real
-/// value, and `compose` would then run this binary from inside itself on every turn.
-///
-/// Ceiling: a release that changes the COMMAND itself (renamed subcommand, new flag)
-/// still reads as foreign, so it stashes its own old command and the user's value is
-/// lost. The statusline module refuses to RUN a stash naming its own command, so the
-/// worst case stays a missing row rather than re-entry. Upgrade path: write an
-/// ownership key beside `command` — which needs CC's settings schema proven tolerant
-/// of an unknown key first.
-fn is_ours(existing: &Value, our_command: &str) -> bool {
-    existing.get("command").and_then(Value::as_str) == Some(our_command)
-}
-
-/// Converge CC's single statusLine slot to the host's declaration, returning
-/// whether settings.json changed. A foreign value already in the slot is stashed
-/// verbatim into the stamp marker so `remove` can put it back.
 fn statusline_reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<bool> {
-    let Some((ours, our_command)) = rendered_statusline(plugin) else {
+    let Some(path) = statusline_target(plugin, scope)? else {
         return Ok(false);
     };
-    let path = settings_file(scope)?;
-
-    // Stash BEFORE writing: the write is irreversible, so recording what it displaced
-    // only afterwards loses the user's value outright when the marker write fails
-    // (ENOSPC, EPERM) or the process dies between the two. An empty slot writes no
-    // stash at all, so "user deletes our line, self_heal re-adds it" cannot erase
-    // what they had before we ever wrote.
-    if let Some(existing) = read_settings(&path)?.and_then(|root| root.get(STATUSLINE_KEY).cloned())
-        && !is_ours(&existing, &our_command)
-    {
-        stamp::stash_statusline(plugin, scope, &desired.source, ClaudeBackend.id(), existing)?;
-    }
-
-    confedit::json_edit(&path, |root| {
-        let obj = confedit::json_obj_at(root, &[]);
-        if obj.get(STATUSLINE_KEY) != Some(&ours) {
-            obj.insert(STATUSLINE_KEY.to_string(), ours.clone());
-        }
-        Ok(())
-    })
+    statuslinejson::reconcile(&path, STATUSLINE_SLOT, plugin, &desired.source, scope, ClaudeBackend.id(), STATUSLINE_SHAPE)
 }
 
-/// Undo the slot write: restore the stashed original, or delete the key when there
-/// was nothing to stash. Ownership is [`is_ours`] — the command string — so a user
-/// who nudged only the padding on our line does not strand a command pointing at the
-/// binary being uninstalled, while a genuinely foreign value is left exactly as it is.
-///
-/// An unparseable settings.json refuses the whole edit (`Error::Config`) rather than
-/// clobbering it, so the stash is never consumed against a file that could not be read.
 fn statusline_remove(plugin: &Plugin, scope: &Scope) -> Result<bool> {
-    let Some((_, our_command)) = rendered_statusline(plugin) else {
+    let Some(path) = statusline_target(plugin, scope)? else {
         return Ok(false);
     };
-    let stashed = stamp::read(plugin, scope, ClaudeBackend.id())?.and_then(|m| m.statusline_original);
-    let path = settings_file(scope)?;
-    confedit::json_edit(&path, |root| {
-        let obj = confedit::json_obj_at(root, &[]);
-        if !obj.get(STATUSLINE_KEY).is_some_and(|existing| is_ours(existing, &our_command)) {
-            return Ok(());
-        }
-        match &stashed {
-            Some(original) => obj.insert(STATUSLINE_KEY.to_string(), original.clone()),
-            None => obj.remove(STATUSLINE_KEY),
-        };
-        Ok(())
-    })
+    statuslinejson::remove(&path, STATUSLINE_SLOT, plugin, scope, ClaudeBackend.id(), STATUSLINE_SHAPE)
 }
 
-/// The statusLine surface's own state, or `None` when the host declares no status
-/// line (contributing nothing to the probe). Convergence is whole-value equality, not
-/// [`is_ours`]: our own rendering with a drifted `padding` is exactly the drift a
-/// repair exists to fix. An unparseable settings.json reads as `Absent`; the reconcile
-/// that follows refuses to clobber it and surfaces the parse error instead of silently
-/// overwriting the user's file.
 fn statusline_state(plugin: &Plugin, scope: &Scope) -> Result<Option<BackendState>> {
-    let Some((ours, _)) = rendered_statusline(plugin) else {
+    let Some(path) = statusline_target(plugin, scope)? else {
         return Ok(None);
     };
-    let root = read_settings(&settings_file(scope)?)?;
-    Ok(Some(match root.as_ref().and_then(|r| r.get(STATUSLINE_KEY)) {
-        None => BackendState::Absent,
-        Some(existing) if *existing == ours => BackendState::Healthy,
-        Some(_) => BackendState::NeedsRepair,
-    }))
-}
-
-/// Parse a settings file for a read-only inspection: missing or unparseable both
-/// read as "nothing to see", since neither is this function's to repair.
-fn read_settings(path: &Path) -> Result<Option<Value>> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(Error::Io { context: format!("reading {}", path.display()), source }),
-    }
+    statuslinejson::state(&path, STATUSLINE_SLOT, plugin, ClaudeBackend.id(), STATUSLINE_SHAPE)
 }
 
 /// doctor's statusLine slice, or `None` when the host declares no status line.
-/// A foreign owner is a Warn, not a Fail: CC's slot holds one value, so losing it
-/// to another tool is a real (and user-visible) state, not a broken install.
 pub(crate) fn statusline_check(plugin: &Plugin) -> Option<DoctorCheck> {
-    let name = "status line installed";
-    let (ours, _) = rendered_statusline(plugin)?;
-    let path = match settings_file(&Scope::User) {
-        Ok(path) => path,
-        Err(e) => return Some(DoctorCheck { name, status: CheckStatus::Warn(format!("could not locate Claude Code's settings: {e}")) }),
-    };
-    let root = read_settings(&path).ok().flatten();
-    Some(match root.as_ref().and_then(|r| r.get(STATUSLINE_KEY)) {
-        Some(existing) if *existing == ours => {
-            DoctorCheck { name, status: CheckStatus::Ok(format!("`{}` owns the statusLine slot", plugin.name)) }
-        }
-        Some(_) => DoctorCheck {
-            name,
-            status: CheckStatus::Warn(format!(
-                "another status line owns `statusLine` in {}; the slot holds one value, so ours is not shown",
-                path.display()
-            )),
-        },
-        None => DoctorCheck {
-            name,
-            status: CheckStatus::Fail {
-                problem: format!("no `statusLine` in {}", path.display()),
-                fix: "run the host binary's `setup` (or `install`) subcommand".into(),
-            },
-        },
-    })
+    statuslinejson::check(settings_file(&Scope::User), STATUSLINE_SLOT, plugin, ClaudeBackend.id(), STATUSLINE_SHAPE, "Claude Code")
 }
 
 #[cfg(test)]

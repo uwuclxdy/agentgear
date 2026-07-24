@@ -1,20 +1,18 @@
-//! claude backend pure decisions, in two groups.
+//! claude backend pure decisions: the github source string (`owner/repo@ref`) and
+//! the present-branch re-point rule (matching ref → update, drifted → re-add). See
+//! docs/design.md §ref-pinning ground truth.
 //!
-//! Ref-pinning: the github source string (`owner/repo@ref`) and the present-branch
-//! re-point rule (matching ref → update, drifted → re-add). See docs/design.md
-//! §ref-pinning ground truth.
+//! The statusLine slot's own decisions moved out with the renderer: they are shared
+//! across every slot backend now, so they live in `tests/unit/statuslinejson.rs`.
 //!
-//! statusLine: what the slot write renders, and whose value is already in the slot.
-//!
-//! No CLI/fs in either — the mutating calls are IO-only; these guard the decisions
-//! that pick what they send.
+//! No CLI/fs here — the mutating calls are IO-only; these guard the decisions that
+//! pick what they send.
 
 use std::path::PathBuf;
 
-use super::{MarketplaceHealth, MarketplaceOp, github_source, is_ours, marketplace_health, marketplace_op, rendered_statusline};
-use crate::host::{Plugin, Source};
+use super::{MarketplaceHealth, MarketplaceOp, github_source, marketplace_health, marketplace_op};
+use crate::host::Source;
 use crate::manifest::MarketplaceEntry;
-use crate::statusline::StatusLineDecl;
 
 fn github(ref_: &'static str) -> Source {
     Source::GitHub { repo: "owner/repo", ref_ }
@@ -102,46 +100,4 @@ fn marketplace_health_local_path_missing_dangles() {
         marketplace_health(Some(&entry_with_path(nonexistent)), &Source::Path(PathBuf::from("/tmp/x"))),
         MarketplaceHealth::Dangling
     );
-}
-
-// statusLine: the two pure decisions behind the slot write — what we render, and
-// whose value is already sitting there.
-
-fn plugin_with(statusline: Option<StatusLineDecl>) -> Plugin {
-    Plugin { name: "ez-sl", marketplace: "ez-mkt", version: "0.1.0", agents: &["claude"], instructions: None, statusline, blob: &[] }
-}
-
-#[test]
-fn rendered_statusline_expands_the_client_token() {
-    let plugin = plugin_with(Some(StatusLineDecl::new("mytool statusline --client ${AGENTGEAR_CLIENT}").with_padding(0)));
-    let (value, command) = rendered_statusline(&plugin).expect("a declared status line must render");
-    assert_eq!(command, "mytool statusline --client claude");
-    assert_eq!(value, serde_json::json!({"type": "command", "command": "mytool statusline --client claude", "padding": 0}));
-}
-
-#[test]
-fn rendered_statusline_is_none_without_a_declaration() {
-    assert!(rendered_statusline(&plugin_with(None)).is_none());
-}
-
-#[test]
-fn rendered_statusline_is_none_for_a_blank_command() {
-    // `StatusLineDecl::default()` carries one. Rendering it would displace (and
-    // stash) the user's real status line in exchange for a command that does
-    // nothing, so a host bug here must cost them nothing.
-    assert!(rendered_statusline(&plugin_with(Some(StatusLineDecl::default()))).is_none());
-    assert!(rendered_statusline(&plugin_with(Some(StatusLineDecl::new("   ").with_padding(0)))).is_none());
-}
-
-#[test]
-fn is_ours_matches_on_the_command_not_the_whole_object() {
-    let ours = "mytool statusline --client claude";
-    // Our own earlier rendering, padding since changed by a host release: still ours,
-    // so it is never stashed as the user's original.
-    assert!(is_ours(&serde_json::json!({"type": "command", "command": ours, "padding": 1}), ours));
-    assert!(is_ours(&serde_json::json!({"type": "command", "command": ours}), ours));
-    // Genuinely someone else's, and shapes with no command at all.
-    assert!(!is_ours(&serde_json::json!({"type": "command", "command": "their-bar", "padding": 0}), ours));
-    assert!(!is_ours(&serde_json::json!({"type": "command"}), ours));
-    assert!(!is_ours(&serde_json::json!("their-bar"), ours));
 }

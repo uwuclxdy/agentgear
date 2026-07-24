@@ -1,9 +1,9 @@
-//! statusline unit tests: the published `statusLine` object shape (a literal-key
-//! pin, so a field rename cannot silently change what lands in the harness's
-//! settings), the stash round-trip, session-cwd extraction, and the user-command
-//! runner's stdin/trim/empty contract. The disk-touching half (marker stash,
-//! settings write) routes through `data_root`/`dirs::data_dir`, so it is covered by
-//! the host-fixture hermetic test instead.
+//! statusline unit tests: reading a stashed value back, session-cwd extraction, and
+//! the user-command runner's stdin/trim/empty contract. What a declaration RENDERS
+//! into a harness slot belongs to the shared slot renderer now
+//! (`tests/unit/statuslinejson.rs`). The disk-touching half (marker stash, settings
+//! write) routes through `data_root`/`dirs::data_dir`, so it is covered by the
+//! host-fixture hermetic tests instead.
 
 use serde_json::{Value, json};
 
@@ -11,26 +11,12 @@ use super::{StatusLineDecl, is_own_command, lookup_scopes, session_cwd};
 use crate::host::Scope;
 
 #[test]
-fn to_value_renders_the_command_shape() {
-    // Literal keys, pinned: `statusLine` is a published on-disk contract, so a
-    // field rename must not be able to move them.
-    let rendered = StatusLineDecl::new("mytool statusline").to_value();
-    assert_eq!(rendered, json!({"type": "command", "command": "mytool statusline"}));
-}
-
-#[test]
-fn to_value_includes_padding_only_when_set() {
-    let with = StatusLineDecl::new("mytool statusline").with_padding(0).to_value();
-    assert_eq!(with, json!({"type": "command", "command": "mytool statusline", "padding": 0}));
-    let without = StatusLineDecl::new("mytool statusline").to_value();
-    assert!(without.get("padding").is_none(), "an unset padding must not emit the key: {without}");
-}
-
-#[test]
-fn from_value_round_trips_a_rendered_decl() {
-    let decl = StatusLineDecl::new("their-bar --fancy").with_padding(1);
-    let back = StatusLineDecl::from_value(&decl.to_value()).expect("a rendered decl must read back");
-    assert_eq!(back, decl);
+fn from_value_reads_the_slot_object_shape() {
+    // A literal pin rather than a round-trip through our own renderer: this reads
+    // what a HARNESS has on disk, so it must not move when our rendering does.
+    let back = StatusLineDecl::from_value(&json!({"type": "command", "command": "their-bar --fancy", "padding": 1}))
+        .expect("a slot object must read back");
+    assert_eq!(back, StatusLineDecl::new("their-bar --fancy").with_padding(1));
 }
 
 #[test]
