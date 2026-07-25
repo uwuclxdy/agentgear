@@ -21,31 +21,48 @@
 //!   current@<client> -> versions/<version>@<client>   symlink (unix) / junction (windows)
 //! ```
 
-use std::fs::{self, File};
+use std::fs;
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
+use std::fs::File;
+// Every build that WRITES a tree: `embed` bakes one at build time (`compress_dir`),
+// a plugin-native backend stages one at install time (`materialize`). Reading a tree
+// (`dir_entries`, the components IR) needs neither.
+#[cfg(any(feature = "embed", feature = "claude", feature = "copilot-cli"))]
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(any(feature = "embed", feature = "claude", feature = "copilot-cli"))]
+use std::path::PathBuf;
 
+#[cfg(feature = "claude")]
 use sha2::{Digest, Sha256};
 
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 use crate::components::AGENTGEAR_CLIENT_TOKEN;
 use crate::error::{Error, IoContext, Result};
-use crate::host::{Plugin, data_root};
+use crate::host::Plugin;
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
+use crate::host::data_root;
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 use crate::manifest::{MarketplaceManifest, MarketplacePlugin, PluginManifest};
+#[cfg(feature = "claude")]
 use crate::util::hex;
 
 /// The generated file is excluded from tree hashing: it is a derived artifact, so
 /// a source tree (which ships only `plugin.json`) and a materialized tree (which
 /// also holds the generated one) must hash equal.
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 const GENERATED_MARKETPLACE: &str = ".claude-plugin/marketplace.json";
 
 /// Where a materialize reads its plugin tree from. `Blob` is the compile-time
 /// `.tar.br` baked into the binary (`Source::Embedded`); `Dir` is an on-disk
 /// plugin tree (`Source::Path`).
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 pub(crate) enum TreeSource<'a> {
     Blob(&'a [u8]),
     Dir(&'a Path),
 }
 
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 impl TreeSource<'_> {
     /// The tree flattened to `(relative-path, bytes)` file entries, ready to write.
     fn entries(&self) -> Result<Vec<(String, Vec<u8>)>> {
@@ -61,6 +78,7 @@ impl TreeSource<'_> {
 /// `marketplace add`. Idempotent: an existing version dir is reused (dedup across
 /// coexisting binaries), and its tree is not re-read (the blob is only
 /// decompressed when a write is actually needed).
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 pub(crate) fn materialize(plugin: &Plugin, tree: TreeSource<'_>, client_id: &str) -> Result<PathBuf> {
     let version = plugin.version;
     let unsafe_segment =
@@ -93,6 +111,7 @@ pub(crate) fn materialize(plugin: &Plugin, tree: TreeSource<'_>, client_id: &str
 /// binary content. The generated marketplace is produced fresh (not part of these
 /// entries) and never carries the token, so it is excluded the same way it is from
 /// hashing; when the token is absent every file is left untouched.
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn expand_client_entries(entries: &mut [(String, Vec<u8>)], client: &str) {
     let needle = AGENTGEAR_CLIENT_TOKEN.as_bytes();
     let repl = client.as_bytes();
@@ -103,10 +122,12 @@ fn expand_client_entries(entries: &mut [(String, Vec<u8>)], client: &str) {
     }
 }
 
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
     !needle.is_empty() && haystack.windows(needle.len()).any(|w| w == needle)
 }
 
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn replace_subslice(haystack: &[u8], needle: &[u8], repl: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(haystack.len());
     let mut i = 0;
@@ -125,6 +146,7 @@ fn replace_subslice(haystack: &[u8], needle: &[u8], repl: &[u8]) -> Vec<u8> {
 /// Write the tree into a temp sibling, then atomically rename onto the versioned
 /// target. The target is created exactly once and never renamed onto while
 /// non-empty, so `ENOTEMPTY` cannot happen on the happy path.
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn write_version_dir(plugin: &Plugin, entries: &[(String, Vec<u8>)], versions: &Path, version_dir: &Path) -> Result<()> {
     let tmp = versions.join(format!("{}.tmp.{}", plugin.version, rand_suffix()));
     fs::create_dir_all(&tmp).io_ctx(|| format!("creating {}", tmp.display()))?;
@@ -159,6 +181,7 @@ fn write_version_dir(plugin: &Plugin, entries: &[(String, Vec<u8>)], versions: &
     Ok(())
 }
 
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn write_entries(entries: &[(String, Vec<u8>)], dest: &Path) -> Result<()> {
     for (rel, bytes) in entries {
         let path = dest.join(rel);
@@ -174,6 +197,7 @@ fn write_entries(entries: &[(String, Vec<u8>)], dest: &Path) -> Result<()> {
 /// on-disk tree carries a UTF-8 BOM (which `claude plugin validate` rejects on
 /// windows); the sync makes the contents durable before the version-dir rename, so
 /// a power-loss cannot leave a `current` pointer at a zero-length tree.
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn write_no_bom(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut f = File::create(path).io_ctx(|| format!("creating {}", path.display()))?;
     f.write_all(bytes).io_ctx(|| format!("writing {}", path.display()))?;
@@ -181,6 +205,7 @@ fn write_no_bom(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn generate_marketplace(plugin: &Plugin, entries: &[(String, Vec<u8>)]) -> Result<Vec<u8>> {
     let manifest = read_plugin_manifest(entries)?;
     let owner = manifest
@@ -202,6 +227,7 @@ fn generate_marketplace(plugin: &Plugin, entries: &[(String, Vec<u8>)]) -> Resul
 }
 
 /// Read the shipped `plugin.json` out of the flattened tree entries.
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 pub(crate) fn read_plugin_manifest(entries: &[(String, Vec<u8>)]) -> Result<PluginManifest> {
     let bytes = entries
         .iter()
@@ -211,6 +237,7 @@ pub(crate) fn read_plugin_manifest(entries: &[(String, Vec<u8>)]) -> Result<Plug
     serde_json::from_slice(bytes).map_err(|source| Error::Json { what: "plugin.json".into(), source })
 }
 
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn is_plugin_json(rel: &str) -> bool {
     let rel = rel.replace('\\', "/");
     rel == ".claude-plugin/plugin.json" || rel.ends_with("/.claude-plugin/plugin.json")
@@ -359,6 +386,7 @@ fn append_tree(builder: &mut tar::Builder<Vec<u8>>, base: &Path, dir: &Path) -> 
 
 // --- pointer flip ------------------------------------------------------------
 
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn flip_pointer(root: &Path, version: &str, client_id: &str, version_dir: &Path) -> Result<()> {
     let current = root.join(format!("current@{client_id}"));
     let rel_target = Path::new("versions").join(format!("{version}@{client_id}"));
@@ -366,6 +394,7 @@ fn flip_pointer(root: &Path, version: &str, client_id: &str, version_dir: &Path)
 }
 
 #[cfg(unix)]
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn make_pointer(root: &Path, current: &Path, rel_target: &Path, _abs_target: &Path) -> Result<()> {
     let tmp = root.join(format!("current.tmp.{}", rand_suffix()));
     let _ = fs::remove_file(&tmp);
@@ -376,6 +405,7 @@ fn make_pointer(root: &Path, current: &Path, rel_target: &Path, _abs_target: &Pa
 }
 
 #[cfg(windows)]
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn make_pointer(_root: &Path, current: &Path, _rel_target: &Path, abs_target: &Path) -> Result<()> {
     // Junctions require an absolute target and cannot be atomically renamed over a
     // dir reparse point, so replace in place. Windows is designed-in, not CI-gated.
@@ -390,6 +420,7 @@ fn make_pointer(_root: &Path, current: &Path, _rel_target: &Path, abs_target: &P
 }
 
 #[cfg(unix)]
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn fsync_dir(path: &Path) {
     // Best-effort durability of the rename; not required for the atomicity itself.
     if let Ok(f) = File::open(path) {
@@ -398,8 +429,10 @@ fn fsync_dir(path: &Path) {
 }
 
 #[cfg(not(unix))]
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn fsync_dir(_path: &Path) {}
 
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn rand_suffix() -> String {
     format!("{:016x}.{}", fastrand::u64(..), std::process::id())
 }
@@ -411,6 +444,7 @@ fn rand_suffix() -> String {
 /// not gone stale or corrupt. When the token is absent the substitution is a no-op,
 /// so the hash equals the raw tree's. Decompresses the blob first, so it errors
 /// without the `embed` feature.
+#[cfg(feature = "claude")]
 pub(crate) fn tree_hash(blob: &[u8], client: &str) -> Result<String> {
     let mut entries = blob_entries(blob)?;
     expand_client_entries(&mut entries, client);
@@ -418,6 +452,7 @@ pub(crate) fn tree_hash(blob: &[u8], client: &str) -> Result<String> {
 }
 
 /// Like [`tree_hash`] but for a `Source::Path` on-disk source tree.
+#[cfg(feature = "claude")]
 pub(crate) fn dir_hash_for_client(dir: &Path, client: &str) -> Result<String> {
     let mut entries = dir_entries(dir)?;
     expand_client_entries(&mut entries, client);
@@ -426,6 +461,7 @@ pub(crate) fn dir_hash_for_client(dir: &Path, client: &str) -> Result<String> {
 
 /// Hash flattened entries (generated marketplace excluded), for the client-scoped
 /// baselines that compare against a materialized `current@<client>` tree.
+#[cfg(feature = "claude")]
 fn hash_entries(entries: &[(String, Vec<u8>)]) -> String {
     let mut files: Vec<(String, &[u8])> =
         entries.iter().filter(|(rel, _)| rel != GENERATED_MARKETPLACE).map(|(rel, bytes)| (rel.clone(), bytes.as_slice())).collect();
@@ -434,6 +470,7 @@ fn hash_entries(entries: &[(String, Vec<u8>)]) -> String {
 
 /// Stable hash of a materialized tree on disk (same exclusion), for the doctor
 /// check that `current` matches its source tree.
+#[cfg(feature = "claude")]
 pub(crate) fn dir_hash(root: &Path) -> Result<String> {
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
     collect_disk(root, root, &mut files)?;
@@ -441,6 +478,7 @@ pub(crate) fn dir_hash(root: &Path) -> Result<String> {
     Ok(hash_pairs(&mut refs))
 }
 
+#[cfg(feature = "claude")]
 fn collect_disk(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) -> Result<()> {
     let entries = fs::read_dir(dir).io_ctx(|| format!("reading {}", dir.display()))?;
     for entry in entries {
@@ -460,6 +498,7 @@ fn collect_disk(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) -> Re
     Ok(())
 }
 
+#[cfg(feature = "claude")]
 fn hash_pairs(files: &mut [(String, &[u8])]) -> String {
     files.sort_by(|a, b| a.0.cmp(&b.0));
     let mut hasher = Sha256::new();
@@ -472,6 +511,8 @@ fn hash_pairs(files: &mut [(String, &[u8])]) -> String {
     hex(&hasher.finalize())
 }
 
-#[cfg(all(test, feature = "embed"))]
+// `embed` for the blob helpers, `claude` for the hash surface the tree-hash
+// equivalence tests assert on; both are the gates the items under test carry.
+#[cfg(all(test, feature = "embed", feature = "claude"))]
 #[path = "../tests/unit/materialize.rs"]
 mod materialize_tests;

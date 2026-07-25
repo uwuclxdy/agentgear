@@ -103,35 +103,17 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod agents;
-// None of these four modules is claude-only as a whole — `doctor::doctor` and
-// `materialize::entries_for` are generic, reachable from every backend via the
-// public `PluginHost`/`Plugin` surface, and `cli` has its own separately-gated
-// `copilot-cli` half. What DOES go fully dead without `claude` is the private
-// chain the `#[cfg(feature = "claude")]` `agents::claude` orchestration alone
-// roots: `ClaudeCli` (ungated in `cli.rs`), `doctor::claude_report` + its
-// private checks, the manifest parse models, and the hash surface in
-// `materialize` (`tree_hash`/`dir_hash`/`dir_hash_for_client`/`blob_entries`)
-// that only `doctor`'s claude checks reach. `copilot-cli` never roots that
-// chain — it reaches only the always-alive doctor/materialize items above —
-// so the right test for a future plugin-native backend is "does anything but
-// `claude` root this chain", not "does it touch `materialize` at all". The
-// single-feature CI leg denies warnings, which is what makes the now-dead
-// chain fail loud.
-#[cfg_attr(not(feature = "claude"), allow(dead_code))]
 mod cli;
 // The IR + parser is consumed by the non-CC backends + doctor in pass B;
 // `allow(dead_code)` until those calls land.
 #[allow(dead_code)]
 mod components;
-#[cfg_attr(not(feature = "claude"), allow(dead_code))]
 mod doctor;
 mod error;
 mod host;
 mod install;
 mod lock;
-#[cfg_attr(not(feature = "claude"), allow(dead_code))]
 mod manifest;
-#[cfg_attr(not(feature = "claude"), allow(dead_code))]
 mod materialize;
 mod restart;
 mod selfheal;

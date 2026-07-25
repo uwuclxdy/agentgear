@@ -3,23 +3,31 @@
 //! surfacing a stack trace (design §doctor).
 
 use std::fmt;
+#[cfg(feature = "claude")]
 use std::path::PathBuf;
 
+#[cfg(feature = "claude")]
 use serde_json::Value;
 
-// `agents::claude` is feature-gated, so the marketplace-health check it backs is too;
-// under `--no-default-features` the whole claude slice compiles as dead code.
+// Everything below carrying this gate belongs to `claude_report`, which only the
+// `claude` backend calls; the shared `doctor` fan-out and the report types stay
+// ungated so every other backend still reaches them.
 #[cfg(feature = "claude")]
 use crate::agents::claude::{MarketplaceHealth, find_marketplace, marketplace_health};
+#[cfg(feature = "claude")]
 use crate::cli::{CLAUDE_FLOOR, ClaudeCli, MIN_CLAUDE_VERSION, parse_version};
 use crate::components::AGENTGEAR_CLIENT_TOKEN;
 use crate::error::Result;
-use crate::host::{Plugin, Scope, Source, data_root};
+#[cfg(feature = "claude")]
+use crate::host::data_root;
+use crate::host::{Plugin, Scope, Source};
+#[cfg(feature = "claude")]
 use crate::materialize::{dir_hash, dir_hash_for_client, tree_hash};
 
 /// The CC client id materialize scopes its tree under. doctor is CC-oriented (it runs
 /// `claude plugin validate` and hashes against the tree CC would run), so it reads and
 /// hashes the `@claude`-scoped materialization rather than any other backend's.
+#[cfg(feature = "claude")]
 const CLAUDE_CLIENT: &str = "claude";
 
 /// An ordered health report: one [`DoctorCheck`] per thing inspected, rendered by
@@ -163,6 +171,7 @@ pub(crate) fn doctor(plugin: &Plugin, source: &Source) -> Result<DoctorReport> {
 /// manifest validation, tree-hash integrity, hook commands on PATH. The shared
 /// host-binary check lives in the fan-out, not here, so the merged claude-only
 /// report is unchanged. Infallible — every check resolves to a status.
+#[cfg(feature = "claude")]
 pub(crate) fn claude_report(plugin: &Plugin, source: &Source) -> DoctorReport {
     let mut checks = Vec::new();
 
@@ -185,7 +194,6 @@ pub(crate) fn claude_report(plugin: &Plugin, source: &Source) -> DoctorReport {
 
     if let Some(cli) = cli {
         check_registered(&cli, plugin, &mut checks);
-        #[cfg(feature = "claude")]
         checks.push(check_marketplace(&cli, plugin, source));
         checks.push(check_validate(plugin, source));
     }
@@ -196,7 +204,6 @@ pub(crate) fn claude_report(plugin: &Plugin, source: &Source) -> DoctorReport {
     // declares none, rather than reporting on a surface nobody asked for.
     checks.push(check_tree_hash(plugin, source));
     checks.push(check_hook_commands(plugin));
-    #[cfg(feature = "claude")]
     checks.extend(crate::agents::claude::statusline_check(plugin));
 
     DoctorReport { checks }
@@ -219,6 +226,7 @@ fn check_host_binary() -> DoctorCheck {
     }
 }
 
+#[cfg(feature = "claude")]
 fn check_claude_version(cli: &ClaudeCli) -> DoctorCheck {
     let name = "claude version";
     let raw = match cli.raw_version() {
@@ -238,6 +246,7 @@ fn check_claude_version(cli: &ClaudeCli) -> DoctorCheck {
     }
 }
 
+#[cfg(feature = "claude")]
 fn check_registered(cli: &ClaudeCli, plugin: &Plugin, checks: &mut Vec<DoctorCheck>) {
     let name = "plugin registered";
     let entries: Result<Vec<crate::manifest::PluginEntry>> = cli.run_json(&["plugin", "list", "--json"], None, "plugin list --json");
@@ -299,6 +308,7 @@ fn check_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: &Source) -> Docto
     }
 }
 
+#[cfg(feature = "claude")]
 fn check_validate(plugin: &Plugin, source: &Source) -> DoctorCheck {
     let name = "manifest validates";
     let target = validate_target(plugin, source);
@@ -325,6 +335,7 @@ fn check_validate(plugin: &Plugin, source: &Source) -> DoctorCheck {
     }
 }
 
+#[cfg(feature = "claude")]
 fn validate_target(plugin: &Plugin, source: &Source) -> Option<PathBuf> {
     match source {
         // Both materialize the CC-scoped `current@claude`; that on-disk tree is the
@@ -337,6 +348,7 @@ fn validate_target(plugin: &Plugin, source: &Source) -> Option<PathBuf> {
     }
 }
 
+#[cfg(feature = "claude")]
 fn check_tree_hash(plugin: &Plugin, source: &Source) -> DoctorCheck {
     let name = "current tree matches embedded";
     if let Source::GitHub { .. } = source {
@@ -376,6 +388,7 @@ fn check_tree_hash(plugin: &Plugin, source: &Source) -> DoctorCheck {
 /// check each resolves on PATH. Path/variable-prefixed commands are skipped
 /// (they cannot be checked generically). Missing bare commands are the single
 /// most common end-user breakage.
+#[cfg(feature = "claude")]
 fn check_hook_commands(plugin: &Plugin) -> DoctorCheck {
     let name = "hook commands on PATH";
     let mut commands = Vec::new();
@@ -438,6 +451,7 @@ fn check_statusline_client(plugin: &Plugin) -> Option<DoctorCheck> {
     })
 }
 
+#[cfg(feature = "claude")]
 fn collect_hook_commands(plugin: &Plugin, out: &mut Vec<String>) -> Result<()> {
     for (rel, bytes) in crate::materialize::blob_entries(plugin.blob())? {
         if is_hook_json(&rel)
@@ -449,6 +463,7 @@ fn collect_hook_commands(plugin: &Plugin, out: &mut Vec<String>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "claude")]
 fn is_hook_json(rel: &str) -> bool {
     let rel = rel.replace('\\', "/");
     if !rel.ends_with(".json") {
@@ -457,6 +472,7 @@ fn is_hook_json(rel: &str) -> bool {
     rel.rsplit('/').next() == Some("plugin.json") || rel.split('/').any(|c| c == "hooks")
 }
 
+#[cfg(feature = "claude")]
 fn walk_commands(value: &Value, out: &mut Vec<String>) {
     match value {
         Value::Object(map) => {
@@ -478,6 +494,7 @@ fn walk_commands(value: &Value, out: &mut Vec<String>) {
 /// Return the first token of a hook command iff it is a plain executable name
 /// (no path separator, no `$`-variable, no shell metacharacter that would make
 /// the token something other than a PATH lookup).
+#[cfg(feature = "claude")]
 fn bare_command(command: &str) -> Option<String> {
     let token = command.split_whitespace().next()?;
     let looks_bare = !token.is_empty()
