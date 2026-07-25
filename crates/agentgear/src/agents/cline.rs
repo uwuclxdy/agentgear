@@ -36,7 +36,7 @@ use super::report;
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, MarkdownDoc};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
-use crate::error::{Error, IoContext, Result};
+use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 pub(crate) struct ClineBackend;
@@ -406,6 +406,9 @@ fn remove_hooks(dir: &Path, plugin: &str, hooks: &[HookBinding]) -> Result<bool>
 #[cfg(unix)]
 fn set_executable(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
+
+    use crate::error::IoContext;
+
     let mut perms = fs::metadata(path).io_ctx(|| format!("stat {}", path.display()))?.permissions();
     perms.set_mode(0o755);
     fs::set_permissions(path, perms).io_ctx(|| format!("chmod +x {}", path.display()))
