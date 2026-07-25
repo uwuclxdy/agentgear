@@ -60,6 +60,51 @@ jobs:
       - name: check the lib with no embed
         run: cargo check -p agentgear --no-default-features
 
+  # Every other leg enables all 25 agent features together (`--all-features`) or
+  # none (`zero-embed`'s `--no-default-features`), so a module gated on a STALE
+  # feature list — naming a backend that dropped a usage, or missing the one a
+  # usage moved to — compiles clean both ways and breaks only for a real
+  # consumer building exactly one feature. `cargo check` alone already turns a
+  # missing/wrong `cfg` into a hard `E0432`; `RUSTFLAGS=-D warnings` additionally
+  # turns the OTHER direction (a module still gated in but nothing left calling
+  # it under this one feature) from a silent dead-code warning into a red build
+  # (`cargo check` itself has no `-- <rustc-args>` of its own, unlike
+  # `clippy`/`test`, hence the env var). The feature list comes from `cargo
+  # metadata` rather than a hand-copied one here, so a newly added agent feature
+  # is covered the moment it lands instead of silently falling out of this leg;
+  # `default`/`derive`/`embed`/`all-agents` are the only non-agent features and
+  # are excluded by name.
+  single-feature:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: check every agent feature alone
+        run: |
+          set -euo pipefail
+          export RUSTFLAGS="-D warnings"
+          status=0
+          feats=$(cargo metadata --no-deps --format-version 1 | jq -r '
+            .packages[] | select(.name == "agentgear") | .features | keys[]
+            | select(. != "default" and . != "derive" and . != "all-agents" and . != "embed")
+          ')
+          # jq exits 0 on a filter that selects nothing, so a drifted package name
+          # or metadata schema would silently give an empty list here and turn the
+          # loop below into zero iterations plus a green `exit 0` — the exact
+          # failure mode this leg exists to prevent, just one level up.
+          if [ -z "$feats" ]; then
+            echo "::error::derived an empty agent-feature list; the cargo metadata/jq filter has drifted"
+            exit 1
+          fi
+          echo "checking $(printf '%s\n' "$feats" | wc -l) agent features alone"
+          for feat in $feats; do
+            echo "::group::feature: $feat"
+            cargo check -p agentgear --no-default-features --features "$feat" || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+
   deny:
     runs-on: ubuntu-latest
     steps:
