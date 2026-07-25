@@ -105,6 +105,48 @@ jobs:
           done
           exit "$status"
 
+  # Every other leg builds for linux only, so an item reachable from a non-unix
+  # build but written as if `cfg(unix)` held compiles nowhere: a `use` that only
+  # the `cfg(unix)` arm of one backend needed sat red on windows at every feature
+  # set until 2026-07-25, with nothing here able to see it. `cargo check --target`
+  # from ubuntu covers that class at ubuntu billing rates — a check does no
+  # linking, so neither the MSVC linker nor a macOS SDK has to be present, and no
+  # windows/macos runner is involved. `RUSTFLAGS=-D warnings` for the same reason
+  # as `single-feature` (`cargo check` has no `-- <rustc-args>` of its own):
+  # without it, an item that goes unused on one target stays a silent warning.
+  # These two triples reach every platform arm the tree actually branches on —
+  # `windows`, `macos`, and the linux `not(any(windows, target_os = "macos"))`
+  # the other legs already build. Nothing in the workspace reads `target_env` or
+  # `target_arch`, and windows-gnu resolves to the same unit graph as
+  # windows-msvc, so a second windows env or a second darwin arch would only
+  # check identical code twice. `--all-features` buys nothing today: `all-agents`
+  # is already requested inside the workspace, so a default-features `--workspace`
+  # check unifies every backend onto the shared lib unit anyway. It is here so the
+  # leg's reach stops depending on that — if the workspace stops requesting
+  # `all-agents` a default-features build quietly narrows, while `--all-features`
+  # cannot. It also keeps this leg building what `clippy` and `test` build.
+  cross-target:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-pc-windows-msvc, x86_64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # rust-cache keys on prefix + job id + runner os/arch and never reads the
+      # matrix, so both arms would compute one key, race to save it, and each pull
+      # the other's unusable per-triple artifacts.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: check for ${{ matrix.target }}
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo check --workspace --all-targets --all-features --target ${{ matrix.target }}
+
   deny:
     runs-on: ubuntu-latest
     steps:
