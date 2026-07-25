@@ -67,7 +67,7 @@ Attributes:
 | `agents` | `["claude"]` | which backends `setup` wires; an empty list is rejected at compile time |
 | `embed` | `true` | bake the compressed tree in via `include_bytes!`; set `false` (with `default-features = false` on the crate) for a `default_source = "github"` host that ships no baked tree |
 | `instructions_fn` | none | a path to a `fn() -> Option<String>`, called from `PluginHost::instructions`. Host-authored always-loaded guidance, delivered through each harness's native context channel. `opencode` is the only backend that writes it today (a `<plugin>-instructions.md` registered in `opencode.json`'s `instructions[]`); see [Instructions](Capability-Instructions) |
-| `statusline_fn` | none | a path to a `fn() -> Option<StatusLineDecl>`, called from `PluginHost::statusline`. The status line the host owns, written into the harness's own single slot, stashing and restoring whatever value it displaces. `claude`, `qwen-code`, `antigravity-cli`, and `droid` write it today; see [Status line](Capability-Status-Line) |
+| `statusline_fn` | none | a path to a `fn() -> Option<StatusLineDecl>`, called from `PluginHost::statusline`. The status line the host owns, written into the harness's own single slot, stashing and restoring whatever value it displaces. `claude`, `copilot-cli`, `qwen-code`, `antigravity-cli`, and `droid` write it today; see [Status line](Capability-Status-Line) |
 
 > [!IMPORTANT]
 > Every id in `agents = [...]` needs its cargo feature enabled on the `agentgear` dependency. The feature name is the id (`qwen-code`, `vscode-copilot`), and `claude` is on by default:

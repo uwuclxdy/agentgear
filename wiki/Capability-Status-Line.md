@@ -6,18 +6,18 @@ exposes it as `statusline_fn`), returning a `StatusLineDecl { command, padding }
 [instructions](Capability-Instructions), and unlike the five tree surfaces, it is not a file in the
 plugin tree — it is a declaration the host returns at runtime.
 
-**4 backends deliver it today**, through one shared slot renderer.
+**5 backends deliver it today**, through one shared slot renderer.
 
 | harness | how it arrives |
 |---|---|
 | claude | the `statusLine` key in `<config>/settings.json` (user) or `<project>/.claude/settings.json`, as `{"type":"command","command":…}` plus `padding` when declared |
+| copilot-cli | the root `statusLine` key in `settings.json` under `$COPILOT_HOME` (else `~/.copilot`), **user scope only**. Same shape as Claude Code's; copilot's renderer reads `command` and `padding` |
 | qwen-code | `ui.statusLine` in the same `settings.json` its other surfaces use, both scopes. `type: "command"` is required there: anything else is silently read as a built-in preset and the declared command never runs |
 | antigravity-cli | the root `statusLine` key in `~/.gemini/antigravity-cli/settings.json`, **user scope only**. That harness has an on/off toggle of its own (`enabled`) which agentgear preserves rather than overrides |
 | droid | the root `statusLine` key in `~/.factory/settings.json` (user) or `<project>/.factory/settings.json`, plus droid's own `maxRows` cap so a composed two-row line is not clipped to one |
 
-`copilot-cli` has a command-based slot of the same shape and is not wired yet. The remaining twenty
-harnesses have no slot a host can own. Where they look like they do, the setting is a curated list
-of built-in widget ids rather than a command.
+The remaining twenty harnesses have no slot a host can own. Where they look like they do, the
+setting is a curated list of built-in widget ids rather than a command.
 
 ## The slot holds one value
 

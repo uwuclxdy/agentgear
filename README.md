@@ -176,9 +176,9 @@ Skills translate on 13 of 25 backends now (see above). Two surfaces sit outside 
 the host declares them instead of shipping them in the tree: instructions (always-loaded guidance
 from `PluginHost::instructions`) translate on `opencode` only so far, written to a dedicated file
 whose path is registered in opencode's `instructions[]`; a status line
-(`PluginHost::statusline`) lands on `claude`, `qwen-code`, `antigravity-cli`, and `droid`, written
-into each tool's own single status-line slot, where agentgear stashes whatever was there and puts
-it back on uninstall. Of the 24 non-Claude backends, 14 accept both scopes and 9 are user-scope only (`copilot-cli` among them, its CLI has no `--scope`). `vscode-copilot` is the one project-scope-only backend. Codex's hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI; kimi's fire as soon as they are written. Per-agent config paths and skipped-surface reasons are on the [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) wiki page; the harness-first at-a-glance (config paths, scopes, support grid) is on [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison), and the capability-first depth — a page each for MCP shapes + fidelity, hook events, skills, native Claude-Code-config interop — is on [Capabilities](https://github.com/uwuclxdy/agentgear/wiki/Capabilities).
+(`PluginHost::statusline`) lands on `claude`, `copilot-cli`, `qwen-code`, `antigravity-cli`, and
+`droid`, written into each tool's own single status-line slot, where agentgear stashes whatever was
+there and puts it back on uninstall. Of the 24 non-Claude backends, 14 accept both scopes and 9 are user-scope only (`copilot-cli` among them, its CLI has no `--scope`). `vscode-copilot` is the one project-scope-only backend. Codex's hooks are written but stay inert until a user trusts them in codex's `/hooks` TUI; kimi's fire as soon as they are written. Per-agent config paths and skipped-surface reasons are on the [Agent backends](https://github.com/uwuclxdy/agentgear/wiki/Agent-Backends) wiki page; the harness-first at-a-glance (config paths, scopes, support grid) is on [Harness comparison](https://github.com/uwuclxdy/agentgear/wiki/Harness-Comparison), and the capability-first depth — a page each for MCP shapes + fidelity, hook events, skills, native Claude-Code-config interop — is on [Capabilities](https://github.com/uwuclxdy/agentgear/wiki/Capabilities).
 
 ## Status
 

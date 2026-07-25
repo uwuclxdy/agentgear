@@ -46,7 +46,7 @@ instead of dropping features silently. The trait is unsealed: an external crate 
 `forget` is the teardown counterpart to `remove`, and defaults to doing nothing — which is right
 for any backend whose writes are all config-merge, since `remove` already takes those back.
 Implement it when a backend writes into a file the **user** owns and the tool does not carry, the
-way all four [status line](Capability-Status-Line) backends write their slot. Such a write
+way all five [status line](Capability-Status-Line) backends write their slot. Such a write
 outlives the tool's registry and the tool binary itself, so uninstall calls `forget` on every path
 (an undetected tool included) before clearing agentgear's marker, and a failure keeps that marker
 rather than dropping the only copy of what the write displaced.
@@ -59,9 +59,10 @@ Two shapes:
   (`claude plugin` / `copilot plugin`): materialize the embedded tree, add or update the
   marketplace source, install or update the plugin, read the result back through the CLI's own
   list command. Full mcp, hooks, commands, agents, and skills, since the tool copies the whole
-  tree itself, so there is no per-surface translation. Claude Code has one write outside that
+  tree itself, so there is no per-surface translation. Each has exactly one write outside that
   model: a host-declared [status line](Capability-Status-Line) goes into the `statusLine` key of
-  the user's own `settings.json`, since no plugin tree carries one. copilot-cli is user-scope only (no
+  the user's own `settings.json` (Claude Code's config dir, or `~/.copilot`), since no plugin tree
+  carries one. copilot-cli is user-scope only (no
   `--scope` on the `copilot` CLI) and can't pin a GitHub ref (`owner/repo@ref` is misparsed; only
   the bare repo registers, tracking copilot's default branch). Claude Code details:
   [How It Works](How-It-Works).

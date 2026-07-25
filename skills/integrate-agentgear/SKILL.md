@@ -14,7 +14,7 @@ One `#[derive(PluginHost)]` struct gives a host the full install / uninstall / u
 self-heal / doctor lifecycle. agentgear drives the `claude plugin` CLI for those ops and bakes the
 plugin tree into the binary. It writes that one Claude-Code plugin into 23 other harnesses'
 native config files, detect-gated, never clobbering user config (`copilot-cli` is a 25th target,
-orchestrated through its own plugin CLI rather than a config-file write). The host declares intent once;
+orchestrated through its own plugin CLI rather than a per-surface config translate). The host declares intent once;
 agentgear delivers it per harness.
 
 This skill is the process. The exhaustive API lives in the repo's `wiki/` and `docs/` (mapped at
@@ -134,13 +134,13 @@ a surface reaches it.
 Check these against the target plugin before promising a full migration. Each is an open item in
 `docs/todo.md`; some in depth in `docs/fox-nyactx-integration.md`.
 
-- **statusLine past the four wired backends.** On CC this is no longer a gap but a migration step:
-  declare the line with `statusline_fn` and delete the hand-rolled `settings.json` writer (see the
-  table above). One declaration now reaches four harnesses: `claude`, `qwen-code`,
-  `antigravity-cli` (user scope only), `droid`. `copilot-cli` has a slot of the same shape and is
-  not wired, so a plugin that needs its line there still has nowhere to put it. Any *other*
-  settings key outside the plugin tree is unmodeled: the components IR carries five surfaces (mcp
-  servers, hooks, commands, agents, skills) and nothing else reaches a harness's own settings file.
+- **statusLine is wired on every harness known to carry a slot; any other settings key is not.** On
+  CC this is no longer a gap but a migration step: declare the line with `statusline_fn` and delete
+  the hand-rolled `settings.json` writer (see the table above). One declaration reaches five
+  harnesses: `claude`, `copilot-cli` (user scope only), `qwen-code`, `antigravity-cli` (user scope
+  only), `droid`. Any *other* settings key outside the plugin tree is unmodeled: the components IR
+  carries five surfaces (mcp servers, hooks, commands, agents, skills) and nothing else reaches a
+  harness's own settings file.
 - **codex `notify` hooks / opencode hooks.** agentgear's codex backend writes `hooks.json`, which
   stays inert until the user trusts it via codex's `/hooks` TUI; opencode has no declarative hook
   surface at all (in-process JS/TS plugin only). A plugin relying on either (raawr) cannot fully

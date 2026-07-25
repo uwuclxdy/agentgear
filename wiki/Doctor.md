@@ -36,13 +36,27 @@ sees exactly these plus the shared check above:
 Checks 5 to 7 need no `claude`, so they run even when Claude Code is absent. Check 7 exists only
 for a host that declares a [status line](Capability-Status-Line), and warns rather than fails when
 another tool holds the slot: it holds one value, so being displaced is a real state the user can
-see, not a broken install. Every other status-line backend appends the same check to its own slice
-below, worded against its own tool and settings file. One more warning arm reaches those: a slot
+see, not a broken install. Every other status-line backend appends the same check to its own slice,
+worded against its own tool and settings file. One more warning arm reaches those: a slot
 agentgear owns sitting behind the tool's own off-switch (antigravity-cli's `enabled`) reports
 `[warn]` naming the switch and how to turn it back on. The install is correct and converged in that
 state; it simply renders nothing.
 
 On a zero-embed host (`embed = false`, github source) check 5 reports `github source; not applicable`, but check 6 still reads the baked tree and warns `could not read the embedded tree` on every run. That warning is the expected steady state for such a host today, not a break.
+
+## copilot-cli checks
+
+The other plugin-native backend adds two, or three for a host that declares a status line:
+
+| check | passes when |
+|---|---|
+| copilot version | `copilot --version` is at or above the floor `1.0.71`, where the `plugin` lifecycle landed |
+| plugin registered | `copilot plugin list` lists `name@marketplace` |
+| status line installed | the `statusLine` slot in `settings.json` under `$COPILOT_HOME` (else `~/.copilot`) holds exactly the host's declared line, user scope |
+
+An unreadable or unparseable version is a warning, not a failure, and the run proceeds. `copilot`
+off PATH means the backend is undetected, so the slice collapses to the shared `not installed on
+this host; skipped` line instead.
 
 ## Config-merge agent checks
 
