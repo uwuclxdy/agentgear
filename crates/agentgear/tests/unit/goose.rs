@@ -79,14 +79,43 @@ fn reconcile_mcp_writes_goose_extension_shape_and_is_idempotent() {
     let changed = reconcile_mcp(&config, servers, true).unwrap();
     assert!(!changed, "second identical reconcile must be a NoOp");
 
-    // remove strips only ours; the seeded extension stays.
+    // remove strips only ours; the seeded extension stays, and so does the mapping
+    // holding it.
     let removed = remove_mcp(&config, &writable_names(servers)).unwrap();
     assert!(removed, "remove must report a change");
     let text = fs::read_to_string(&config).unwrap();
     assert!(!text.contains("ez-fixture"), "our extension survived remove:\n{text}");
     assert!(text.contains("their-server"), "remove clobbered the seeded extension:\n{text}");
+    assert!(text.contains("extensions:"), "a mapping still holding theirs must stay:\n{text}");
 
     let _ = fs::remove_dir_all(config.parent().unwrap());
+}
+
+#[test]
+fn remove_mcp_prunes_only_an_extensions_mapping_it_emptied() {
+    let srv = stdio("ez-fixture", "host_fixture", &["mcp"]);
+    let servers = std::slice::from_ref(&srv);
+
+    // Ours were the only extensions: the mapping `reconcile_mcp` created goes with
+    // them, leaving the user's own top-level key alone. The file always stays — a
+    // YAML config can carry comments no removal could give back.
+    let ours = scratch("config.yaml");
+    fs::write(&ours, "GOOSE_MODEL: gpt-x\n").unwrap();
+    reconcile_mcp(&ours, servers, true).unwrap();
+    assert!(remove_mcp(&ours, &writable_names(servers)).unwrap(), "remove must report a change");
+    assert_eq!(fs::read_to_string(&ours).unwrap(), "GOOSE_MODEL: gpt-x\n", "the extensions mapping our own removal emptied must go");
+
+    // A mapping the user is keeping empty holds nothing of ours, so the teardown takes
+    // nothing and writes nothing at all — the byte-for-byte file, comments included.
+    let theirs = scratch("config.yaml");
+    let seed = "# my goose config\nGOOSE_MODEL: gpt-x\nextensions: {}\n";
+    fs::write(&theirs, seed).unwrap();
+    assert!(!remove_mcp(&theirs, &writable_names(servers)).unwrap(), "a teardown with nothing of ours must report no change");
+    assert_eq!(fs::read_to_string(&theirs).unwrap(), seed, "a mapping the user had empty must survive untouched");
+
+    for p in [&ours, &theirs] {
+        let _ = fs::remove_dir_all(p.parent().unwrap());
+    }
 }
 
 #[test]

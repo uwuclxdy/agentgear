@@ -202,6 +202,41 @@ fn goose_full_lifecycle() {
     assert!(env.config_yaml().contains("ez-fixture"), "re-install did not re-add our extension");
 }
 
+/// The `extensions` mapping is ours to take back only when our own removal is what
+/// emptied it. Phase 1 pins the drop end to end (install creates the mapping,
+/// uninstall takes it); phase 2 pins the guard on the other side, where the user is
+/// keeping an empty mapping of their own and the teardown must not write at all.
+/// Neither phase takes the file: a YAML config can carry comments nothing could
+/// give back.
+#[test]
+fn goose_uninstall_prunes_only_the_extensions_mapping_it_emptied() {
+    let env = Env::new("prune");
+    let config = env.goose.join("config.yaml");
+    // No foreign extension in this seed: the `extensions` mapping has to be one WE
+    // create for the uninstall to be its exact inverse. `SEED_CONFIG`'s `theirs` is
+    // the opposite case, pinned by the lifecycle test above.
+    fs::write(&config, "GOOSE_MODEL: gpt-x\n").unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "goose"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert!(env.config_yaml().contains("extensions:"), "install did not create the extensions mapping:\n{}", env.config_yaml());
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+    assert_eq!(env.config_yaml(), "GOOSE_MODEL: gpt-x\n", "uninstall left a shell of the mapping it created");
+
+    // Re-install, then hand the config back with the mapping emptied: that state is
+    // the user's own, since nothing of ours is left in it to take.
+    let (ok, out) = env.fixture(&["setup", "--agent", "goose"]);
+    assert!(ok && out == "Installed", "re-install failed: {out}");
+    let user_owned = "# my goose config\nGOOSE_MODEL: gpt-x\nextensions: {}\n";
+    fs::write(&config, user_owned).unwrap();
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall over a user-emptied mapping failed: {out}");
+    assert_eq!(env.config_yaml(), user_owned, "uninstall took a mapping the user was keeping empty");
+}
+
 /// goose's `extensions.<name>.enabled` is a real per-extension on/off flag a user
 /// can flip by hand. self_heal must classify a user disable as `Disabled` and never
 /// write it back to `true` (foundation never-re-enable); an explicit `setup` honors

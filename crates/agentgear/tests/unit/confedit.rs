@@ -1,8 +1,9 @@
 //! confedit tests: json_edit round-trips, preserves unknown keys, reports changed
 //! vs unchanged, never creates an empty file, and BOM-free with a trailing newline;
 //! write_file_idem + remove_file_idem idempotency; and the removal pair's prune rule
-//! (only a container OUR removal emptied goes, never one the user had empty) plus its
-//! drop of a file left holding nothing. Explicit temp paths, no env.
+//! (only a container OUR removal emptied goes, never one the user had empty) in both
+//! the JSON and the YAML editor, plus the JSON-only drop of a file left holding
+//! nothing. Explicit temp paths, no env.
 
 use std::path::PathBuf;
 
@@ -138,6 +139,53 @@ fn json_prune_drops_only_a_container_our_removal_emptied() {
     .unwrap();
     assert!(pruned);
     assert_eq!(root, json!({}), "an array key our entry emptied must go");
+}
+
+/// The YAML twin of `json_prune_drops_only_a_container_our_removal_emptied`, one
+/// level deep (goose's `extensions`, the only YAML container any backend creates).
+#[cfg(feature = "goose")]
+#[test]
+fn yaml_prune_drops_only_a_mapping_our_removal_emptied() {
+    use serde_norway::Value as Yaml;
+
+    use super::yaml_prune_map;
+
+    fn parse(text: &str) -> Yaml {
+        serde_norway::from_str(text).unwrap()
+    }
+    fn drop_key(root: &mut Yaml, container: &str, key: &str) -> bool {
+        yaml_prune_map(root, container, |map| {
+            map.remove(key);
+            Ok(())
+        })
+        .unwrap()
+    }
+
+    // Ours was the last extension: the mapping our `ext_map` created goes with it.
+    let mut root = parse("GOOSE_MODEL: gpt-x\nextensions:\n  ours:\n    cmd: host\n");
+    assert!(drop_key(&mut root, "extensions", "ours"));
+    assert_eq!(root, parse("GOOSE_MODEL: gpt-x\n"), "the mapping our own key emptied must go");
+
+    // A user extension survives ours, so the mapping stays — with exactly theirs in it.
+    let mut root = parse("extensions:\n  ours:\n    cmd: host\n  theirs:\n    cmd: x\n");
+    assert!(!drop_key(&mut root, "extensions", "ours"));
+    assert_eq!(root, parse("extensions:\n  theirs:\n    cmd: x\n"), "a mapping still holding theirs must stay");
+
+    // The user's own empty mapping: our removal takes nothing, so it is not ours to
+    // prune. This is the whole difference between "we emptied it" and "it is empty".
+    let mut root = parse("GOOSE_MODEL: gpt-x\nextensions: {}\n");
+    assert!(!drop_key(&mut root, "extensions", "ours"));
+    assert_eq!(root, parse("GOOSE_MODEL: gpt-x\nextensions: {}\n"), "a mapping the user had empty must survive untouched");
+
+    // A missing mapping is navigated, never created.
+    let mut root = parse("GOOSE_MODEL: gpt-x\n");
+    assert!(!drop_key(&mut root, "extensions", "ours"));
+    assert_eq!(root, parse("GOOSE_MODEL: gpt-x\n"), "a missing mapping must not be created by a removal");
+
+    // A key holding a non-mapping is left exactly as the user wrote it.
+    let mut root = parse("extensions: mine\n");
+    assert!(!drop_key(&mut root, "extensions", "ours"));
+    assert_eq!(root, parse("extensions: mine\n"), "a non-mapping value must not be touched");
 }
 
 #[test]

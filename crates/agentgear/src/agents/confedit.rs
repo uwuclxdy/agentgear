@@ -5,7 +5,9 @@
 //!
 //! Removal paths take a second pair ([`json_remove`] + [`json_prune_obj`]) that undoes
 //! what the creating write laid down, so an uninstall leaves the file as it found it
-//! rather than a shell of the containers we made.
+//! rather than a shell of the containers we made. `yaml_prune_map` is the YAML half of
+//! the container rule; the file-delete half stays JSON-only, since a YAML config can
+//! carry comments the user would lose with it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -189,6 +191,38 @@ fn is_empty_container(value: &Value) -> bool {
         Value::Array(items) => items.is_empty(),
         _ => false,
     }
+}
+
+/// The YAML twin of [`json_prune_obj`], and the removal-side counterpart of a
+/// create-on-the-way-in accessor (goose's `ext_map`): run `edit` on the mapping at
+/// `key` — navigating WITHOUT creating — then drop `key` if `edit` left it empty.
+/// Returns whether it was dropped.
+///
+/// Emptiness is measured ACROSS `edit`, exactly as the JSON twin measures it: a
+/// mapping already empty when we arrive is the user's own and survives, so a teardown
+/// that takes nothing back removes nothing. That only holds while `edit` confines
+/// itself to keys we wrote — a sweep inside it empties the mapping on the user's
+/// behalf and this guard then reads that as our own doing.
+///
+/// One level, no path walk: [`json_prune_at`] recurses because its callers address
+/// nested containers, and the single YAML caller has one top-level mapping. There is
+/// no YAML twin of [`json_remove`] either — a YAML config can carry comments, so
+/// taking the file costs more than the empty-`{}` file JSON accepts.
+#[cfg(feature = "goose")]
+pub(crate) fn yaml_prune_map(
+    root: &mut serde_norway::Value, key: &str, edit: impl FnOnce(&mut serde_norway::Mapping) -> Result<()>,
+) -> Result<bool> {
+    let Some(map) = root.as_mapping_mut() else { return Ok(false) };
+    // A key holding anything but a mapping is left untouched, matching the
+    // non-creating walk the JSON twin does.
+    let Some(child) = map.get_mut(key).and_then(serde_norway::Value::as_mapping_mut) else { return Ok(false) };
+    let was_empty = child.is_empty();
+    edit(child)?;
+    if !was_empty && child.is_empty() {
+        map.remove(key);
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn ensure_object(v: &mut Value) -> &mut Map<String, Value> {
