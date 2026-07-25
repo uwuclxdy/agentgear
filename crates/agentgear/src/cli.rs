@@ -335,8 +335,7 @@ fn parse_marketplace_line(line: &str) -> Option<CopilotMarketplace> {
 }
 
 // The unit bodies exercise the shared process/version helpers, which exist only in a
-// plugin-native build; the same gate keeps `cargo test --no-default-features
-// --features <config-backend>` compiling.
-#[cfg(all(test, any(feature = "claude", feature = "copilot-cli")))]
+// plugin-native build.
+#[cfg(test)]
 #[path = "../tests/unit/cli.rs"]
 mod cli_tests;
