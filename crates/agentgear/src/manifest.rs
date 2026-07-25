@@ -4,14 +4,12 @@
 //! (serde default) and optional fields carry `#[serde(default)]`, so an additive
 //! CLI-output change does not break parsing.
 
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 use serde::{Deserialize, Serialize};
 
 /// A shipped `plugin.json`, read from the embedded tree at materialize time to
 /// source the generated marketplace's `description` + `owner`. Name/version are
 /// read elsewhere (the derive cross-checks name; build.rs enforces version), so
 /// they are not modeled here.
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct PluginManifest {
     #[serde(default)]
@@ -22,7 +20,6 @@ pub(crate) struct PluginManifest {
 
 /// `plugin.json` `author` is either a bare string or an object; `marketplace.json`
 /// `owner` is always an object with a name. Normalize both into [`Person`].
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum AuthorField {
@@ -30,7 +27,6 @@ pub(crate) enum AuthorField {
     Str(String),
 }
 
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 impl AuthorField {
     pub fn into_person(self) -> Person {
         match self {
@@ -40,7 +36,6 @@ impl AuthorField {
     }
 }
 
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Person {
     pub name: String,
@@ -53,7 +48,6 @@ pub(crate) struct Person {
 /// The `marketplace.json` the crate generates. Carries no `version` field: CC
 /// keys its cache on the `plugin.json` version, and setting a second version here
 /// only masks drift (design §7 rule 1).
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct MarketplaceManifest {
     pub name: String,
@@ -62,7 +56,6 @@ pub(crate) struct MarketplaceManifest {
     pub plugins: Vec<MarketplacePlugin>,
 }
 
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct MarketplacePlugin {
     pub name: String,

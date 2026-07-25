@@ -103,6 +103,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod agents;
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 mod cli;
 mod components;
 mod doctor;
@@ -110,6 +111,7 @@ mod error;
 mod host;
 mod install;
 mod lock;
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 mod manifest;
 mod materialize;
 mod restart;

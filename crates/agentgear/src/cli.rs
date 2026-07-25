@@ -4,15 +4,12 @@
 //! parses `--json` tolerantly; `copilot` has no `--json` on any subcommand, so its
 //! list commands parse copilot's TEXT output (see [`CopilotCli`]).
 
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 use std::path::{Path, PathBuf};
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 use std::process::{Command, Stdio};
 
 #[cfg(feature = "claude")]
 use serde::de::DeserializeOwned;
 
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 use crate::error::{Error, Result};
 
 /// Minimum `claude` the crate supports: 2.1.196 is the first with per-entry
@@ -24,7 +21,6 @@ pub(crate) const CLAUDE_FLOOR: (u64, u64, u64) = (2, 1, 196);
 
 /// Raw result of one invocation, exit code included so callers that want to
 /// inspect a nonzero exit (e.g. `validate`) can, rather than only erroring.
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 pub(crate) struct Output {
     pub code: i32,
     pub stdout: Vec<u8>,
@@ -37,14 +33,12 @@ pub(crate) struct Output {
 /// is deliberately absent from the list: an isolated test root must survive. Safe
 /// for `copilot` too — it strips only CC session markers, never copilot's own env
 /// (`COPILOT_HOME`/`COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`).
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn scrub_keys(vars: impl Iterator<Item = String>) -> Vec<String> {
     std::iter::once("CLAUDECODE".to_string()).chain(vars.filter(|key| key.starts_with("CLAUDE_CODE_"))).collect()
 }
 
 /// Build a non-interactive command: scrub the CC session env, null stdin (so no
 /// prompt can hang), pipe out/err (so they are captured). Shared by every wrapper.
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn non_interactive(path: &Path, args: &[&str], cwd: Option<&Path>) -> Command {
     let mut cmd = Command::new(path);
     cmd.args(args);
@@ -61,7 +55,6 @@ fn non_interactive(path: &Path, args: &[&str], cwd: Option<&Path>) -> Command {
 /// Run and capture, regardless of exit code. `output()` drains both pipes
 /// concurrently, so a large stderr never deadlocks a full stdout. `bin` labels the
 /// spawn-failure context.
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn run_capturing(bin: &'static str, path: &Path, args: &[&str], cwd: Option<&Path>) -> Result<Output> {
     let out = non_interactive(path, args, cwd)
         .output()
@@ -70,7 +63,6 @@ fn run_capturing(bin: &'static str, path: &Path, args: &[&str], cwd: Option<&Pat
 }
 
 /// Run and treat any nonzero exit as an error carrying the captured stderr.
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn run(bin: &'static str, path: &Path, args: &[&str], cwd: Option<&Path>) -> Result<Vec<u8>> {
     let out = run_capturing(bin, path, args, cwd)?;
     if out.code != 0 {
@@ -136,7 +128,6 @@ impl ClaudeCli {
 /// True when `installed` is a parseable version strictly older than `embedded`.
 /// Unparseable or missing `installed` returns false, so we never churn (or
 /// downgrade) on a version string we cannot read — the monotonic invariant.
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 pub(crate) fn version_lt(installed: Option<&str>, embedded: &str) -> bool {
     match (installed.and_then(parse_version), parse_version(embedded)) {
         (Some(a), Some(b)) => a < b,
@@ -146,14 +137,12 @@ pub(crate) fn version_lt(installed: Option<&str>, embedded: &str) -> bool {
 
 /// Parse a leading `MAJOR.MINOR.PATCH` out of a version line such as
 /// `"2.1.201 (Claude Code)"`. Trailing non-digits on the patch are tolerated.
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 pub(crate) fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
     parse_version_token(s.split_whitespace().next()?)
 }
 
 /// Parse one whitespace-free token as `MAJOR.MINOR.PATCH`, tolerating trailing
 /// non-digits on the patch (`1.2.3-beta`, `1.0.71.`).
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn parse_version_token(token: &str) -> Option<(u64, u64, u64)> {
     let mut parts = token.split('.');
     let major = parts.next()?.parse().ok()?;
