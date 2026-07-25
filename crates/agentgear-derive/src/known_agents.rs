@@ -42,10 +42,14 @@ pub(crate) fn feature_const_ident(id: &str) -> String {
 mod tests {
     use super::*;
 
-    fn lib_src(rel: &str) -> String {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../agentgear/src").join(rel);
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {} ({e}); tests only run in the workspace", path.display()))
-    }
+    // Embedded, not read at run time. `CARGO_MANIFEST_DIR` is baked at compile time
+    // while the shared workspace target dir does not separate two worktrees of the
+    // same crate + version, so a binary compiled in a since-deleted worktree used to
+    // panic here on a path that no longer exists — a red indistinguishable from a
+    // real divergence. `include_str!` also registers the rebuild dependency the
+    // run-time read never had, so editing either lib file recompiles this test.
+    const REGISTRY: &str = include_str!("../../agentgear/src/agents/mod.rs");
+    const FEATURE_CHECK: &str = include_str!("../../agentgear/src/__feature_check.rs");
 
     /// The first double-quoted token on the line, if the line starts with one.
     fn leading_quoted(line: &str) -> Option<&str> {
@@ -61,14 +65,12 @@ mod tests {
         let mut known: Vec<&str> = KNOWN_AGENTS.to_vec();
         known.sort_unstable();
 
-        let registry = lib_src("agents/mod.rs");
-        let mut arms: Vec<&str> = registry.lines().filter(|line| line.contains("=> Some(Box::new(")).filter_map(leading_quoted).collect();
+        let mut arms: Vec<&str> = REGISTRY.lines().filter(|line| line.contains("=> Some(Box::new(")).filter_map(leading_quoted).collect();
         arms.sort_unstable();
         assert!(!arms.is_empty(), "no `backend_for` arms found; the extraction pattern is stale");
         assert_eq!(arms, known, "derive KNOWN_AGENTS vs lib backend_for arms");
 
-        let feature_check = lib_src("__feature_check.rs");
-        let mut consts: Vec<(String, String)> = feature_check
+        let mut consts: Vec<(String, String)> = FEATURE_CHECK
             .lines()
             .map(str::trim)
             .filter(|line| line.starts_with('"') && line.contains("=>"))
