@@ -6,16 +6,18 @@ exposes it as `statusline_fn`), returning a `StatusLineDecl { command, padding }
 [instructions](Capability-Instructions), and unlike the five tree surfaces, it is not a file in the
 plugin tree — it is a declaration the host returns at runtime.
 
-**1 backend delivers it today.**
+**4 backends deliver it today**, through one shared slot renderer.
 
 | harness | how it arrives |
 |---|---|
 | claude | the `statusLine` key in `<config>/settings.json` (user) or `<project>/.claude/settings.json`, as `{"type":"command","command":…}` plus `padding` when declared |
+| qwen-code | `ui.statusLine` in the same `settings.json` its other surfaces use, both scopes. `type: "command"` is required there: anything else is silently read as a built-in preset and the declared command never runs |
+| antigravity-cli | the root `statusLine` key in `~/.gemini/antigravity-cli/settings.json`, **user scope only**. That harness has an on/off toggle of its own (`enabled`) which agentgear preserves rather than overrides |
+| droid | the root `statusLine` key in `~/.factory/settings.json` (user) or `<project>/.factory/settings.json`, plus droid's own `maxRows` cap so a composed two-row line is not clipped to one |
 
-Four other harnesses (`qwen-code`, `antigravity-cli`, `droid`, `copilot-cli`) have a
-command-based slot of their own; none is wired yet. The remaining twenty have no slot a host can
-own — where they look like they do, the setting is a curated list of built-in widget ids, not a
-command.
+`copilot-cli` has a command-based slot of the same shape and is not wired yet. The remaining twenty
+harnesses have no slot a host can own. Where they look like they do, the setting is a curated list
+of built-in widget ids rather than a command.
 
 ## The slot holds one value
 
@@ -31,6 +33,10 @@ that by stashing, not by refusing:
 - **Ownership is the command string.** Edit the `padding` on the host's line and the next
   `self_heal` puts it back (that is drift); replace the command and agentgear treats the slot as
   yours and stops touching it.
+- **A harness's own on/off switch is preserved, never overridden.** antigravity-cli's `enabled` is
+  the only one today. If you had switched your status line off before installing, it stays off:
+  agentgear will not flip a preference you set. `doctor` warns in that state instead of reporting a
+  clean install, so a bar that renders nothing is never silent.
 - Two agentgear hosts that both declare a status line will stack: the second stashes the first's
   command as "the original". Uninstalling both restores the first host's line, not what you had
   before either.
@@ -56,7 +62,10 @@ contributes nothing, so a broken command of theirs never blanks the host's own b
 
 Declare the command with [`${AGENTGEAR_CLIENT}`](Plugin-Tree#agentgear_client-per-harness-client-id)
 (`mytool statusline --client ${AGENTGEAR_CLIENT}`) and each backend expands it to its own id, so
-the host's subcommand knows which harness invoked it.
+the host's subcommand knows which harness invoked it. Once two or more of your declared agents can
+write a slot, leaving the token out is a [`doctor`](Doctor) warning: every harness would receive
+the same literal command, so your subcommand reads one backend's stashed line from all of them and
+either drops the user's own row or runs another harness's stashed command.
 
 ## See also
 

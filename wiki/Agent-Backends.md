@@ -46,7 +46,7 @@ instead of dropping features silently. The trait is unsealed: an external crate 
 `forget` is the teardown counterpart to `remove`, and defaults to doing nothing — which is right
 for any backend whose writes are all config-merge, since `remove` already takes those back.
 Implement it when a backend writes into a file the **user** owns and the tool does not carry, the
-way `claude` writes the [status line](Capability-Status-Line) slot in `settings.json`. Such a write
+way all four [status line](Capability-Status-Line) backends write their slot. Such a write
 outlives the tool's registry and the tool binary itself, so uninstall calls `forget` on every path
 (an undetected tool included) before clearing agentgear's marker, and a failure keeps that marker
 rather than dropping the only copy of what the write displaced.

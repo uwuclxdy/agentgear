@@ -36,7 +36,7 @@ The plugin surfaces, most-to-least widely hosted. "Hosts" counts backends that l
 | Agents | `agents/**/*.md` | 13 | [Agents](Capability-Agents) |
 | Skills | `skills/<name>/SKILL.md` | 13 | [Skills](Capability-Skills) |
 | Instructions | `PluginHost::instructions` (not a tree file) | 2 | [Instructions](Capability-Instructions) |
-| Status line | `PluginHost::statusline` (not a tree file) | 1 (`claude`) | [Status line](Capability-Status-Line) |
+| Status line | `PluginHost::statusline` (not a tree file) | 4 | [Status line](Capability-Status-Line) |
 
 Counts move as coverage lands; the linked page carries the exact per-harness list and the reason
 behind every skip.

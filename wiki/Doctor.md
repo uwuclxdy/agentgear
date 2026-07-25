@@ -4,11 +4,19 @@
 
 The report fans out over the host's configured agents. It opens with one shared check, then appends each agent's own checks. An agent the host declares but that is not installed on this machine contributes a single `not installed; skipped` line rather than a failure, the same way `install` and `self_heal` skip it.
 
-## Shared check
+## Shared checks
+
+These inspect the host's own authoring rather than any one agent's state, so they run once, before
+the fan-out.
 
 | check | passes when | on failure |
 |---|---|---|
 | host binary on PATH | the running executable's name resolves via PATH | install the binary into a PATH directory, so the plugin's hooks can invoke it |
+| status line client token | the declared status-line command carries `${AGENTGEAR_CLIENT}` | put the token in the command; each backend expands it to its own id |
+
+The second appears only when two or more of the host's declared agents can write a status-line slot
+and the command names no client. Warning, never a failure. Nothing to act on means no line at all,
+so a host with one status-line agent (or none) sees only the first row.
 
 ## Claude Code checks
 
@@ -28,7 +36,11 @@ sees exactly these plus the shared check above:
 Checks 5 to 7 need no `claude`, so they run even when Claude Code is absent. Check 7 exists only
 for a host that declares a [status line](Capability-Status-Line), and warns rather than fails when
 another tool holds the slot: it holds one value, so being displaced is a real state the user can
-see, not a broken install.
+see, not a broken install. Every other status-line backend appends the same check to its own slice
+below, worded against its own tool and settings file. One more warning arm reaches those: a slot
+agentgear owns sitting behind the tool's own off-switch (antigravity-cli's `enabled`) reports
+`[warn]` naming the switch and how to turn it back on. The install is correct and converged in that
+state; it simply renders nothing.
 
 On a zero-embed host (`embed = false`, github source) check 5 reports `github source; not applicable`, but check 6 still reads the baked tree and warns `could not read the embedded tree` on every run. That warning is the expected steady state for such a host today, not a break.
 
@@ -43,6 +55,7 @@ A detected config-merge backend contributes its own slice:
 | mcp server registered | the plugin's server sits under the tool's mcp key in that config |
 | mcp command on PATH | the server's bare command resolves on PATH |
 | translated files present | the commands/agents/hooks agentgear wrote for the tool are on disk |
+| status line installed | the tool's own status-line slot holds exactly the host's declared line (`qwen-code`, `antigravity-cli`, `droid`; only for a host that declares one) |
 
 codex reports its translated hooks as a warning: they sit inert in its config until a human trusts them through codex's `/hooks` TUI. kimi has no trust gate, so its hooks check reports ok.
 

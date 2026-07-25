@@ -134,13 +134,13 @@ a surface reaches it.
 Check these against the target plugin before promising a full migration. Each is an open item in
 `docs/todo.md`; some in depth in `docs/fox-nyactx-integration.md`.
 
-- **statusLine past Claude Code.** On CC this is no longer a gap but a migration step: declare the
-  line with `statusline_fn` and delete the hand-rolled `settings.json` writer (see the table
-  above). The declaration is harness-agnostic, but only the `claude` backend writes a slot today.
-  Four others have one (qwen-code, antigravity-cli, droid, copilot-cli) and none is wired, so a
-  plugin that needs its line there still has nowhere to put it. Any *other* settings key
-  outside the plugin tree is unmodeled: the components IR carries five surfaces (mcp servers,
-  hooks, commands, agents, skills) and nothing else reaches a harness's own settings file.
+- **statusLine past the four wired backends.** On CC this is no longer a gap but a migration step:
+  declare the line with `statusline_fn` and delete the hand-rolled `settings.json` writer (see the
+  table above). One declaration now reaches four harnesses: `claude`, `qwen-code`,
+  `antigravity-cli` (user scope only), `droid`. `copilot-cli` has a slot of the same shape and is
+  not wired, so a plugin that needs its line there still has nowhere to put it. Any *other*
+  settings key outside the plugin tree is unmodeled: the components IR carries five surfaces (mcp
+  servers, hooks, commands, agents, skills) and nothing else reaches a harness's own settings file.
 - **codex `notify` hooks / opencode hooks.** agentgear's codex backend writes `hooks.json`, which
   stays inert until the user trusts it via codex's `/hooks` TUI; opencode has no declarative hook
   surface at all (in-process JS/TS plugin only). A plugin relying on either (raawr) cannot fully

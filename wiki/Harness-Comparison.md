@@ -61,11 +61,10 @@ tree, so neither rides the components IR:
 - **instructions** (`PluginHost::instructions`, always-loaded guidance text). Only `opencode`
   writes it today, a dedicated file registered in its `instructions[]` array; `claude` receives
   the same text through the MCP `initialize.instructions` field instead.
-- **status line** (`PluginHost::statusline`). Only `claude` writes it, into the single `statusLine`
-  slot in the user's `settings.json`. That slot holds one value, so agentgear stashes whatever it
-  displaces and restores it on uninstall. Four harnesses have a slot of their own (`qwen-code`,
-  `antigravity-cli`, `droid`, `copilot-cli`); none is wired. Full rule:
-  [Status line](Capability-Status-Line).
+- **status line** (`PluginHost::statusline`). Four backends write it into their tool's own single
+  slot: `claude`, `qwen-code`, `antigravity-cli` (user scope only), `droid`. That slot holds one
+  value, so agentgear stashes whatever it displaces and restores it on uninstall. `copilot-cli` has
+  a slot of the same shape and is not wired. Full rule: [Status line](Capability-Status-Line).
 
 ## Config locations
 
@@ -81,14 +80,14 @@ tree.
 | copilot-cli | `~/.copilot/installed-plugins/<mkt>/<plugin>/` (via `copilot plugin`; native, whole tree copied) |
 | amp | `~/.config/amp/settings.json` |
 | antigravity | `~/.gemini/config/mcp_config.json` |
-| antigravity-cli | `~/.gemini/config/` (`mcp_config.json`, `hooks.json`) |
+| antigravity-cli | `~/.gemini/config/` (`mcp_config.json`, `hooks.json`); `~/.gemini/antigravity-cli/settings.json` for a declared status line |
 | augment | `~/.augment/settings.json` |
 | cline | `~/.cline/data/settings/cline_mcp_settings.json` (mcp); `~/Documents/Cline/` (hooks, workflows) |
 | codex | `~/.codex/config.toml` |
 | crush | `~/.config/crush/crush.json` |
 | cursor | `~/.cursor/mcp.json` |
 | devin | `~/.config/devin/config.json` |
-| droid | `~/.factory/` (`mcp.json`, `hooks.json`, `commands/`, `droids/`) |
+| droid | `~/.factory/` (`mcp.json`, `hooks.json`, `commands/`, `droids/`, `settings.json` for a declared status line) |
 | gemini | `~/.gemini/settings.json` |
 | goose | `~/.config/goose/config.yaml` (mcp); `~/.agents/plugins/<plugin>/` (hooks, skills) |
 | jetbrains-copilot | `<config>/github-copilot/intellij/mcp.json` |
