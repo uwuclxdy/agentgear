@@ -293,8 +293,10 @@ fn reconcile_mcp(config: &Path, servers: &[McpServer], reenable: bool) -> Result
 }
 
 /// Remove exactly our extension keys under `extensions`, leaving others.
-/// Conservatively leaves an emptied `extensions` mapping in place rather than
-/// dropping the file (a user may have unrelated top-level keys/comments).
+///
+/// The file stays because a user may have unrelated top-level keys or comments. The
+/// emptied `extensions` mapping staying is a known gap rather than that same policy:
+/// the json path prunes a container its own removal emptied, and yaml has no twin yet.
 fn remove_mcp(config: &Path, names: &[&str]) -> Result<bool> {
     if !config.exists() || names.is_empty() {
         return Ok(false);

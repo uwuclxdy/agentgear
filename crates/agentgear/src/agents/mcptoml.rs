@@ -100,7 +100,10 @@ pub(crate) fn probe_surface(path: &Path, servers: &[McpServer]) -> Result<Option
 }
 
 /// Remove exactly our server keys from `[mcp_servers]`, leaving others.
-/// Conservatively leaves an emptied table in place rather than dropping the file.
+///
+/// Known gap, not a policy: the table is implicit, so emptying it renders to nothing
+/// and a file that held only our servers is left 0 bytes. The json path drops such a
+/// file; doing the same here waits on proving a delete cannot cost a user's comments.
 pub(crate) fn remove(path: &Path, names: &[&str]) -> Result<Outcome> {
     if !path.exists() || names.is_empty() {
         return Ok(Outcome::NoOp);
