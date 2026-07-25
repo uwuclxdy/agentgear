@@ -645,3 +645,42 @@ fn qwen_code_uninstall_leaves_a_user_owned_empty_hook_group_alone() {
     let after: Value = serde_json::from_str(&env.settings()).unwrap();
     assert_eq!(after, seed, "a hook group the user had empty is theirs, not ours to sweep");
 }
+
+#[test]
+fn qwen_code_uninstall_strips_only_our_handler_from_a_shared_group() {
+    // The over-removal direction, which every other test here leaves open: they all
+    // check that something the user owns SURVIVES a removal that took nothing, while
+    // this one checks a removal that genuinely fires takes only its own handler. Our
+    // reconcile always appends a fresh group, so the only way into this state is a user
+    // consolidating both into one — which the group-level retain must then leave alone,
+    // since it still holds a handler of theirs.
+    let env = Env::new("shared-group");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "qwen-code"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    // Move our SessionStart handler into the user's own group, the way a user tidying
+    // their config by hand would. Reading it back rather than hardcoding it keeps this
+    // honest if the fixture's command ever changes.
+    let mut root: Value = serde_json::from_str(&env.settings()).unwrap();
+    let groups = root["hooks"]["SessionStart"].as_array_mut().unwrap();
+    let ours_idx = groups
+        .iter()
+        .position(|g| g["hooks"][0]["command"].as_str().is_some_and(|c| c != "their-startup-hook.sh"))
+        .expect("install must have appended a SessionStart group of ours");
+    let our_handler = groups.remove(ours_idx)["hooks"][0].clone();
+    let theirs = groups.iter_mut().find(|g| g["hooks"][0]["command"] == "their-startup-hook.sh").unwrap();
+    theirs["hooks"].as_array_mut().unwrap().push(our_handler.clone());
+    fs::write(env.settings_path(), serde_json::to_string_pretty(&root).unwrap()).unwrap();
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall errored: {out}");
+
+    let after: Value = serde_json::from_str(&env.settings()).unwrap();
+    assert_eq!(
+        after["hooks"]["SessionStart"],
+        json!([{ "hooks": [ { "type": "command", "command": "their-startup-hook.sh" } ] }]),
+        "a group still holding a handler of theirs must survive with exactly that handler left"
+    );
+    assert!(!env.settings().contains(our_handler["command"].as_str().unwrap()), "our handler survived inside the shared group");
+}
