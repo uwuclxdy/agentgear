@@ -248,9 +248,6 @@ fn is_plugin_json(rel: &str) -> bool {
 /// Flatten a non-github source to `(rel-path, bytes)` entries for the components
 /// IR (`Embedded` -> the baked blob, `Path` -> the on-disk tree). GitHub is not a
 /// materializable local tree for non-CC backends in v1.
-///
-/// `allow(dead_code)`: wired by the per-harness backends + doctor in pass B.
-#[allow(dead_code)]
 pub(crate) fn entries_for(plugin: &Plugin, source: &crate::host::Source) -> Result<Vec<(String, Vec<u8>)>> {
     use crate::host::Source;
     match source {

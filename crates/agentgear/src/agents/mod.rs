@@ -14,9 +14,7 @@ pub(crate) mod claude;
 
 #[cfg(feature = "codex")]
 pub(crate) mod codex;
-// `allow(dead_code)`: the codex backend wires this renderer in pass B.
 #[cfg(feature = "codex")]
-#[allow(dead_code)]
 pub(crate) mod mcptoml;
 
 #[cfg(feature = "amp")]
