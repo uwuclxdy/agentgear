@@ -100,7 +100,10 @@ jobs:
           echo "checking $(printf '%s\n' "$feats" | wc -l) agent features alone"
           for feat in $feats; do
             echo "::group::feature: $feat"
-            cargo check -p agentgear --no-default-features --features "$feat" || status=1
+            # `--all-targets` because the unit bodies are `#[path]`-linked
+            # `#[cfg(test)]` mods: without it a stale gate on one of those is
+            # invisible here, which is where one already survived this leg.
+            cargo check -p agentgear --all-targets --no-default-features --features "$feat" || status=1
             echo "::endgroup::"
           done
           exit "$status"
