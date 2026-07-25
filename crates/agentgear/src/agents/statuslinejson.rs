@@ -145,11 +145,19 @@ pub(crate) fn reconcile(
         return Ok(false);
     };
 
-    // Stash BEFORE writing: the write is irreversible, so recording what it displaced
-    // only afterwards loses the user's value outright when the marker write fails
-    // (ENOSPC, EPERM) or the process dies between the two. An empty slot writes no
-    // stash at all, so "user deletes our line, self_heal re-adds it" cannot erase
-    // what they had before we ever wrote.
+    // Stash BEFORE writing, in both senses — and only one of them is defended by a
+    // test, so keep them apart when editing this:
+    //
+    // - the READ must precede the write. Afterwards the slot reads as ours, `is_ours`
+    //   is true, and nothing is ever stashed, so the restore has nothing to put back.
+    //   Moving this block below `json_edit` reds most of the claude suite.
+    // - the marker WRITE landing before the settings write is the crash window: an
+    //   ENOSPC/EPERM/kill between the two loses the user's value outright. Hoisting
+    //   only the read and stashing afterwards is invisible to every test, so nothing
+    //   but this comment holds it.
+    //
+    // An empty slot writes no stash at all, so "user deletes our line, self_heal
+    // re-adds it" cannot erase what they had before we ever wrote.
     if let Some(existing) = read_settings(path)?.and_then(|root| value_at(&root, key_path).cloned())
         && !is_ours(&existing, &our_command, shape)
     {

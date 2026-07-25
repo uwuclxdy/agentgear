@@ -329,6 +329,28 @@ fn qwen_code_statusline_full_lifecycle() {
 }
 
 #[test]
+fn qwen_code_teardown_with_nothing_installed_writes_nothing() {
+    // The non-creating container guard. `ui.statusLine` is nested, so `remove` and
+    // `forget` have to walk INTO `ui` — and the creating walker would leave an empty
+    // `"ui": {}` behind in a file the USER owns, on a teardown that had nothing to
+    // undo, flipping that agent's row from `NoOp` to `Removed` with it. Writing into a
+    // user-owned file with nothing to undo is the one thing this surface exists never
+    // to do.
+    //
+    // Reachable: a plugin installed at project scope only, or any user-scope uninstall
+    // on a machine where it was never installed. claude cannot cover it — its
+    // container path is `[]`, which always resolves — so the pin has to live here.
+    // The seed deliberately has no `ui` key.
+    let env = Env::new("no-ui-teardown");
+    let before = env.settings();
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall errored with nothing installed: {out}");
+    assert_eq!(out, "NoOp", "a teardown with nothing of ours to undo must report no change, got {out}");
+    assert_eq!(env.settings(), before, "teardown wrote into a settings file it had nothing to undo in:\n{}", env.settings());
+}
+
+#[test]
 fn qwen_code_statusline_stash_survives_a_declaration_change() {
     // The failure this pins: ownership decided by whole-value equality reads our OWN
     // previous rendering as "the user's original" the moment a release changes what we
