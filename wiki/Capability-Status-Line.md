@@ -29,7 +29,9 @@ that by stashing, not by refusing:
 - **Install** copies the existing value into agentgear's own marker file, verbatim, before writing
   the host's command. An empty slot stashes nothing.
 - **Uninstall** restores the stash exactly, or deletes the key when there was nothing to restore.
-  A slot whose command is no longer the host's is left untouched: someone else owns it now.
+  A settings file agentgear created and then emptied by taking its own key back goes too; a file
+  holding anything else of yours stays. A slot whose command is no longer the host's is left
+  untouched: someone else owns it now.
 - **Ownership is the command string.** Edit the `padding` on the host's line and the next
   `self_heal` puts it back (that is drift); replace the command and agentgear treats the slot as
   yours and stops touching it.

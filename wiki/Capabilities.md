@@ -62,7 +62,9 @@ Uniform across all 23 config-merge backends, regardless of capability:
   overwritten.
 - **Idempotent.** A second reconcile with no drift writes zero bytes and reports `NoOp`.
 - **Symmetric remove.** `remove` deletes exactly what `reconcile` wrote and leaves the rest,
-  including a retired-path sweep that only deletes tag-owned files.
+  including a retired-path sweep that only deletes tag-owned files. That covers shape as well as
+  keys: a container our own keys emptied is taken back, and a config file left holding nothing goes
+  with it. A container you were already keeping empty is measured as yours and survives.
 - **Never resurrect / re-enable.** A user who deletes or disables an entry keeps it that way; only an
   explicit `install`/`update` re-enables.
 

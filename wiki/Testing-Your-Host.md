@@ -124,7 +124,8 @@ fn gemini_lifecycle() {
 ```
 
 The assertions that carry the weight: our entries landed, and the seeded foreign entries survived
-both directions. A repeat `setup` reporting `NoOp` covers a third thing for free, since the backend
+both directions. Seed before install, not after: `remove` prunes a container our own keys emptied
+and deletes a config file left holding nothing, so an unseeded fixture has no file to read back. A repeat `setup` reporting `NoOp` covers a third thing for free, since the backend
 has to read the written file back to compare it.
 
 ## What each redirect covers

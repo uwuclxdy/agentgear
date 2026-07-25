@@ -8,8 +8,10 @@ own correctness; this leg owns "the real CLI accepts it".
 ## run
 
 ```sh
-crates/host-fixture/tests/docker/run.sh <codex|opencode|gemini|cursor|cline|devin>
+crates/host-fixture/tests/docker/run.sh <harness>
 ```
+
+`<harness>` is any dir here holding a `Dockerfile` (19 today).
 
 `run.sh` builds `<harness>/Dockerfile` (context = repo root) and runs it; a nonzero
 container exit fails the leg. It needs Docker with the buildx plugin (the Dockerfiles
@@ -24,11 +26,12 @@ owned by that harness's workflow, disjoint from every other file:
    copy `host_fixture` in, put it on `PATH`.
 3. run `host_fixture setup --agent <harness>` — installs only that backend, so no
    `claude` is needed in the image.
-4. **assert present**: native `mcp list` where auth-free (codex/opencode/gemini/
-   devin) or parse the written config file (cursor/cline). the `ez-fixture` server
-   must be listed.
+4. **assert present**: native `mcp list` where the CLI is auth-free, else parse the
+   written config file. the `ez-fixture` server must be listed.
 5. run `host_fixture uninstall`, then **assert gone**: the server is removed and any
-   pre-seeded unrelated user entry survived.
+   pre-seeded unrelated user entry survived. seed that entry before `setup`: removal
+   prunes a container our own keys emptied and deletes a config file left holding
+   nothing, so an unseeded leg has no file left to parse.
 6. exit nonzero on any failed assertion.
 
 ## notes
