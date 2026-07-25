@@ -96,7 +96,7 @@ impl AgentBackend for QwenCodeBackend {
         // identical bytes.
         let comp = plugin.components(source)?.with_client(self.id());
         let base = qwen_dir(scope)?;
-        let settings = base.join("settings.json");
+        let settings = settings_file(scope)?;
         let mcp = mcpjson::probe_surface(&settings, &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let hooks = report::probe_json_entries(&settings, &hook_entries(&comp.hooks))?;
         let cmd_root = base.join("commands").join(plugin.name);
@@ -126,7 +126,7 @@ impl AgentBackend for QwenCodeBackend {
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?.with_client(self.id());
         let base = qwen_dir(scope)?;
-        let settings = base.join("settings.json");
+        let settings = settings_file(scope)?;
 
         let mut changed = false;
         changed |= mcpjson::reconcile(&settings, &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
@@ -152,7 +152,7 @@ impl AgentBackend for QwenCodeBackend {
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
         let comp = plugin.components(source)?.with_client(self.id());
         let base = qwen_dir(scope)?;
-        let settings = base.join("settings.json");
+        let settings = settings_file(scope)?;
 
         let mut changed = false;
         changed |= mcpjson::remove(&settings, &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
@@ -217,12 +217,17 @@ fn qwen_dir(scope: &Scope) -> Result<PathBuf> {
     }
 }
 
+/// `<base>/settings.json` for `scope` — the one file both the slot lifecycle and the
+/// doctor check must agree on, so it is resolved here once rather than joined
+/// independently at each call site.
+fn settings_file(scope: &Scope) -> Result<PathBuf> {
+    Ok(qwen_dir(scope)?.join("settings.json"))
+}
+
 /// The settings file the slot lifecycle writes, or `None` when the host declares no
-/// status line. Only `forget` needs it: the other three lifecycle methods already
-/// resolve the config base for their own surfaces, while `forget` touches nothing
-/// else and must not fail a teardown over a config-dir lookup it has no use for.
+/// status line.
 fn statusline_target(plugin: &Plugin, scope: &Scope) -> Result<Option<PathBuf>> {
-    statuslinejson::target(plugin, QwenCodeBackend.id(), STATUSLINE_SHAPE, || Ok(qwen_dir(scope)?.join("settings.json")))
+    statuslinejson::target(plugin, QwenCodeBackend.id(), STATUSLINE_SHAPE, || settings_file(scope))
 }
 
 // --- hooks -------------------------------------------------------------------
@@ -377,7 +382,13 @@ fn report_checks(backend: &QwenCodeBackend, plugin: &Plugin, source: &Source) ->
             return checks;
         }
     };
-    let settings = base.join("settings.json");
+    let settings = match settings_file(&Scope::User) {
+        Ok(settings) => settings,
+        Err(e) => {
+            checks.push(DoctorCheck { name: "settings file", status: CheckStatus::Warn(e.to_string()) });
+            return checks;
+        }
+    };
 
     let root = report::read_json_config(&mut checks, "settings file", &settings);
 

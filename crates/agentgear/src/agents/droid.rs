@@ -63,11 +63,18 @@ const STATUSLINE_MAX_ROWS: u8 = 3;
 /// it — so droid reuses `TypedCommand` rather than earning a variant of its own.
 const STATUSLINE_SHAPE: SlotShape = SlotShape::typed_command().with_max_rows(STATUSLINE_MAX_ROWS);
 
+/// `<base>/settings.json` for `scope` — the one file both the slot lifecycle and the
+/// doctor check must agree on, so it is resolved here once rather than joined
+/// independently at each call site.
+fn settings_file(scope: &Scope) -> Result<PathBuf> {
+    Ok(factory_dir(scope)?.join("settings.json"))
+}
+
 /// The settings file the slot lives in, or `None` when the host declares no status
 /// line. Both scopes are real, so this resolves through the backend's own existing
 /// config-base resolver rather than a second copy of it.
 fn statusline_target(plugin: &Plugin, scope: &Scope) -> Result<Option<PathBuf>> {
-    statuslinejson::target(plugin, DroidBackend.id(), STATUSLINE_SHAPE, || Ok(factory_dir(scope)?.join("settings.json")))
+    statuslinejson::target(plugin, DroidBackend.id(), STATUSLINE_SHAPE, || settings_file(scope))
 }
 
 impl AgentBackend for DroidBackend {
@@ -384,7 +391,7 @@ fn report_checks(backend: &DroidBackend, plugin: &Plugin, source: &Source) -> Ve
     checks.push(check_docs_present("commands", "commands/", &comp.commands, plugin.name, &base));
     checks.push(check_docs_present("droids", "agents/", &comp.agents, plugin.name, &base));
     // Absent entirely for a host that declares no status line.
-    checks.extend(statuslinejson::check(Ok(base.join("settings.json")), STATUSLINE_SLOT, plugin, backend.id(), STATUSLINE_SHAPE, "droid"));
+    checks.extend(statuslinejson::check(settings_file(&Scope::User), STATUSLINE_SLOT, plugin, backend.id(), STATUSLINE_SHAPE, "droid"));
 
     checks
 }
