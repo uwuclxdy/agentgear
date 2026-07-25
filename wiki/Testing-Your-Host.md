@@ -124,9 +124,11 @@ fn gemini_lifecycle() {
 ```
 
 The assertions that carry the weight: our entries landed, and the seeded foreign entries survived
-both directions. Seed before install, not after: `remove` prunes a container our own keys emptied
-and deletes a config file left holding nothing, so an unseeded fixture has no file to read back. A repeat `setup` reporting `NoOp` covers a third thing for free, since the backend
-has to read the written file back to compare it.
+both directions. Seed before install, not after: `remove` prunes a container our own keys emptied,
+and on a json config it deletes a file left holding nothing, so an unseeded fixture may have no
+file to read back. A yaml config keeps its file either way, since the editor cannot preserve comments
+and dropping the file would risk more than an empty one costs. A repeat `setup` reporting `NoOp`
+covers a third thing for free, since the backend has to read the written file back to compare it.
 
 ## What each redirect covers
 
