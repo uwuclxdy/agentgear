@@ -598,3 +598,50 @@ fn qwen_code_uninstall_drops_a_settings_file_it_authored() {
     assert!(ok && out == "Removed", "uninstall failed: {out}");
     assert!(!env.settings_path().exists(), "uninstall orphaned a settings file it authored:\n{}", env.settings());
 }
+
+#[test]
+fn qwen_code_uninstall_leaves_a_user_owned_empty_event_array_alone() {
+    // One level below the container prune, same rule: a hook removal sweeps every
+    // EMPTY event array, not the ones it emptied, so a user's own empty array under an
+    // event we never write to reads as ours to drop. That cascades — `hooks` empties,
+    // the container prune takes it, the root empties, and the file goes with a key of
+    // theirs still nominally in it.
+    const SEED: &str = r#"{
+  "hooks": { "CustomEvent": [] }
+}
+"#;
+    let env = Env::seeded("user-empty-event", ".qwen", SEED);
+    let seed: Value = serde_json::from_str(SEED).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "qwen-code"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall errored: {out}");
+    assert!(env.settings_path().exists(), "uninstall deleted a settings file holding a key of the user's");
+    let after: Value = serde_json::from_str(&env.settings()).unwrap();
+    assert_eq!(after, seed, "an event array the user had empty is theirs, not ours to sweep");
+}
+
+#[test]
+fn qwen_code_uninstall_leaves_a_user_owned_empty_hook_group_alone() {
+    // The same rule one level deeper still, and reachable under an event we DO manage:
+    // a user group whose handler array is already empty is swept by the blanket group
+    // retain, which then empties the event array, the `hooks` container, and the file.
+    // Their `matcher` is the proof it was a group of theirs and not a husk of ours.
+    const SEED: &str = r#"{
+  "hooks": { "SessionStart": [ { "matcher": "mine", "hooks": [] } ] }
+}
+"#;
+    let env = Env::seeded("user-empty-group", ".qwen", SEED);
+    let seed: Value = serde_json::from_str(SEED).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "qwen-code"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall errored: {out}");
+    assert!(env.settings_path().exists(), "uninstall deleted a settings file holding a group of the user's");
+    let after: Value = serde_json::from_str(&env.settings()).unwrap();
+    assert_eq!(after, seed, "a hook group the user had empty is theirs, not ours to sweep");
+}

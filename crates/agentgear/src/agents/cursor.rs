@@ -282,8 +282,10 @@ fn reconcile_hooks(path: &Path, hooks: &[HookBinding]) -> Result<bool> {
 }
 
 /// Strip exactly our hook entries (matched by command string) from every event,
-/// dropping an event array we emptied. A user entry sharing an event with ours
-/// survives; the file itself is left in place (merge-safe, like the mcp file).
+/// dropping only an event array OUR removal emptied. A user entry sharing an event
+/// with ours survives, and so does an event array they already had empty. Cursor's
+/// entries sit directly in the event array (no CC group wrapper), so this is
+/// [`super::cchooks::remove_hook_groups`]'s rule with one level instead of two.
 fn remove_hooks(path: &Path, hooks: &[HookBinding]) -> Result<bool> {
     if !path.exists() {
         return Ok(false);
@@ -291,12 +293,14 @@ fn remove_hooks(path: &Path, hooks: &[HookBinding]) -> Result<bool> {
     let ours: BTreeSet<&str> = hooks.iter().filter(|h| hook_is_portable(h)).map(|h| h.command.as_str()).collect();
     json_remove(path, |root| {
         json_prune_obj(root, &["hooks"], |events| {
-            for list in events.values_mut() {
-                if let Some(arr) = list.as_array_mut() {
-                    arr.retain(|e| e.get("command").and_then(Value::as_str).is_none_or(|c| !ours.contains(c)));
+            events.retain(|_, list| {
+                let Some(arr) = list.as_array_mut() else { return true };
+                if arr.is_empty() {
+                    return true;
                 }
-            }
-            events.retain(|_, list| list.as_array().is_none_or(|a| !a.is_empty()));
+                arr.retain(|e| e.get("command").and_then(Value::as_str).is_none_or(|c| !ours.contains(c)));
+                !arr.is_empty()
+            });
             Ok(())
         })
         .map(|_| ())

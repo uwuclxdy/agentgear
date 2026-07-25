@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::cchooks::{hook_is_portable, render_hook_group};
+use super::cchooks::{hook_is_portable, remove_hook_groups, render_hook_group};
 use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem, yaml_scalar};
 use super::mcpjson::{self, ServerShape};
 use super::report;
@@ -270,16 +270,7 @@ fn remove_from_settings(settings: &Path, server_names: &[&str], hooks: &[HookBin
             Ok(())
         })?;
         json_prune_obj(root, &["hooks"], |events| {
-            for groups in events.values_mut() {
-                let Some(list) = groups.as_array_mut() else { continue };
-                for group in list.iter_mut() {
-                    if let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) {
-                        handlers.retain(|h| h.get("command").and_then(Value::as_str).is_none_or(|c| !ours.contains(c)));
-                    }
-                }
-                list.retain(|group| group.get("hooks").and_then(Value::as_array).is_none_or(|h| !h.is_empty()));
-            }
-            events.retain(|_, groups| groups.as_array().is_none_or(|a| !a.is_empty()));
+            remove_hook_groups(events, &ours);
             Ok(())
         })?;
         Ok(())

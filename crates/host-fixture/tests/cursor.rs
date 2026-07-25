@@ -314,3 +314,28 @@ fn cursor_full_lifecycle() {
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.mcp().contains("ez-fixture"), "re-install did not re-add our server");
 }
+
+#[test]
+fn cursor_uninstall_leaves_a_user_owned_empty_event_array_alone() {
+    // Cursor's entries sit directly in the event array, so it carries the one-level
+    // form of the same ownership rule: an event array the user already had empty is
+    // theirs. Sweeping every empty one deletes a key they wrote. `version` keeps this
+    // root non-empty, so unlike the qwen arm the file survives either way — the key is
+    // the whole assertion.
+    const SEED: &str = r#"{
+  "version": 1,
+  "hooks": { "customEvent": [] }
+}
+"#;
+    let env = Env::new("user-empty-event");
+    fs::write(env.cursor.join("hooks.json"), SEED).unwrap();
+    let seed: serde_json::Value = serde_json::from_str(SEED).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "cursor"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall errored: {out}");
+    let after: serde_json::Value = serde_json::from_str(&env.hooks()).unwrap();
+    assert_eq!(after, seed, "an event array the user had empty is theirs, not ours to sweep");
+}
