@@ -9,6 +9,11 @@
 //! `remove` is an exact single-key delete. Commands/agents/skills/rules are
 //! skipped — MCP is the only surface backed by an official-Google source, so the
 //! rest is left out per the research brief (see `docs/harness/antigravity-cli.md`).
+//!
+//! One more surface sits outside that customization root entirely: the host-owned
+//! status line, in the CLI's OWN `~/.gemini/antigravity-cli/settings.json`. It runs
+//! the shared [`super::statuslinejson`] slot lifecycle (stash-before-write,
+//! restore-on-remove, ownership by command string), and it is USER SCOPE ONLY.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -20,6 +25,7 @@ use super::cchooks::hook_is_portable;
 use super::confedit::json_edit;
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
+use super::statuslinejson::{self, SlotShape};
 use super::{AgentBackend, BackendState};
 use crate::components::HookBinding;
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -32,6 +38,24 @@ pub(crate) struct AntigravityCliBackend;
 /// stdio (`command`) or SSE (`{serverUrl}`); a `type`/`url` key — or any http
 /// server — voids the whole file, so http is skipped outright.
 const SHAPE: ServerShape = ServerShape::plain().with_remote(RemoteShape::ServerUrlSseOnly);
+
+/// The slot is a root-level `statusLine` key, documented at
+/// <https://antigravity.google/docs/cli/statusline>.
+const STATUSLINE_SLOT: &[&str] = &["statusLine"];
+
+/// CC's body, unchanged. `agy` 1.1.6 persists exactly `type`/`command`/`enabled`/
+/// `padding` and DROPS every other key on its next rewrite (`maxRows`,
+/// `refreshInterval`, anything unknown), so `TypedCommand` is already the whole of
+/// what this harness stores.
+///
+/// `enabled` is deliberately never written, in either direction. It is a tri-state
+/// bool persisting the user's own `/statusline off` toggle in a file they own, and
+/// that `enabled:false` suppresses a configured command at render time is inferred
+/// from a binary string, not observed. The whole-value stash round-trips theirs on
+/// uninstall either way, so nothing of theirs is lost. Consequence: a user who had
+/// their status line toggled OFF sees our install do nothing visible until they run
+/// `/statusline on` (`docs/research/statusline-survey.md` §2).
+const STATUSLINE_SHAPE: SlotShape = SlotShape::typed_command();
 
 impl AgentBackend for AntigravityCliBackend {
     fn id(&self) -> &'static str {
@@ -57,7 +81,7 @@ impl AgentBackend for AntigravityCliBackend {
             agents: false,
             skills: false,
             instructions: false,
-            statusline: false,
+            statusline: true,
             scopes: &["user", "project"],
         }
     }
@@ -72,7 +96,14 @@ impl AgentBackend for AntigravityCliBackend {
         let comp = plugin.components(source)?.with_client(self.id());
         let mcp = mcpjson::probe_surface(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let hooks = probe_hooks(&hooks_path(scope)?, plugin.name, render_hook_tree(&comp.hooks))?;
-        Ok(report::compose([mcp, hooks].into_iter().flatten()))
+        // The slot cannot carry presence on its own: a foreign line reads `Absent`
+        // (`statuslinejson::state`), so a plugin the user removed stays `Absent` here
+        // instead of handing self_heal's adopt row a reason to reinstall it.
+        let statusline = match statusline_target(plugin, scope)? {
+            Some(path) => statuslinejson::state(&path, STATUSLINE_SLOT, plugin, self.id(), STATUSLINE_SHAPE)?,
+            None => None,
+        };
+        Ok(report::compose([mcp, hooks, statusline].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -84,6 +115,9 @@ impl AgentBackend for AntigravityCliBackend {
         if let Some(retired) = retired_hooks_path(scope)? {
             changed |= remove_hooks(&retired, plugin.name)?;
         }
+        if let Some(path) = statusline_target(plugin, scope)? {
+            changed |= statuslinejson::reconcile(&path, STATUSLINE_SLOT, plugin, &desired.source, scope, self.id(), STATUSLINE_SHAPE)?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -93,7 +127,23 @@ impl AgentBackend for AntigravityCliBackend {
         let mut changed = false;
         changed |= mcpjson::remove(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= remove_hooks(&hooks_path(scope)?, plugin.name)?;
+        // Exact-remove for a slot means RESTORE: put back what our write displaced.
+        if let Some(path) = statusline_target(plugin, scope)? {
+            changed |= statuslinejson::remove(&path, STATUSLINE_SLOT, plugin, scope, self.id(), STATUSLINE_SHAPE)?;
+        }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
+    }
+
+    /// The slot lives in a file the USER owns, outside every customization root this
+    /// backend writes, so it has to go back on every teardown branch that reaches the
+    /// marker clear — the skips included, since the marker is the only copy of what we
+    /// displaced. Project scope is one of those branches and is a no-op here: the slot
+    /// is user-scope only, so there is nothing of ours in a project tree to undo.
+    fn forget(&self, plugin: &Plugin, scope: &Scope) -> Result<()> {
+        let Some(path) = statusline_target(plugin, scope)? else {
+            return Ok(());
+        };
+        statuslinejson::remove(&path, STATUSLINE_SLOT, plugin, scope, self.id(), STATUSLINE_SHAPE).map(|_| ())
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {
@@ -145,6 +195,27 @@ fn retired_hooks_path(scope: &Scope) -> Result<Option<PathBuf>> {
         Scope::User => Ok(Some(gemini_home()?.join("antigravity-cli").join("hooks.json"))),
         Scope::Project { .. } => Ok(None),
     }
+}
+
+/// The CLI's OWN settings file — `~/.gemini/antigravity-cli/settings.json`, NOT the
+/// shared `~/.gemini/config/` customization root every other surface here writes to.
+/// Both paths are real and they are different things: vendor docs and the 1.1.6 binary
+/// agree this one holds the CLI's settings profile.
+fn statusline_file() -> Result<PathBuf> {
+    Ok(gemini_home()?.join("antigravity-cli").join("settings.json"))
+}
+
+/// The settings file the slot lifecycle writes, or `None` when there is nothing to
+/// write: the host declares no status line, or the scope is project.
+///
+/// USER SCOPE ONLY. A project-scope `settings.json` was neither read nor rewritten by
+/// the 1.1.6 binary while the user-scope one was normalized in the same run, so a
+/// project slot write would be inert config in someone's repo.
+fn statusline_target(plugin: &Plugin, scope: &Scope) -> Result<Option<PathBuf>> {
+    let Scope::User = scope else {
+        return Ok(None);
+    };
+    statuslinejson::target(plugin, AntigravityCliBackend.id(), STATUSLINE_SHAPE, statusline_file)
 }
 
 // --- hooks -------------------------------------------------------------------
@@ -356,6 +427,9 @@ fn report_checks(backend: &AntigravityCliBackend, plugin: &Plugin, source: &Sour
     ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_hooks_registered(plugin.name, &comp.hooks));
+    // Absent entirely for a host that declares no status line. User scope, matching
+    // the only scope the surface has.
+    checks.extend(statuslinejson::check(statusline_file(), STATUSLINE_SLOT, plugin, backend.id(), STATUSLINE_SHAPE, "antigravity-cli"));
 
     checks
 }
