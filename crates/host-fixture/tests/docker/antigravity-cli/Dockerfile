@@ -20,14 +20,66 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates bash jq \
     && rm -rf /var/lib/apt/lists/*
 
-# Auth-free install (Go binary, no npm). The install location isn't pinned by any
-# doc, so locate the dropped `agy` and put it on a standard PATH dir.
+# pin = the agy version the exact statusLine JSON shape below was asserted against; bump
+# it alongside docs/harness/antigravity-cli.md and re-check that assert. Unpinned, an
+# apt-layer invalidation moves the CLI mid-session with no reviewable change to this file
+# (1.1.3 -> 1.1.7 happened exactly that way).
+#
+# The vendor installer (https://antigravity.google/cli/install.sh) resolves its download
+# from a manifest endpoint serving the LATEST build only, and accepts no argument but
+# --dir, so there is nothing to pin THROUGH it and this carries the resolved artifact
+# instead. The GCS build-id suffix is not derivable from the version string, so the pin
+# has to be the whole URL. Re-derive all three fields from
+# https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json
+# which returns exactly {version, url, sha512}. Skipping the script also skips its
+# trailing `agy install` shell-rc handoff, which this leg never reads: the entrypoint
+# runs under its own HOME.
 RUN bash <<'SH'
+# -e, no fallback: an image that could not install the pinned CLI must fail the build
+# rather than run the asserts against whatever else it happened to get.
 set -euo pipefail
-curl -fsSL https://antigravity.google/cli/install.sh | bash
-agy_bin="$(command -v agy || find / -type f -name agy 2>/dev/null | head -n1)"
-if [ -z "$agy_bin" ]; then echo "FAIL: agy not found after install" >&2; exit 1; fi
-[ "$agy_bin" = /usr/local/bin/agy ] || ln -sf "$agy_bin" /usr/local/bin/agy
+version=1.1.7
+url=https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.7-5951805767680000/linux-x64/cli_linux_x64.tar.gz
+sha512=720d5a7ff256aa5dd6712513cd5eb6fe031cf9e7523a33bcbda7755120ced53bb64ff985b402ce068e5895e0ffb348c2632545039a1dde6daad591f164d5852f
+
+# linux-x64 only, by choice and not by oversight: the vendor script auto-detected every
+# platform, but a second pinned arch cannot be exercised by this project or by CI (both
+# are x86_64), so it would ship as an unverified claim that only ever fires on a machine
+# none of us can test on. Do NOT restore auto-detection to "fix" an arch failure here:
+# that silently unpins the leg again, which is the one thing this block exists to stop.
+# Adding a pinned arch arm beside x86_64 is the supported way.
+case "$(uname -m)" in
+    x86_64|amd64) ;;
+    *)
+        # Assume the reader has this message and nothing else: name the endpoint, the
+        # platform token shape, and the fields, since none of it is guessable. The arm64
+        # artifact sits under linux-arm/, not linux-arm64/, so the url cannot be derived
+        # by pattern from the x64 one -- it has to be read off the manifest.
+        echo "agy pin: this leg pins the linux-x64 artifact; $(uname -m) is not pinned." >&2
+        echo "  To add it, GET the manifest for your platform:" >&2
+        echo "    https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/<platform>.json" >&2
+        echo "  where <platform> looks like linux_arm64 / linux_amd64 / darwin_arm64." >&2
+        echo "  It returns {version, url, sha512}; copy all three into a new case arm" >&2
+        echo "  beside the x86_64 one above, setting the same three variables." >&2
+        exit 1
+        ;;
+esac
+
+# -f, so a 404 is an error here instead of an html page saved as the tarball.
+curl -fsSL -o /tmp/agy.tar.gz "$url" \
+    || { echo "agy pin: nothing served at $url; re-resolve the manifest and bump all three fields" >&2; exit 1; }
+echo "$sha512  /tmp/agy.tar.gz" | sha512sum -c --status \
+    || { echo "agy pin: sha512 mismatch, the pinned url no longer serves the pinned build" >&2; exit 1; }
+tar -xzf /tmp/agy.tar.gz -C /tmp antigravity
+install -m 0755 /tmp/antigravity /usr/local/bin/agy
+rm -f /tmp/agy.tar.gz /tmp/antigravity
+
+# The pin is only worth the line it is written on if the binary agrees with it.
+got="$(agy --version)"
+if [ "$got" != "$version" ]; then
+    echo "agy pin drift: binary reports '$got', this Dockerfile pins '$version'" >&2
+    exit 1
+fi
 SH
 
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
@@ -63,8 +115,9 @@ cat > "$SETTINGS" <<'JSON'
 { "theirSetting": "keep me" }
 JSON
 
-# Prove the real CLI installed (best-effort: some builds gate --version on nothing).
-agy --version || echo "note: agy --version unavailable; continuing with config-file assert"
+# Hard failure rather than best-effort: the build pins this binary and already made it
+# print its version, so a failure here is the CLI breaking under the leg's own HOME.
+agy --version || { echo "FAIL: agy --version errored under the leg HOME"; exit 1; }
 
 # Seed a foreign mcp server + an unrelated key that must survive install/uninstall.
 cat > "$MCP" <<'JSON'
@@ -97,8 +150,8 @@ fi
 # proves only that the slot landed in the right shape at the right path, not that agy
 # displays it. Deliberately ordered AFTER the two agy calls above: they leave this file
 # untouched today, so the day one of them starts normalizing settings.json and drops the
-# key, it reds right here. That red arrives on an unrelated rebuild rather than with a
-# reviewable bump, because this image installs agy unpinned (see the install above).
+# key, it reds right here. agy is version-pinned above, so that red now arrives with the
+# reviewable bump that moved it rather than on an unrelated rebuild.
 # Parsed rather than grepped: the value has to be at the ROOT of this file, and a
 # substring check cannot tell a root key from a nested one.
 #
