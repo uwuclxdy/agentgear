@@ -4,9 +4,10 @@
 //! slot. The disk half (stash, write, restore) needs a real data root, so it is
 //! covered by the host-fixture hermetic tests.
 
-use serde_json::json;
+use serde_json::{Value, json};
 
-use super::{SlotShape, is_ours, rendered};
+use super::{SlotShape, is_ours, rendered, state};
+use crate::agents::BackendState;
 use crate::host::Plugin;
 use crate::statusline::StatusLineDecl;
 
@@ -75,4 +76,49 @@ fn is_ours_matches_on_the_command_not_the_whole_object() {
     assert!(!is_ours(&json!({"type": "command", "command": "their-bar", "padding": 0}), ours, SHAPE));
     assert!(!is_ours(&json!({"type": "command"}), ours, SHAPE));
     assert!(!is_ours(&json!("their-bar"), ours, SHAPE));
+}
+
+// `state`'s carried comparison. This is the layer the drift loop is visible at: a
+// carried field missing from the convergence test makes `state` return `NeedsRepair`
+// forever, and self_heal reconciles on every pass — but the reconcile writes the same
+// bytes, so the OUTCOME stays `NoOp` and no lifecycle test can see it.
+
+const CARRY_SHAPE: SlotShape = SlotShape::typed_command().carrying(&["enabled"]);
+const SLOT: &[&str] = &["statusLine"];
+
+/// Write `slot` into a scratch settings file and classify it.
+fn state_of(slot: Value, shape: SlotShape) -> BackendState {
+    let dir = std::env::temp_dir().join(format!("ez-slotstate-{:016x}", fastrand::u64(..)));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let path = dir.join("settings.json");
+    std::fs::write(&path, serde_json::to_vec(&json!({ "statusLine": slot })).expect("json")).expect("write");
+    let plugin = plugin_with(Some(StatusLineDecl::new("mytool statusline").with_padding(0)));
+    let verdict = state(&path, SLOT, &plugin, "claude", shape).expect("state must classify");
+    let _ = std::fs::remove_dir_all(&dir);
+    verdict.expect("a declared status line always contributes a state")
+}
+
+#[test]
+fn a_carried_field_reads_as_converged_not_as_drift() {
+    // The user's `enabled` rides along in what we write, so the live slot legitimately
+    // carries a key our bare rendering does not. Compare against the bare rendering and
+    // this is `NeedsRepair` on every pass, forever.
+    let live = json!({"type": "command", "command": "mytool statusline", "padding": 0, "enabled": false});
+    assert!(matches!(state_of(live, CARRY_SHAPE), BackendState::Healthy), "a carried field must not read as drift");
+}
+
+#[test]
+fn drift_in_a_field_we_render_is_still_drift() {
+    // The carry must not swallow real drift: `padding` is ours to render, so a changed
+    // one is a repair even while `enabled` is carried.
+    let live = json!({"type": "command", "command": "mytool statusline", "padding": 9, "enabled": false});
+    assert!(matches!(state_of(live, CARRY_SHAPE), BackendState::NeedsRepair), "rendered-field drift must survive the carry");
+}
+
+#[test]
+fn an_uncarried_shape_reads_an_extra_key_as_drift() {
+    // The claude/qwen/droid shapes carry nothing, so an unexpected key IS drift there.
+    // Pins that `carrying` is opt-in rather than a blanket loosening of convergence.
+    let live = json!({"type": "command", "command": "mytool statusline", "padding": 0, "enabled": false});
+    assert!(matches!(state_of(live, SHAPE), BackendState::NeedsRepair), "an uncarried shape must still see an extra key as drift");
 }

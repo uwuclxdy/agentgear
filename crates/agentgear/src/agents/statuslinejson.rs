@@ -50,13 +50,29 @@ pub(crate) struct SlotShape {
     /// `max_rows`, because exactly one harness has the field and its right value is a
     /// property of that harness's renderer, not of the host's declaration.
     pub(crate) max_rows: Option<u8>,
+    /// Keys preserved VERBATIM off whatever is already in the slot, instead of being
+    /// rendered by us. A deliberate per-field carry inside an otherwise whole-value
+    /// write: the write replaces the object, so a field the harness owns and we do not
+    /// model is destroyed unless it is named here.
+    ///
+    /// For a field whose render-time meaning is unproven, preserving it is the only
+    /// move that is correct under every possible meaning — we do not interpret it, and
+    /// we never synthesize one that was not there.
+    pub(crate) carry: &'static [&'static str],
 }
 
 impl SlotShape {
     /// CC's `{"type":"command","command":…}` object, plus `padding` when the host
     /// declared one.
     pub(crate) const fn typed_command() -> Self {
-        Self { value: ValueShape::TypedCommand, max_rows: None }
+        Self { value: ValueShape::TypedCommand, max_rows: None, carry: &[] }
+    }
+
+    /// Preserve `keys` off the live value rather than rendering them
+    /// (antigravity-cli's `enabled`).
+    pub(crate) const fn carrying(mut self, keys: &'static [&'static str]) -> Self {
+        self.carry = keys;
+        self
     }
 
     /// Emit `maxRows` beside the command (droid).
@@ -83,6 +99,28 @@ fn render(decl: &StatusLineDecl, shape: SlotShape) -> Value {
             Value::Object(map)
         }
     }
+}
+
+/// Our rendering with [`SlotShape::carry`] keys copied verbatim off `existing`. This
+/// is the value BOTH the write and every convergence test use: render one and compare
+/// the other and a carried field reads as permanent drift, so self_heal rewrites the
+/// slot on every single pass.
+fn with_carried(ours: &Value, existing: Option<&Value>, shape: SlotShape) -> Value {
+    let mut out = ours.clone();
+    if shape.carry.is_empty() {
+        return out;
+    }
+    let Some(existing) = existing else {
+        return out;
+    };
+    if let Some(obj) = out.as_object_mut() {
+        for key in shape.carry {
+            if let Some(value) = existing.get(*key) {
+                obj.insert((*key).to_string(), value.clone());
+            }
+        }
+    }
+    out
 }
 
 /// The command string carried by whatever is in the slot now, whoever wrote it. The
@@ -172,12 +210,16 @@ pub(crate) fn reconcile(
     //
     // An empty slot writes no stash at all, so "user deletes our line, self_heal
     // re-adds it" cannot erase what they had before we ever wrote.
-    if let Some(existing) = read_settings(path)?.and_then(|root| value_at(&root, key_path).cloned())
+    let existing = read_settings(path)?.and_then(|root| value_at(&root, key_path).cloned());
+    if let Some(existing) = existing.clone()
         && !is_ours(&existing, &our_command, shape)
     {
         stamp::stash_statusline(plugin, scope, source, client, existing)?;
     }
 
+    // Carry the harness-owned keys off the value we are replacing, so taking the slot
+    // over does not reset a preference of theirs we do not model.
+    let ours = with_carried(&ours, existing.as_ref(), shape);
     json_edit(path, |root| {
         let obj = json_obj_at(root, containers);
         if obj.get(slot) != Some(&ours) {
@@ -253,7 +295,9 @@ pub(crate) fn state(path: &Path, key_path: &[&str], plugin: &Plugin, client: &st
     let root = read_settings(path)?;
     Ok(Some(match root.as_ref().and_then(|r| value_at(r, key_path)) {
         None => BackendState::Absent,
-        Some(existing) if *existing == ours => BackendState::Healthy,
+        // Compared against the value reconcile WOULD write for this live slot, carry
+        // included — otherwise a carried field is drift that never converges.
+        Some(existing) if *existing == with_carried(&ours, Some(existing), shape) => BackendState::Healthy,
         Some(existing) if is_ours(existing, &our_command, shape) => BackendState::NeedsRepair,
         Some(_) => BackendState::Absent,
     }))
@@ -288,7 +332,9 @@ pub(crate) fn check(
     };
     let root = read_settings(&path).ok().flatten();
     Some(match root.as_ref().and_then(|r| value_at(r, key_path)) {
-        Some(existing) if *existing == ours => {
+        // Same carried comparison `state` uses, or doctor reports a converged slot as
+        // someone else's.
+        Some(existing) if *existing == with_carried(&ours, Some(existing), shape) => {
             DoctorCheck { name, status: CheckStatus::Ok(format!("`{}` owns the {slot} slot", plugin.name)) }
         }
         Some(_) => DoctorCheck {

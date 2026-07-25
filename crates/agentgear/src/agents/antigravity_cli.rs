@@ -48,14 +48,25 @@ const STATUSLINE_SLOT: &[&str] = &["statusLine"];
 /// `refreshInterval`, anything unknown), so `TypedCommand` is already the whole of
 /// what this harness stores.
 ///
-/// `enabled` is deliberately never written, in either direction. It is a tri-state
-/// bool persisting the user's own `/statusline off` toggle in a file they own, and
-/// that `enabled:false` suppresses a configured command at render time is inferred
-/// from a binary string, not observed. The whole-value stash round-trips theirs on
-/// uninstall either way, so nothing of theirs is lost. Consequence: a user who had
-/// their status line toggled OFF sees our install do nothing visible until they run
-/// `/statusline on` (`docs/research/statusline-survey.md` §2).
-const STATUSLINE_SHAPE: SlotShape = SlotShape::typed_command();
+/// `enabled` is CARRIED, never rendered: whatever value the live slot holds is copied
+/// verbatim into what we write, and a slot without the key gets none. Do not
+/// "simplify" this back into a clean whole-value write.
+///
+/// - The field persists the user's own `/statusline off` toggle in a file they own.
+///   A whole-value replace drops it, and Antigravity's documented example configures a
+///   status line with `{type, command}` and no `enabled` at all — so absent almost
+///   certainly reads as on, and a dropped `enabled:false` turns their status line back
+///   on, now showing OUR line. Resetting a deliberate preference is the exact thing
+///   this surface exists not to do.
+/// - We preserve the field, we do not interpret it. Its render-time meaning is
+///   unproven (`docs/research/statusline-survey.md` §2(e)), and preserving an unknown
+///   is the only move that is correct under every possible meaning. Synthesizing
+///   `enabled: true` would be a guess in the other direction.
+/// - The carry is deliberate, not an oversight: it is one named field inside an
+///   otherwise whole-value write, and it is in the CONVERGENCE comparison too, so a
+///   carried `enabled` reads as converged rather than as drift self_heal rewrites
+///   every pass.
+const STATUSLINE_SHAPE: SlotShape = SlotShape::typed_command().carrying(&["enabled"]);
 
 impl AgentBackend for AntigravityCliBackend {
     fn id(&self) -> &'static str {

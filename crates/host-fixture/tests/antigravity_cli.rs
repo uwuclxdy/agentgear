@@ -304,8 +304,9 @@ fn self_heal_preserves_a_disabled_hook_subtree_but_explicit_setup_reenables() {
 // `enabled`/`padding` there and drops every other key on its next rewrite.
 
 /// The user's own settings before we touch anything: an unrelated key, plus a status
-/// line of theirs carrying the `enabled` toggle we deliberately never write. Both must
-/// come back byte-for-byte on uninstall.
+/// line of theirs carrying the `enabled` toggle. `enabled` is the field the backend
+/// preserves off the live value rather than rendering, so it must survive our install
+/// AND come back byte-for-byte on uninstall.
 ///
 /// `echo their-bar-row` is runnable under both `sh -c` and `cmd /C`, so the compose
 /// assertion exercises the real subprocess path on every platform.
@@ -325,9 +326,15 @@ const SESSION_JSON: &str = r#"{"session_id":"abc"}"#;
 /// What the fixture host declares, with `${AGENTGEAR_CLIENT}` expanded for this backend.
 const OUR_COMMAND: &str = "host_fixture statusline --client antigravity-cli";
 
-/// `enabled` is absent on purpose: we write `type`/`command`/`padding` and never touch
-/// the user's on/off toggle in either direction.
+/// What the backend writes over a slot that HELD `enabled: true`: our own
+/// `type`/`command`/`padding`, plus their `enabled` carried through untouched. The
+/// carry is why this is not simply the rendered value.
 fn our_status_line() -> Value {
+    json!({"type": "command", "command": OUR_COMMAND, "padding": 0, "enabled": true})
+}
+
+/// The same write over a slot that carried no `enabled`: none is synthesized.
+fn our_status_line_without_enabled() -> Value {
     json!({"type": "command", "command": OUR_COMMAND, "padding": 0})
 }
 
@@ -423,8 +430,9 @@ fn antigravity_cli_statusline_stash_survives_a_declaration_change() {
     assert!(ok && out == "Installed", "setup failed: {out}");
 
     // What host version N left in the slot: our command, a padding this version no
-    // longer renders.
-    set_status_line_at(&env.settings, json!({"type": "command", "command": OUR_COMMAND, "padding": 1}));
+    // longer renders, and the user's `enabled` still carried through (which is what a
+    // prior version of this backend would also have written).
+    set_status_line_at(&env.settings, json!({"type": "command", "command": OUR_COMMAND, "padding": 1, "enabled": true}));
 
     let (ok, out) = env.fixture(&["self-heal"]);
     assert!(ok, "self-heal errored on our own drifted rendering: {out}");
@@ -460,7 +468,10 @@ fn antigravity_cli_statusline_deleted_line_is_readded_without_losing_the_stash()
     let (ok, out) = env.fixture(&["self-heal"]);
     assert!(ok, "self-heal errored on a deleted statusLine: {out}");
     assert_eq!(out, "Installed", "a missing statusLine behind healthy surfaces is drift, got {out}");
-    assert_eq!(status_line_at(&env.settings), our_status_line(), "self-heal did not re-add our statusLine");
+    // Re-added WITHOUT `enabled`: the carry reads the live value, and the user deleted
+    // it, so there is nothing to carry and we synthesize nothing. Their original whole
+    // value is still in the stash, which is what the uninstall below restores.
+    assert_eq!(status_line_at(&env.settings), our_status_line_without_enabled(), "self-heal did not re-add our statusLine");
     assert_eq!(env.stashed_original(), seed_status_line(), "the repair pass overwrote the user's stashed original");
 
     let (ok, out) = env.fixture(&["uninstall"]);
@@ -503,4 +514,81 @@ fn antigravity_cli_teardown_with_nothing_installed_writes_nothing() {
     assert!(ok, "uninstall errored with nothing installed: {out}");
     assert_eq!(out, "NoOp", "a teardown with nothing of ours to undo must report no change, got {out}");
     assert_eq!(fs::read_to_string(&env.settings).unwrap(), before, "teardown wrote into a settings file it had nothing to undo in");
+}
+
+#[test]
+fn antigravity_cli_statusline_carries_a_disabled_toggle_through_install() {
+    // `enabled` persists the user's own `/statusline off`. A whole-value slot write
+    // drops it, and an absent `enabled` almost certainly reads as ON (the vendor's
+    // documented example omits the key), so dropping their `false` switches their
+    // status line back on — now rendering OURS. Carrying it is what makes taking the
+    // slot over preserve a preference we do not model.
+    let env = Env::new("statusline-carry-disabled");
+    fs::write(
+        &env.settings,
+        r#"{
+  "statusLine": {
+    "type": "command",
+    "command": "echo their-bar-row",
+    "enabled": false,
+    "padding": 2
+  }
+}
+"#,
+    )
+    .unwrap();
+    let seeded_text = status_line_text(&env.settings);
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    let live = status_line_at(&env.settings);
+    assert_eq!(live["command"], json!(OUR_COMMAND), "our command did not take the slot");
+    assert_eq!(live["enabled"], json!(false), "the user's disabled toggle was dropped by our write: {live}");
+
+    // doctor compares whole-value too, so it needs the same carry: without it a
+    // perfectly converged slot of ours reports as "another status line owns" it.
+    let (_, report) = env.fixture(&["doctor"]);
+    assert!(report.contains("owns the statusLine slot"), "doctor did not recognise our own carried value as ours:\n{report}");
+
+    // The drift loop this could cause: carry on write but not in the convergence
+    // comparison and every self-heal rewrites the slot forever.
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "a carried field must read as converged, not as drift; got {out}");
+    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+    assert_eq!(status_line_text(&env.settings), seeded_text, "uninstall did not restore the user's whole value");
+}
+
+#[test]
+fn antigravity_cli_statusline_synthesizes_no_toggle_when_the_user_had_none() {
+    // The other direction: we never invent an `enabled`. A slot that had none keeps
+    // none, so the harness's own default applies exactly as it did before us.
+    let env = Env::new("statusline-carry-absent");
+    fs::write(
+        &env.settings,
+        r#"{
+  "statusLine": {
+    "type": "command",
+    "command": "echo their-bar-row"
+  }
+}
+"#,
+    )
+    .unwrap();
+    let seeded_text = status_line_text(&env.settings);
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert_eq!(status_line_at(&env.settings), our_status_line_without_enabled(), "an `enabled` was synthesized from nothing");
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "self-heal after a fresh install should no-op, got {out}");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+    assert_eq!(status_line_text(&env.settings), seeded_text, "uninstall did not restore the user's whole value");
 }
