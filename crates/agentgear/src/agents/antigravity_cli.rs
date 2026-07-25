@@ -66,7 +66,7 @@ const STATUSLINE_SLOT: &[&str] = &["statusLine"];
 ///   otherwise whole-value write, and it is in the CONVERGENCE comparison too, so a
 ///   carried `enabled` reads as converged rather than as drift self_heal rewrites
 ///   every pass.
-const STATUSLINE_SHAPE: SlotShape = SlotShape::typed_command().carrying(&["enabled"]);
+const STATUSLINE_SHAPE: SlotShape = SlotShape::typed_command().carrying(&["enabled"], "Turn it back on with `/statusline on`.");
 
 impl AgentBackend for AntigravityCliBackend {
     fn id(&self) -> &'static str {

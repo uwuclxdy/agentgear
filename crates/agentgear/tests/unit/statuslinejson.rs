@@ -83,7 +83,7 @@ fn is_ours_matches_on_the_command_not_the_whole_object() {
 // forever, and self_heal reconciles on every pass — but the reconcile writes the same
 // bytes, so the OUTCOME stays `NoOp` and no lifecycle test can see it.
 
-const CARRY_SHAPE: SlotShape = SlotShape::typed_command().carrying(&["enabled"]);
+const CARRY_SHAPE: SlotShape = SlotShape::typed_command().carrying(&["enabled"], "re-enable it.");
 const SLOT: &[&str] = &["statusLine"];
 
 /// Write `slot` into a scratch settings file and classify it.

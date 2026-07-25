@@ -59,19 +59,26 @@ pub(crate) struct SlotShape {
     /// move that is correct under every possible meaning — we do not interpret it, and
     /// we never synthesize one that was not there.
     pub(crate) carry: &'static [&'static str],
+    /// What to tell a user whose carried switch is OFF. Only reachable through
+    /// [`Self::carry`], so a non-carrying shape never renders it.
+    pub(crate) disabled_hint: &'static str,
 }
 
 impl SlotShape {
     /// CC's `{"type":"command","command":…}` object, plus `padding` when the host
     /// declared one.
     pub(crate) const fn typed_command() -> Self {
-        Self { value: ValueShape::TypedCommand, max_rows: None, carry: &[] }
+        Self { value: ValueShape::TypedCommand, max_rows: None, carry: &[], disabled_hint: "" }
     }
 
     /// Preserve `keys` off the live value rather than rendering them
-    /// (antigravity-cli's `enabled`).
-    pub(crate) const fn carrying(mut self, keys: &'static [&'static str]) -> Self {
+    /// (antigravity-cli's `enabled`). `hint` is the remedy doctor prints when one of
+    /// them is the harness's own off-switch and it is off — the two travel together
+    /// because a carried switch we refuse to override is only actionable if the user
+    /// is told where it is.
+    pub(crate) const fn carrying(mut self, keys: &'static [&'static str], hint: &'static str) -> Self {
         self.carry = keys;
+        self.disabled_hint = hint;
         self
     }
 
@@ -121,6 +128,18 @@ fn with_carried(ours: &Value, existing: Option<&Value>, shape: SlotShape) -> Val
         }
     }
     out
+}
+
+/// A carried key sitting at `false` in the live value: the harness's own on/off switch
+/// for this slot, switched off. Ours is installed and converged and the harness will
+/// render none of it — a state that is otherwise completely silent, since the write
+/// succeeded, `state` reads `Healthy`, and every lifecycle op is a clean `NoOp`.
+///
+/// Keyed on the carry rather than on any one harness's field name, so a later carrying
+/// backend inherits the check. A carried key holding anything but `false` (a non-bool,
+/// or `true`) is not a switch we can read as off.
+fn disabled_carry(existing: &Value, shape: SlotShape) -> Option<&'static str> {
+    shape.carry.iter().copied().find(|key| existing.get(*key) == Some(&Value::Bool(false)))
 }
 
 /// The command string carried by whatever is in the slot now, whoever wrote it. The
@@ -218,8 +237,17 @@ pub(crate) fn reconcile(
     }
 
     // Carry the harness-owned keys off the value we are replacing, so taking the slot
-    // over does not reset a preference of theirs we do not model.
-    let ours = with_carried(&ours, existing.as_ref(), shape);
+    // over does not reset a preference of theirs we do not model. With the slot GONE
+    // (the user deleted our line and self_heal is re-adding it) the stash is the last
+    // record of that preference, so it is the fallback — re-adding without it resets
+    // exactly what the carry exists to protect. Never worse than carrying nothing: the
+    // stash either holds the key, or it does not and we are back to writing none.
+    let carry_source = match &existing {
+        Some(_) => existing.clone(),
+        None if !shape.carry.is_empty() => stamp::read(plugin, scope, client)?.and_then(|m| m.statusline_original),
+        None => None,
+    };
+    let ours = with_carried(&ours, carry_source.as_ref(), shape);
     json_edit(path, |root| {
         let obj = json_obj_at(root, containers);
         if obj.get(slot) != Some(&ours) {
@@ -334,9 +362,19 @@ pub(crate) fn check(
     Some(match root.as_ref().and_then(|r| value_at(r, key_path)) {
         // Same carried comparison `state` uses, or doctor reports a converged slot as
         // someone else's.
-        Some(existing) if *existing == with_carried(&ours, Some(existing), shape) => {
-            DoctorCheck { name, status: CheckStatus::Ok(format!("`{}` owns the {slot} slot", plugin.name)) }
-        }
+        Some(existing) if *existing == with_carried(&ours, Some(existing), shape) => match disabled_carry(existing, shape) {
+            // Installed and converged, but the harness's own switch is off, so the user
+            // sees an empty bar with nothing anywhere explaining why. We deliberately do
+            // not flip it back (it is their preference); saying so is the whole remedy.
+            Some(key) => DoctorCheck {
+                name,
+                status: CheckStatus::Warn(format!(
+                    "`{}` owns the {slot} slot, but `{key}` is false there: {harness}'s own status-line switch is off, so none of it renders. {}",
+                    plugin.name, shape.disabled_hint
+                )),
+            },
+            None => DoctorCheck { name, status: CheckStatus::Ok(format!("`{}` owns the {slot} slot", plugin.name)) },
+        },
         Some(_) => DoctorCheck {
             name,
             status: CheckStatus::Warn(format!(

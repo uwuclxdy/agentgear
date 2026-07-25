@@ -468,10 +468,10 @@ fn antigravity_cli_statusline_deleted_line_is_readded_without_losing_the_stash()
     let (ok, out) = env.fixture(&["self-heal"]);
     assert!(ok, "self-heal errored on a deleted statusLine: {out}");
     assert_eq!(out, "Installed", "a missing statusLine behind healthy surfaces is drift, got {out}");
-    // Re-added WITHOUT `enabled`: the carry reads the live value, and the user deleted
-    // it, so there is nothing to carry and we synthesize nothing. Their original whole
-    // value is still in the stash, which is what the uninstall below restores.
-    assert_eq!(status_line_at(&env.settings), our_status_line_without_enabled(), "self-heal did not re-add our statusLine");
+    // Re-added WITH the carried `enabled`: the live slot is gone, so the carry falls
+    // back to the stash, the last record of the user's own switch. Re-adding bare would
+    // reset exactly the preference the carry exists to protect.
+    assert_eq!(status_line_at(&env.settings), our_status_line(), "self-heal did not re-add our statusLine");
     assert_eq!(env.stashed_original(), seed_status_line(), "the repair pass overwrote the user's stashed original");
 
     let (ok, out) = env.fixture(&["uninstall"]);
@@ -547,9 +547,13 @@ fn antigravity_cli_statusline_carries_a_disabled_toggle_through_install() {
     assert_eq!(live["enabled"], json!(false), "the user's disabled toggle was dropped by our write: {live}");
 
     // doctor compares whole-value too, so it needs the same carry: without it a
-    // perfectly converged slot of ours reports as "another status line owns" it.
+    // perfectly converged slot of ours reports as "another status line owns" it. And
+    // since their switch is OFF, ours is installed, converged, and rendering nothing —
+    // silent everywhere else, so doctor is the only place that can say why.
     let (_, report) = env.fixture(&["doctor"]);
     assert!(report.contains("owns the statusLine slot"), "doctor did not recognise our own carried value as ours:\n{report}");
+    assert!(report.contains("[warn] status line installed"), "a carried off-switch must downgrade the check to a warn:\n{report}");
+    assert!(report.contains("/statusline on"), "the warning must name the remedy:\n{report}");
 
     // The drift loop this could cause: carry on write but not in the convergence
     // comparison and every self-heal rewrites the slot forever.
@@ -591,4 +595,77 @@ fn antigravity_cli_statusline_synthesizes_no_toggle_when_the_user_had_none() {
     let (ok, out) = env.fixture(&["uninstall"]);
     assert!(ok && out == "Removed", "uninstall failed: {out}");
     assert_eq!(status_line_text(&env.settings), seeded_text, "uninstall did not restore the user's whole value");
+}
+
+#[test]
+fn antigravity_cli_statusline_readds_a_deleted_line_with_the_carried_toggle() {
+    // Same loss as dropping the carry on install, reached through self_heal instead:
+    // the user deletes our line, the live slot is gone, and a carry that reads only the
+    // live value has nothing to read. Re-adding `{type, command, padding}` bare would
+    // reset their `enabled:false` — and since an absent `enabled` almost certainly
+    // reads as ON, that switches their status line back on showing OUR line, which is
+    // the exact outcome this backend's rustdoc rules against.
+    let env = Env::new("statusline-readd-carry");
+    fs::write(
+        &env.settings,
+        r#"{
+  "statusLine": {
+    "type": "command",
+    "command": "echo their-bar-row",
+    "enabled": false,
+    "padding": 2
+  }
+}
+"#,
+    )
+    .unwrap();
+    let seeded_text = status_line_text(&env.settings);
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert_eq!(status_line_at(&env.settings)["enabled"], json!(false), "install did not carry the toggle");
+
+    remove_status_line_at(&env.settings);
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal errored on a deleted statusLine: {out}");
+    assert_eq!(out, "Installed", "a missing statusLine behind healthy surfaces is drift, got {out}");
+    let live = status_line_at(&env.settings);
+    assert_eq!(live["command"], json!(OUR_COMMAND), "self-heal did not re-add our command");
+    assert_eq!(live["enabled"], json!(false), "self-heal re-added our line without the user's switch: {live}");
+
+    // Still converged afterwards: the fallback must not write a value the convergence
+    // comparison then reads as drift.
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "the re-added value must read as converged, got {out}");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+    assert_eq!(status_line_text(&env.settings), seeded_text, "uninstall did not restore the user's whole value");
+}
+
+#[test]
+fn antigravity_cli_statusline_warns_only_when_the_carried_switch_is_off() {
+    // The negative half of the doctor warn: a carried `enabled:true` is a working
+    // install and must stay `[ ok ]`, or the warning is noise every user sees.
+    let env = Env::new("statusline-warn-negative");
+    fs::write(
+        &env.settings,
+        r#"{
+  "statusLine": {
+    "type": "command",
+    "command": "echo their-bar-row",
+    "enabled": true
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert_eq!(status_line_at(&env.settings)["enabled"], json!(true), "install did not carry the toggle");
+
+    let (_, report) = env.fixture(&["doctor"]);
+    assert!(report.contains("[ ok ] status line installed"), "a carried `true` must stay an Ok check:\n{report}");
+    assert!(!report.contains("/statusline on"), "the off-switch remedy must not fire for an enabled slot:\n{report}");
 }
