@@ -104,9 +104,6 @@
 
 mod agents;
 mod cli;
-// The IR + parser is consumed by the non-CC backends + doctor in pass B;
-// `allow(dead_code)` until those calls land.
-#[allow(dead_code)]
 mod components;
 mod doctor;
 mod error;

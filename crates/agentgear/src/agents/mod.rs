@@ -66,8 +66,10 @@ pub(crate) mod vscode_copilot;
 #[cfg(feature = "zed")]
 pub(crate) mod zed;
 
-/// Every feature whose backend read-modify-writes a harness config file (all of
-/// them except `claude`, which orchestrates the `claude plugin` CLI instead).
+/// Every feature whose backend renders the plugin into a harness's own config files:
+/// the roster minus the two plugin-native backends (`claude`, `copilot-cli`, which
+/// orchestrate their tool's own plugin CLI) and `pi` (detect-only — it writes no file
+/// and reads no component, so it needs none of the shared renderers below).
 macro_rules! cfg_config_backends {
     ($item:item) => {
         #[cfg(any(
@@ -88,7 +90,6 @@ macro_rules! cfg_config_backends {
             feature = "kilo",
             feature = "antigravity",
             feature = "antigravity-cli",
-            feature = "pi",
             feature = "goose",
             feature = "amp",
             feature = "crush",
@@ -98,6 +99,7 @@ macro_rules! cfg_config_backends {
         $item
     };
 }
+pub(crate) use cfg_config_backends;
 
 // Shared config-writing helpers, compiled only when a non-CC backend needs them.
 // `allow(dead_code)`: not every enabled backend uses every helper, so a single-
@@ -110,8 +112,10 @@ macro_rules! cfg_config_backends {
 // plugin-native slot backends" — split into two declarations because the shared macro
 // carries only the non-CC set, and pulling those two into the macro would drag the
 // other four helpers into every default build. Widen BOTH arms when a third
-// plugin-native backend gains a slot: a feature in neither set loses `confedit`
-// entirely and reds with `E0432` that no `--all-features` gate leg can see.
+// plugin-native backend gains a slot: a backend that writes a config file and lands
+// in neither set loses `confedit` entirely and reds with `E0432` that no
+// `--all-features` gate leg can see. A backend that writes none (`pi`) belongs in
+// neither set and compiles clean without it.
 #[cfg(any(feature = "claude", feature = "copilot-cli"))]
 #[allow(dead_code)]
 pub(crate) mod confedit;

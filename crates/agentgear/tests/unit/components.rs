@@ -140,31 +140,35 @@ fn expand_client_replaces_the_token() {
     assert_eq!(expand_client("${AGENTGEAR_CLIENT}/${AGENTGEAR_CLIENT}", "gemini"), "gemini/gemini");
 }
 
-#[test]
-fn with_client_expands_only_command_surfaces() {
-    let entries = vec![
-        e(
-            ".claude-plugin/plugin.json",
-            r#"{"name":"p","version":"0.1.0","author":{"name":"a"},
-              "mcpServers":{"tok":{"command":"${AGENTGEAR_CLIENT}-bin","args":["--client","${AGENTGEAR_CLIENT}"],"env":{"C":"${AGENTGEAR_CLIENT}"}}}}"#,
-        ),
-        e(
-            "hooks/hooks.json",
-            r#"{"hooks":{"UserPromptSubmit":[{"matcher":"${AGENTGEAR_CLIENT}","hooks":[{"type":"command","command":"host up --client ${AGENTGEAR_CLIENT}"}]}]}}"#,
-        ),
-    ];
-    let c = parse(&entries).with_client("codex");
+// Same gate as the method under test, through the same macro, so the set cannot drift
+// apart from it.
+crate::agents::cfg_config_backends! {
+    #[test]
+    fn with_client_expands_only_command_surfaces() {
+        let entries = vec![
+            e(
+                ".claude-plugin/plugin.json",
+                r#"{"name":"p","version":"0.1.0","author":{"name":"a"},
+                  "mcpServers":{"tok":{"command":"${AGENTGEAR_CLIENT}-bin","args":["--client","${AGENTGEAR_CLIENT}"],"env":{"C":"${AGENTGEAR_CLIENT}"}}}}"#,
+            ),
+            e(
+                "hooks/hooks.json",
+                r#"{"hooks":{"UserPromptSubmit":[{"matcher":"${AGENTGEAR_CLIENT}","hooks":[{"type":"command","command":"host up --client ${AGENTGEAR_CLIENT}"}]}]}}"#,
+            ),
+        ];
+        let c = parse(&entries).with_client("codex");
 
-    let srv = c.mcp_servers.iter().find(|s| s.name == "tok").unwrap();
-    assert_eq!(srv.command, "codex-bin", "mcp command must be substituted");
-    assert_eq!(srv.args, vec!["--client".to_string(), "codex".to_string()], "each mcp arg must be substituted");
-    // env is not an executable-command surface -> left verbatim.
-    assert_eq!(srv.env.get("C").map(String::as_str), Some("${AGENTGEAR_CLIENT}"));
+        let srv = c.mcp_servers.iter().find(|s| s.name == "tok").unwrap();
+        assert_eq!(srv.command, "codex-bin", "mcp command must be substituted");
+        assert_eq!(srv.args, vec!["--client".to_string(), "codex".to_string()], "each mcp arg must be substituted");
+        // env is not an executable-command surface -> left verbatim.
+        assert_eq!(srv.env.get("C").map(String::as_str), Some("${AGENTGEAR_CLIENT}"));
 
-    let hook = c.hooks.iter().find(|h| h.event == "UserPromptSubmit").unwrap();
-    assert_eq!(hook.command, "host up --client codex", "hook command must be substituted");
-    // matcher is not a command surface -> verbatim.
-    assert_eq!(hook.matcher.as_deref(), Some("${AGENTGEAR_CLIENT}"));
+        let hook = c.hooks.iter().find(|h| h.event == "UserPromptSubmit").unwrap();
+        assert_eq!(hook.command, "host up --client codex", "hook command must be substituted");
+        // matcher is not a command surface -> verbatim.
+        assert_eq!(hook.matcher.as_deref(), Some("${AGENTGEAR_CLIENT}"));
+    }
 }
 
 #[test]
