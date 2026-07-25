@@ -455,6 +455,35 @@ fn qwen_code_statusline_teardown_restores_when_the_harness_is_gone() {
 }
 
 #[test]
+fn qwen_code_statusline_doctor_names_us_as_the_slot_owner() {
+    // Doctor's slot slice renders from three arguments this backend threads into the
+    // shared check — its own client id, the settings path, and the key path — and none
+    // of them were pinned here. Swapping the id to another backend's, or the file to a
+    // neighbouring name, left every other test in this file green while doctor told a
+    // user with a working install that someone else owns the slot.
+    //
+    // The id is the sharp one: it expands `${AGENTGEAR_CLIENT}` into the command doctor
+    // compares the live value against, so a wrong id differs from ours by that one
+    // substring and drops the check from its Ok arm to "another status line owns …".
+    let env = Env::seeded("statusline-doctor", ".qwen", SEED_WITH_STATUSLINE);
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "qwen-code"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert_eq!(status_line_at(&env.settings_path()), our_status_line(), "our ui.statusLine did not land");
+
+    let (_, report) = env.fixture(&["doctor"]);
+    assert!(report.contains("[ ok ] status line installed"), "doctor did not report the slot as installed:\n{report}");
+    // The slot name in the message is the key path doctor was handed, joined — so this
+    // pins the nesting too: a root-level slot would print without the `ui.`.
+    assert!(
+        report.contains("`ez-fixture-plugin` owns the ui.statusLine slot"),
+        "doctor did not recognise our own value as ours:\n{report}"
+    );
+    assert!(!report.contains("another status line owns"), "doctor read our own healthy install as a foreign line:\n{report}");
+    assert!(!report.contains("no `ui.statusLine` in"), "doctor looked for the slot in the wrong file:\n{report}");
+}
+
+#[test]
 fn qwen_code_full_lifecycle() {
     let env = Env::new("lifecycle");
     let cmd_dir = env.qwen.join("commands").join("ez-fixture-plugin");

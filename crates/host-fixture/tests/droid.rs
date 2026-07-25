@@ -455,6 +455,50 @@ fn droid_statusline_teardown_restores_when_the_harness_is_gone() {
 }
 
 #[test]
+fn droid_statusline_doctor_names_us_as_the_slot_owner() {
+    // Doctor's slot slice renders from three arguments this backend threads into the
+    // shared check — its own client id, the settings path, and the key path — and none
+    // of them were pinned here. Swapping the id to another backend's, or the file to a
+    // neighbouring name, left every other test in this file green while doctor told a
+    // user with a working install that someone else owns the slot.
+    //
+    // The id is the sharp one: it expands `${AGENTGEAR_CLIENT}` into the command doctor
+    // compares the live value against, so a wrong id differs from ours by that one
+    // substring and drops the check from its Ok arm to "another status line owns …".
+    let env = Env::new("statusline-doctor");
+    fs::write(env.settings(), SEED_SETTINGS).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "droid"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert_eq!(status_line_at(&env.settings()), our_status_line(), "our statusLine did not land");
+
+    let (_, report) = env.fixture(&["doctor"]);
+    assert!(report.contains("[ ok ] status line installed"), "doctor did not report the slot as installed:\n{report}");
+    // The slot name in the message is the key path doctor was handed, joined — so this
+    // pins the path's shape too: a wrongly-nested slot prints `general.statusLine`.
+    assert!(report.contains("`ez-fixture-plugin` owns the statusLine slot"), "doctor did not recognise our own value as ours:\n{report}");
+    // Doctor rows carry no agent id, and claude/copilot-cli/antigravity-cli all render a
+    // byte-identical `statusLine` detail — so every other assertion here would read a
+    // sibling backend's row as droid's if one were ever detected in this env. None is
+    // today; this makes that a requirement of the test rather than of the sandbox, and
+    // it comes first so a sibling appearing reports THAT rather than a bogus wrong-file
+    // diagnosis. qwen-code needs no equivalent: `ui.statusLine` is unique among the five.
+    assert_eq!(report.matches("status line installed").count(), 1, "a sibling backend's slot row is in this report:\n{report}");
+    assert!(!report.contains("another status line owns"), "doctor read our own healthy install as a foreign line:\n{report}");
+    assert!(!report.contains("no `statusLine` in"), "doctor looked for the slot in the wrong file:\n{report}");
+
+    // The Ok arm names no file, so the path droid's doctor actually reads is only
+    // observable once the check leaves it. A foreign owner is the cheapest way there,
+    // and the resulting message is the one thing in this report only droid can emit.
+    set_status_line_at(&env.settings(), json!({"type": "command", "command": "echo someone-else", "padding": 0}));
+    let (_, report) = env.fixture(&["doctor"]);
+    assert!(
+        report.contains(&format!("another status line owns `statusLine` in {}", env.settings().display())),
+        "doctor did not name droid's own settings file as the slot's home:\n{report}"
+    );
+}
+
+#[test]
 fn droid_teardown_with_nothing_installed_writes_nothing() {
     // A teardown that owns nothing in a user's file must not write to it at all.
     let env = Env::new("statusline-empty-teardown");
