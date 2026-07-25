@@ -39,6 +39,14 @@ const SEED_SETTINGS: &str = r#"{
 }
 "#;
 
+/// The same file with the slot never written: a user who has settings of their own
+/// but no status line at all. Install displaces nothing here, so uninstall has no
+/// original to put back and must take the key out instead.
+const SEED_SETTINGS_NO_STATUS_LINE: &str = r#"{
+  "theirSetting": true
+}
+"#;
+
 /// A session payload shaped like Claude Code's: `compose` reads `cwd` off it to pick
 /// project-then-user scope, and pipes the whole thing to the user's own command.
 const SESSION_JSON: &str = r#"{"session_id":"abc","cwd":"/nonexistent/project"}"#;
@@ -59,6 +67,17 @@ struct Env {
 
 impl Env {
     fn new(name: &str) -> Self {
+        Self::seeded(name, SEED_SETTINGS)
+    }
+
+    /// Start from settings holding no status line, so install displaces nothing and
+    /// uninstall reaches the delete half of `remove`. Every other test here seeds one,
+    /// which leaves install something to displace and uninstall something to restore.
+    fn without_status_line(name: &str) -> Self {
+        Self::seeded(name, SEED_SETTINGS_NO_STATUS_LINE)
+    }
+
+    fn seeded(name: &str, settings: &str) -> Self {
         let root = std::env::temp_dir().join(format!("ez-cc-statusline-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let bin = root.join("bin");
@@ -67,7 +86,7 @@ impl Env {
             fs::create_dir_all(dir).unwrap();
         }
         fs::copy(FAKE_CLAUDE, bin.join(format!("claude{}", std::env::consts::EXE_SUFFIX))).unwrap();
-        fs::write(env.settings_path(), SEED_SETTINGS).unwrap();
+        fs::write(env.settings_path(), settings).unwrap();
         env
     }
 
@@ -137,18 +156,23 @@ impl Env {
         fs::write(self.settings_path(), serde_json::to_vec_pretty(&parsed).unwrap()).unwrap();
     }
 
-    /// The stash the claude backend recorded, as raw JSON.
-    fn stashed_original(&self) -> serde_json::Value {
+    /// The claude backend's whole stamp marker, or `None` when it stamped none. Kept
+    /// apart from [`Self::stashed_original`] because the two answer different
+    /// questions: a marker holding no stash and no marker at all both read as "nothing
+    /// stashed", and only one of them is a state the lifecycle produces.
+    fn claude_marker(&self) -> Option<serde_json::Value> {
         let markers = self.data.join("ez-fixture-plugin").join("markers");
         let entries: Vec<_> = fs::read_dir(&markers).map(|d| d.flatten().collect()).unwrap_or_default();
-        for entry in entries {
+        entries.into_iter().find_map(|entry| {
             let marker: serde_json::Value =
                 serde_json::from_slice(&fs::read(entry.path()).unwrap_or_default()).unwrap_or(serde_json::Value::Null);
-            if marker.get("agent").and_then(serde_json::Value::as_str) == Some("claude") {
-                return marker.get("statusline_original").cloned().unwrap_or(serde_json::Value::Null);
-            }
-        }
-        serde_json::Value::Null
+            (marker.get("agent").and_then(serde_json::Value::as_str) == Some("claude")).then_some(marker)
+        })
+    }
+
+    /// The stash the claude backend recorded, as raw JSON.
+    fn stashed_original(&self) -> serde_json::Value {
+        self.claude_marker().and_then(|m| m.get("statusline_original").cloned()).unwrap_or(serde_json::Value::Null)
     }
 
     /// Take the `claude` double off the scratch PATH — the user uninstalling Claude
@@ -373,4 +397,38 @@ fn claude_statusline_remove_leaves_a_foreign_value_alone() {
     let (ok, out) = env.fixture(&["uninstall"]);
     assert!(ok && out == "Removed", "uninstall failed: {out}");
     assert_eq!(env.status_line(), foreign, "uninstall clobbered a statusLine that was no longer ours");
+}
+
+#[test]
+fn claude_statusline_uninstall_deletes_the_slot_with_nothing_stashed() {
+    // The other arm of the branch every test above takes: install onto an empty slot
+    // displaces nothing, so uninstall has no original to put back and has to delete
+    // the key. Leaving it behind strands a command pointing at the uninstalled binary,
+    // and parking it at `null` is no better — the key is still there for the harness
+    // to read, and it is a write to the user's file on a teardown.
+    let env = Env::without_status_line("no-stash");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert_eq!(env.status_line(), our_status_line(), "our statusLine did not land:\n{}", env.settings());
+    // The marker must EXIST with the field absent — the input shape uninstall actually
+    // reads here. "No marker at all" reaches the same branch, through a state the
+    // lifecycle never produces, so asserting only the stash would let this test decay
+    // into the weaker one without ever going red.
+    let marker = env.claude_marker().expect("install must stamp a claude marker");
+    assert!(marker.get("statusline_original").is_none(), "an empty slot must stash nothing, got marker: {marker}");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+
+    // Asserted on the object, not through `status_line()`: that helper folds a missing
+    // key and an explicit `null` onto the same `Value::Null`, so it cannot tell a
+    // removal from a key parked at null.
+    let parsed: serde_json::Value = serde_json::from_str(&env.settings()).unwrap();
+    assert!(
+        !parsed.as_object().unwrap().contains_key("statusLine"),
+        "uninstall left the slot key behind instead of deleting it:\n{}",
+        env.settings()
+    );
+    assert_eq!(env.settings(), SEED_SETTINGS_NO_STATUS_LINE, "uninstall did not restore settings.json byte-for-byte");
 }
