@@ -116,11 +116,23 @@ cfg_config_backends! {
     #[allow(dead_code)]
     pub(crate) mod confedit;
 }
-// The host-owned status-line slot, shared by every backend whose harness has one
-// (`Capabilities::statusline`) — plugin-native or config-merge alike, which is why
-// its gate is that set rather than either family's.
-#[cfg(any(feature = "claude", feature = "qwen-code"))]
-pub(crate) mod statuslinejson;
+/// Every feature whose backend writes a host-owned status-line slot
+/// (`Capabilities::statusline`) — plugin-native and config-merge alike, which is why
+/// this is its own set rather than either family's. One place to extend per backend.
+macro_rules! cfg_statusline_backends {
+    ($item:item) => {
+        #[cfg(any(feature = "claude", feature = "qwen-code", feature = "antigravity-cli", feature = "droid"))]
+        $item
+    };
+}
+pub(crate) use cfg_statusline_backends;
+
+cfg_statusline_backends! {
+    // `allow(dead_code)`: the shape axes are per-harness, so any single-backend build
+    // leaves the ones it does not use unreferenced (same idiom as `mcpjson` above).
+    #[allow(dead_code)]
+    pub(crate) mod statuslinejson;
+}
 cfg_config_backends! {
     #[allow(dead_code)]
     pub(crate) mod mcpjson;

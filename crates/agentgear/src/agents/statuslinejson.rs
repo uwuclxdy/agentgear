@@ -45,13 +45,24 @@ pub(crate) enum ValueShape {
 #[derive(Clone, Copy)]
 pub(crate) struct SlotShape {
     pub(crate) value: ValueShape,
+    /// A harness-local row cap written verbatim beside the command, when its slot has
+    /// one. Not a host-declared knob: `StatusLineDecl` deliberately carries no
+    /// `max_rows`, because exactly one harness has the field and its right value is a
+    /// property of that harness's renderer, not of the host's declaration.
+    pub(crate) max_rows: Option<u8>,
 }
 
 impl SlotShape {
     /// CC's `{"type":"command","command":…}` object, plus `padding` when the host
     /// declared one.
     pub(crate) const fn typed_command() -> Self {
-        Self { value: ValueShape::TypedCommand }
+        Self { value: ValueShape::TypedCommand, max_rows: None }
+    }
+
+    /// Emit `maxRows` beside the command (droid).
+    pub(crate) const fn with_max_rows(mut self, rows: u8) -> Self {
+        self.max_rows = Some(rows);
+        self
     }
 }
 
@@ -65,6 +76,9 @@ fn render(decl: &StatusLineDecl, shape: SlotShape) -> Value {
             map.insert("command".to_string(), Value::String(decl.command.clone()));
             if let Some(padding) = decl.padding {
                 map.insert("padding".to_string(), Value::from(padding));
+            }
+            if let Some(rows) = shape.max_rows {
+                map.insert("maxRows".to_string(), Value::from(rows));
             }
             Value::Object(map)
         }

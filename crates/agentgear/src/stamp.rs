@@ -115,16 +115,17 @@ pub(crate) fn write(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str
     write_marker(&path, &marker)
 }
 
+crate::agents::cfg_statusline_backends! {
 /// Record `original` as the status-line value that was in the harness's settings
 /// before this agent's backend wrote the host's own. Read-modify-write, and it
 /// creates the marker when the reconcile that found the value has not been stamped
 /// yet (the fan-out stamps only after a backend's whole reconcile succeeds).
-#[cfg(any(feature = "claude", feature = "qwen-code"))]
 pub(crate) fn stash_statusline(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str, original: serde_json::Value) -> Result<()> {
     let path = marker_path(plugin, scope, agent)?;
     let mut marker = read(plugin, scope, agent)?.unwrap_or_else(|| base_marker(plugin, scope, source, agent));
     marker.statusline_original = Some(original);
     write_marker(&path, &marker)
+}
 }
 
 pub(crate) fn clear(plugin: &Plugin, scope: &Scope, agent: &str) -> Result<()> {

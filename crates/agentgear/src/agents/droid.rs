@@ -16,6 +16,10 @@
 //! Skills land as bare `<base>/skills/<name>/SKILL.md` (droid's first-class skill
 //! surface, both scopes), tagged for ownership. See `docs/harness/droid.md` for the
 //! full mapping.
+//!
+//! One surface is not a translation of anything in the plugin tree: the host-owned
+//! status line, in `<base>/settings.json` at the ROOT `statusLine` key. It runs the
+//! shared [`super::statuslinejson`] slot lifecycle on both scopes.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -28,6 +32,7 @@ use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem,
 use super::mcpjson::{self, ServerShape};
 use super::report;
 use super::skillsdir;
+use super::statuslinejson::{self, SlotShape};
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, MarkdownDoc};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -35,6 +40,35 @@ use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 pub(crate) struct DroidBackend;
+
+/// Root-level `statusLine` in `<base>/settings.json`. NOT nested under `general`:
+/// droid's accessor reads `settings.general?.statusLine` only because a flat file is
+/// wrapped under `general` at load time — on disk the key is root-level, which is what
+/// Factory's own `/statusline` setup agent writes.
+const STATUSLINE_SLOT: &[&str] = &["statusLine"];
+
+/// Rows droid may render. `compose` structurally emits at least TWO rows whenever the
+/// user already had a status line (ours, then theirs), and droid's `maxRows` defaults
+/// to 1 — so leaving it unset would silently clip off exactly the row the whole compose
+/// design exists to preserve. Its zod schema is `int 1..=3` and the renderer clamps with
+/// `Math.min(3, Math.max(1, floor(maxRows ?? 1)))`, so it reads as a cap rather than a
+/// reservation; 3 is the ceiling and costs nothing when only one row is printed.
+/// UNPROVEN at render time — taken from the schema and the clamp, not from an observed
+/// render (`docs/research/statusline-survey.md` §3).
+const STATUSLINE_MAX_ROWS: u8 = 3;
+
+/// CC's body plus droid's own row cap. `type` is OPTIONAL here and accepted — the
+/// earlier "no `type`, and the absence is load-bearing" reading is refuted by the zod
+/// schema (`type: literal("command").optional()`) and by Factory's own agent emitting
+/// it — so droid reuses `TypedCommand` rather than earning a variant of its own.
+const STATUSLINE_SHAPE: SlotShape = SlotShape::typed_command().with_max_rows(STATUSLINE_MAX_ROWS);
+
+/// The settings file the slot lives in, or `None` when the host declares no status
+/// line. Both scopes are real, so this resolves through the backend's own existing
+/// config-base resolver rather than a second copy of it.
+fn statusline_target(plugin: &Plugin, scope: &Scope) -> Result<Option<PathBuf>> {
+    statuslinejson::target(plugin, DroidBackend.id(), STATUSLINE_SHAPE, || Ok(factory_dir(scope)?.join("settings.json")))
+}
 
 impl AgentBackend for DroidBackend {
     fn id(&self) -> &'static str {
@@ -59,7 +93,7 @@ impl AgentBackend for DroidBackend {
             agents: true,
             skills: true,
             instructions: false,
-            statusline: false,
+            statusline: true,
             scopes: &["user", "project"],
         }
     }
@@ -85,7 +119,14 @@ impl AgentBackend for DroidBackend {
             |_, _| true,
         )?;
         let skills = skillsdir::probe(&base.join("skills"), plugin, &comp.skills)?;
-        Ok(report::compose([mcp, hooks, commands, droids, skills].into_iter().flatten()))
+        // The slot cannot carry presence on its own: a foreign line reads `Absent`
+        // (`statuslinejson::state`), so a plugin the user removed stays `Absent` here
+        // instead of handing self_heal's adopt row a reason to reinstall it.
+        let statusline = match statusline_target(plugin, scope)? {
+            Some(path) => statuslinejson::state(&path, STATUSLINE_SLOT, plugin, self.id(), STATUSLINE_SHAPE)?,
+            None => None,
+        };
+        Ok(report::compose([mcp, hooks, commands, droids, skills, statusline].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -108,6 +149,9 @@ impl AgentBackend for DroidBackend {
             changed |= write_file_idem(&path, render_droid(plugin.name, &doc.rel, doc).as_bytes())?;
         }
         changed |= skillsdir::reconcile(&base.join("skills"), plugin, &comp.skills)?;
+        if let Some(path) = statusline_target(plugin, scope)? {
+            changed |= statuslinejson::reconcile(&path, STATUSLINE_SLOT, plugin, &desired.source, scope, self.id(), STATUSLINE_SHAPE)?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -128,7 +172,22 @@ impl AgentBackend for DroidBackend {
             }
         }
         changed |= skillsdir::remove(&base.join("skills"), plugin, &comp.skills)?;
+        // Exact-remove for a slot means RESTORE: put back what our write displaced.
+        if let Some(path) = statusline_target(plugin, scope)? {
+            changed |= statuslinejson::remove(&path, STATUSLINE_SLOT, plugin, scope, self.id(), STATUSLINE_SHAPE)?;
+        }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
+    }
+
+    /// `settings.json` is a file the USER owns and it outlives droid's config tree and
+    /// the `droid` binary, so the slot goes back on every teardown branch that reaches
+    /// the marker clear — the skips included, since the marker holds the only copy of
+    /// what we displaced.
+    fn forget(&self, plugin: &Plugin, scope: &Scope) -> Result<()> {
+        let Some(path) = statusline_target(plugin, scope)? else {
+            return Ok(());
+        };
+        statuslinejson::remove(&path, STATUSLINE_SLOT, plugin, scope, self.id(), STATUSLINE_SHAPE).map(|_| ())
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {
@@ -333,6 +392,8 @@ fn report_checks(backend: &DroidBackend, plugin: &Plugin, source: &Source) -> Ve
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_docs_present("commands", "commands/", &comp.commands, plugin.name, &base));
     checks.push(check_docs_present("droids", "agents/", &comp.agents, plugin.name, &base));
+    // Absent entirely for a host that declares no status line.
+    checks.extend(statuslinejson::check(Ok(base.join("settings.json")), STATUSLINE_SLOT, plugin, backend.id(), STATUSLINE_SHAPE, "droid"));
 
     checks
 }

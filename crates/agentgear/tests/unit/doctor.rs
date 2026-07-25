@@ -40,6 +40,8 @@ fn unresolvable_agent_is_a_failed_check_not_an_aborted_report() {
 // The two-capable-backend cases need a second status-line backend compiled in.
 
 const TOKEN_LESS: &str = "mytool statusline";
+/// Only the two-capable-backend cases use it, and those need a second slot backend.
+#[cfg(feature = "qwen-code")]
 const WITH_TOKEN: &str = "mytool statusline --client ${AGENTGEAR_CLIENT}";
 
 #[cfg(feature = "qwen-code")]
