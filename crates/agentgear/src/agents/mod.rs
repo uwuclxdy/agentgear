@@ -102,17 +102,21 @@ macro_rules! cfg_config_backends {
 // Shared config-writing helpers, compiled only when a non-CC backend needs them.
 // `allow(dead_code)`: not every enabled backend uses every helper, so a single-
 // feature build leaves parts of the shared surface unreferenced.
-// `confedit` is the one shared helper the `claude` backend needs too: CC's
-// `statusLine` slot lives in the user's own `settings.json`, so that backend
-// read-modify-writes exactly one config file on top of its CLI orchestration. Its
-// real gate is therefore "the config-backend set PLUS claude" — split into two
-// declarations because the shared macro carries only the non-CC set, and pulling
-// `claude` into the macro would drag the other four helpers into every default build.
-#[cfg(feature = "claude")]
+// `confedit` is the one shared helper the two PLUGIN-NATIVE backends need too: a
+// host-owned status-line slot lives in the user's own settings file (CC's
+// `settings.json`, copilot's `$COPILOT_HOME/settings.json`), so each of those
+// backends read-modify-writes exactly one config file on top of its CLI
+// orchestration. The real gate is therefore "the config-backend set PLUS the
+// plugin-native slot backends" — split into two declarations because the shared macro
+// carries only the non-CC set, and pulling those two into the macro would drag the
+// other four helpers into every default build. Widen BOTH arms when a third
+// plugin-native backend gains a slot: a feature in neither set loses `confedit`
+// entirely and reds with `E0432` that no `--all-features` gate leg can see.
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 #[allow(dead_code)]
 pub(crate) mod confedit;
 cfg_config_backends! {
-    #[cfg(not(feature = "claude"))]
+    #[cfg(not(any(feature = "claude", feature = "copilot-cli")))]
     #[allow(dead_code)]
     pub(crate) mod confedit;
 }
@@ -121,7 +125,7 @@ cfg_config_backends! {
 /// this is its own set rather than either family's. One place to extend per backend.
 macro_rules! cfg_statusline_backends {
     ($item:item) => {
-        #[cfg(any(feature = "claude", feature = "qwen-code", feature = "antigravity-cli", feature = "droid"))]
+        #[cfg(any(feature = "claude", feature = "qwen-code", feature = "antigravity-cli", feature = "droid", feature = "copilot-cli"))]
         $item
     };
 }

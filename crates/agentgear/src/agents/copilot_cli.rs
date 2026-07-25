@@ -26,13 +26,39 @@
 //! copilot+github — a present github install is treated as converged (probe
 //! `Healthy`, reconcile `NoOp`) rather than churned toward the baked version. This is
 //! a copilot CLI limitation, not an agentgear bug.
+//!
+//! One exception to "no per-surface translation": copilot's `statusLine` slot lives in
+//! the user's own `$COPILOT_HOME/settings.json`, not in any plugin tree, so a host
+//! that declares a status line gets it written here through the shared
+//! [`super::statuslinejson`] lifecycle. That module owns the whole slot contract
+//! (stash-before-write, restore-on-remove, command-string ownership); this backend
+//! supplies only copilot's settings path, key path, and value shape. USER SCOPE ONLY,
+//! matching the only scope this backend has.
 
+use std::path::PathBuf;
+
+use super::statuslinejson::{self, SlotShape};
 use super::{AgentBackend, BackendState};
 use crate::cli::{CopilotCli, CopilotPlugin, MIN_COPILOT_VERSION, copilot_meets_floor, version_lt};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 use crate::materialize::{TreeSource, materialize};
+
+/// copilot's settings key path for the status-line slot: one root-level key holding a
+/// single object, never an array.
+const STATUSLINE_SLOT: &[&str] = &["statusLine"];
+
+/// CC's body, unchanged. copilot 1.0.75 documents and implements exactly
+/// `{type?: "command", command, padding?}`: `type` is optional and its renderer reads
+/// only `command` + `padding` (`docs/research/statusline-survey.md` §4), so
+/// `TypedCommand` already covers the whole of what this harness stores — nothing to
+/// carry, no row cap, no variant of its own.
+///
+/// The renderer swallows every error and renders empty for a blank or non-string
+/// command, so a wrong key path here fails completely silently. Verify against the
+/// survey, never by watching a copilot session.
+const STATUSLINE_SHAPE: SlotShape = SlotShape::typed_command();
 
 pub(crate) struct CopilotCliBackend;
 
@@ -50,7 +76,11 @@ impl AgentBackend for CopilotCliBackend {
     fn capabilities(&self) -> Capabilities {
         // Plugin-native like claude: copilot ingests the CC tree wholesale, so every
         // surface (mcp + hooks + commands + agents + skills) is served natively. User
-        // scope only — copilot installs are user-global with no `--scope`.
+        // scope only — copilot installs are user-global with no `--scope`, and the
+        // status-line slot's repo-overridability could not be enumerated (the
+        // governance allow-list is built inside copilot's Rust `runtime.node`).
+        // `statusline` is true and NOT implied by `plugins`: the slot lives in the
+        // user's own `settings.json`, outside every tree copilot ingests.
         Capabilities {
             plugins: true,
             mcp: true,
@@ -59,27 +89,49 @@ impl AgentBackend for CopilotCliBackend {
             agents: true,
             skills: true,
             instructions: false,
-            statusline: false,
+            statusline: true,
             scopes: &["user"],
         }
     }
 
-    fn probe(&self, plugin: &Plugin, _scope: &Scope, source: &Source) -> Result<BackendState> {
-        // CLI-based: copilot's registry is the source of truth, so scope (user-global)
-        // never enters the probe. `source` distinguishes only github (unpinnable ref
-        // -> presence-only, never version-churn) from a version-comparable
-        // embedded/path install; `plugin list` has no install-path/enabled column, so
-        // there is no `Disabled` / files-gone state.
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
+        // CLI-based: copilot's registry is the source of truth, so scope never enters
+        // the REGISTRY half (installs are user-global). `source` distinguishes only
+        // github (unpinnable ref -> presence-only, never version-churn) from a
+        // version-comparable embedded/path install; `plugin list` has no
+        // install-path/enabled column, so there is no `Disabled` / files-gone state.
         let cli = CopilotCli::locate()?;
-        Ok(classify(source, find_plugin(&cli, plugin)?.as_ref(), plugin.version))
+        let registry = classify(source, find_plugin(&cli, plugin)?.as_ref(), plugin.version);
+        if matches!(registry, BackendState::Absent) {
+            return Ok(BackendState::Absent);
+        }
+        // The registry alone decides presence. A statusLine of ours still sitting in
+        // `settings.json` after a manual `copilot plugin uninstall` must not read as
+        // "present but drifted", or self_heal would resurrect a deliberate uninstall
+        // (the Absent arm above already returned). Once the plugin IS registered, a
+        // missing or foreign statusLine is drift like any other surface.
+        Ok(match statusline_state(plugin, scope)? {
+            None | Some(BackendState::Healthy) => registry,
+            Some(_) => BackendState::NeedsRepair,
+        })
     }
 
-    fn reconcile(&self, plugin: &Plugin, desired: &Desired, _scope: &Scope) -> Result<Outcome> {
-        reconcile(plugin, desired)
+    fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
+        reconcile(plugin, desired, scope)
     }
 
-    fn remove(&self, plugin: &Plugin, _scope: &Scope, _source: &Source) -> Result<Outcome> {
-        remove(plugin)
+    fn remove(&self, plugin: &Plugin, scope: &Scope, _source: &Source) -> Result<Outcome> {
+        remove(plugin, scope)
+    }
+
+    /// copilot's statusLine slot is our only write outside its plugin registry, so a
+    /// plugin the user removed by hand leaves our command behind with nothing left to
+    /// restore it once the marker (and its stash) goes. Project scope reaches here too
+    /// — this backend declares user scope only, so an uninstall at project scope is a
+    /// `ScopeUnsupported` skip that still calls `forget` — and is a no-op, because
+    /// `statusline_target` serves no project scope.
+    fn forget(&self, plugin: &Plugin, scope: &Scope) -> Result<()> {
+        statusline_remove(plugin, scope).map(|_| ())
     }
 
     fn report(&self, plugin: &Plugin, _source: &Source) -> DoctorReport {
@@ -133,32 +185,47 @@ fn plugin_uninstall(cli: &CopilotCli, id: &str) -> Result<()> {
 
 // --- reconcile ---------------------------------------------------------------
 
-fn reconcile(plugin: &Plugin, desired: &Desired) -> Result<Outcome> {
+fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
     let cli = CopilotCli::locate()?;
     let id = plugin.id();
 
-    let Some(entry) = find_plugin(&cli, plugin)? else {
-        // Absent: full install. Every source (embedded/path/github) flows through
-        // marketplace-add + `plugin install <plugin>@<marketplace>`; a github source
-        // registers a marketplace under the name in the repo's root marketplace.json,
-        // which is `plugin.marketplace`, so the id keyed on here matches.
-        cli.ensure_min_version()?;
-        ensure_marketplace(&cli, plugin, &desired.source)?;
-        plugin_install(&cli, &id)?;
-        verify_present(&cli, plugin)?;
-        return Ok(Outcome::Installed);
-    };
-
-    match present_action(&desired.source, entry.version.as_deref(), plugin.version) {
-        PresentAction::NoOp => Ok(Outcome::NoOp),
-        PresentAction::Update => {
+    // The registry half first, exactly as claude splits it: `PresentAction::Frozen`
+    // returns before the slot is touched, every other arm falls through to converge it.
+    let registry = match find_plugin(&cli, plugin)? {
+        None => {
+            // Absent: full install. Every source (embedded/path/github) flows through
+            // marketplace-add + `plugin install <plugin>@<marketplace>`; a github
+            // source registers a marketplace under the name in the repo's root
+            // marketplace.json, which is `plugin.marketplace`, so the id keyed on here
+            // matches.
             cli.ensure_min_version()?;
             ensure_marketplace(&cli, plugin, &desired.source)?;
-            plugin_update(&cli, &id)?;
+            plugin_install(&cli, &id)?;
             verify_present(&cli, plugin)?;
-            Ok(Outcome::Updated { from: entry.version.clone(), to: plugin.version.to_string() })
+            Outcome::Installed
         }
-    }
+        Some(entry) => match present_action(&desired.source, entry.version.as_deref(), plugin.version) {
+            // A newer binary owns this install, so its slot is theirs too: skip the
+            // slot write entirely rather than writing over another owner's value.
+            PresentAction::Frozen => return Ok(Outcome::NoOp),
+            PresentAction::NoOp => Outcome::NoOp,
+            PresentAction::Update => {
+                cli.ensure_min_version()?;
+                ensure_marketplace(&cli, plugin, &desired.source)?;
+                plugin_update(&cli, &id)?;
+                verify_present(&cli, plugin)?;
+                Outcome::Updated { from: entry.version.clone(), to: plugin.version.to_string() }
+            }
+        },
+    };
+
+    // A drifted statusLine behind an otherwise-converged registry is still a repair;
+    // any real registry change already outranks it.
+    let changed = statusline_reconcile(plugin, desired, scope)?;
+    Ok(match (registry, changed) {
+        (Outcome::NoOp, true) => Outcome::Repaired,
+        (outcome, _) => outcome,
+    })
 }
 
 /// Ensure our marketplace is registered, add-if-absent. Embedded/path add the
@@ -208,20 +275,30 @@ fn verify_present(cli: &CopilotCli, plugin: &Plugin) -> Result<()> {
 
 #[derive(Debug, PartialEq, Eq)]
 enum PresentAction {
+    /// Converged: nothing to do in the registry, and the status-line slot still
+    /// converges (a github install is ours, just unpinnable).
     NoOp,
     Update,
+    /// A strictly-newer install: a newer binary owns it, the slot included. claude's
+    /// `RegistryOutcome::Frozen`, split out of `NoOp` because the two need different
+    /// slot handling — writing our command into an install another binary owns would
+    /// point its status line at the wrong binary.
+    Frozen,
 }
 
 /// Present-plugin reconcile decision. github can't pin a ref (copilot tracks the
 /// default branch), so its installed version is unrelated to the baked one — a
 /// present github install is always converged (`NoOp`), never churning on `plugin
 /// update`. Other sources are monotonic: update only toward a strictly-newer embedded
-/// version; a same-or-newer install (e.g. a coexisting newer binary) is left
-/// untouched, so two binaries never downgrade each other.
+/// version; a strictly-newer install (a coexisting newer binary) is `Frozen`, so two
+/// binaries never downgrade each other and neither takes the other's slot. An
+/// unparseable or missing installed version is neither older nor newer, so it stays
+/// `NoOp` — converged, slot included.
 fn present_action(source: &Source, installed: Option<&str>, embedded: &str) -> PresentAction {
     match source {
         Source::GitHub { .. } => PresentAction::NoOp,
         _ if version_lt(installed, embedded) => PresentAction::Update,
+        _ if installed.is_some_and(|v| version_lt(Some(embedded), v)) => PresentAction::Frozen,
         _ => PresentAction::NoOp,
     }
 }
@@ -244,13 +321,87 @@ fn classify(source: &Source, entry: Option<&CopilotPlugin>, embedded: &str) -> B
 
 /// Uninstall our plugin. copilot exposes no `marketplace remove`, so the local
 /// marketplace stays registered (a harmless dangling entry pointing at `current@copilot-cli`).
-fn remove(plugin: &Plugin) -> Result<Outcome> {
+///
+/// The statusLine slot lives in the user's own `settings.json`, outside the plugin
+/// registry, so the CLI uninstall cannot have touched it — and exact-remove for a slot
+/// means RESTORE: put back what our write displaced. Either half changing something is
+/// a `Removed`; neither is the `NoOp` this backend's teardown contract promises.
+fn remove(plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
     let cli = CopilotCli::locate()?;
-    if find_plugin(&cli, plugin)?.is_none() {
-        return Ok(Outcome::NoOp);
+    let mut changed = false;
+    if find_plugin(&cli, plugin)?.is_some() {
+        plugin_uninstall(&cli, &plugin.id())?;
+        changed = true;
     }
-    plugin_uninstall(&cli, &plugin.id())?;
-    Ok(Outcome::Removed)
+    changed |= statusline_remove(plugin, scope)?;
+    Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
+}
+
+// --- statusLine ---------------------------------------------------------------
+
+/// copilot's config dir: `$COPILOT_HOME` when set and non-empty, else `~/.copilot`.
+///
+/// The empty case deliberately diverges from copilot's own
+/// `process.env.COPILOT_HOME ?? join(homedir(), ".copilot")` (1.0.75 bundle,
+/// `docs/research/statusline-survey.md` §4): `??` is nullish-only, so copilot reads
+/// `COPILOT_HOME=""` as the config dir itself and resolves `settings.json` against the
+/// CWD. Treating empty as unset keeps a stray `export COPILOT_HOME=` from dropping a
+/// `settings.json` into whatever directory the host binary happened to run in — an
+/// ineffective write under `~/.copilot` is the better failure. Ceiling: on that one
+/// input we write where copilot will not read. Same idiom as claude's `cc_config_dir`.
+fn copilot_home() -> Result<PathBuf> {
+    if let Some(dir) = std::env::var_os("COPILOT_HOME").filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(dir));
+    }
+    dirs::home_dir()
+        .map(|home| home.join(".copilot"))
+        .ok_or_else(|| Error::Tree("no home directory (HOME unset); cannot locate ~/.copilot".into()))
+}
+
+/// The user settings file copilot migrated its status line into out of the legacy
+/// `config.json`.
+fn statusline_file() -> Result<PathBuf> {
+    Ok(copilot_home()?.join("settings.json"))
+}
+
+/// The settings file the slot lifecycle writes, or `None` when there is nothing to
+/// write: the host declares no status line, or the scope is project.
+///
+/// USER SCOPE ONLY. copilot's repo-scope settings files exist
+/// (`.github/copilot/settings.json`), but whether `statusLine` is repo-overridable
+/// could not be enumerated — the governance allow-list is built inside copilot's Rust
+/// `runtime.node` (`docs/research/statusline-survey.md` §4).
+///
+/// The scope guard is load-bearing, not cosmetic. `statuslinejson::remove` keys the
+/// stash on `(plugin, scope, client)`, so a project-scope call would read an empty
+/// marker, still see our command as `is_ours`, and DELETE the slot — losing the user's
+/// original, which is stashed under the user-scope marker.
+fn statusline_target(plugin: &Plugin, scope: &Scope) -> Result<Option<PathBuf>> {
+    let Scope::User = scope else {
+        return Ok(None);
+    };
+    statuslinejson::target(plugin, CopilotCliBackend.id(), STATUSLINE_SHAPE, statusline_file)
+}
+
+fn statusline_reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<bool> {
+    let Some(path) = statusline_target(plugin, scope)? else {
+        return Ok(false);
+    };
+    statuslinejson::reconcile(&path, STATUSLINE_SLOT, plugin, &desired.source, scope, CopilotCliBackend.id(), STATUSLINE_SHAPE)
+}
+
+fn statusline_remove(plugin: &Plugin, scope: &Scope) -> Result<bool> {
+    let Some(path) = statusline_target(plugin, scope)? else {
+        return Ok(false);
+    };
+    statuslinejson::remove(&path, STATUSLINE_SLOT, plugin, scope, CopilotCliBackend.id(), STATUSLINE_SHAPE)
+}
+
+fn statusline_state(plugin: &Plugin, scope: &Scope) -> Result<Option<BackendState>> {
+    let Some(path) = statusline_target(plugin, scope)? else {
+        return Ok(None);
+    };
+    statuslinejson::state(&path, STATUSLINE_SLOT, plugin, CopilotCliBackend.id(), STATUSLINE_SHAPE)
 }
 
 // --- report ------------------------------------------------------------------
@@ -272,6 +423,16 @@ fn report_checks(plugin: &Plugin) -> Vec<DoctorCheck> {
     };
     checks.push(check_version(&cli));
     check_registered(&cli, plugin, &mut checks);
+    // Absent entirely for a host that declares no status line. User scope, matching the
+    // only scope this backend (and the surface) has.
+    checks.extend(statuslinejson::check(
+        statusline_file(),
+        STATUSLINE_SLOT,
+        plugin,
+        CopilotCliBackend.id(),
+        STATUSLINE_SHAPE,
+        "GitHub Copilot CLI",
+    ));
     checks
 }
 

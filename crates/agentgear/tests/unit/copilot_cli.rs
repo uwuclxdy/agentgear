@@ -6,6 +6,8 @@
 //! (`crates/host-fixture/tests/docker/copilot-cli`), which cannot run under
 //! `cargo test`, so nothing here spawns `copilot`.
 
+use std::path::PathBuf;
+
 use super::{BackendState, PresentAction, classify, github_marketplace_source, present_action};
 use crate::cli::{CopilotMarketplace, CopilotPlugin, parse_marketplace_list, parse_plugin_list, parse_version_anywhere};
 use crate::host::Source;
@@ -96,11 +98,24 @@ fn present_action_updates_only_a_stale_non_github_install() {
     let src = Source::Embedded;
     assert_eq!(present_action(&src, Some("0.1.0"), "0.2.0"), PresentAction::Update);
     assert_eq!(present_action(&src, Some("0.2.0"), "0.2.0"), PresentAction::NoOp);
-    // a strictly-newer install (a coexisting newer binary) is never downgraded.
-    assert_eq!(present_action(&src, Some("0.3.0"), "0.2.0"), PresentAction::NoOp);
-    // unparseable / missing installed => never churn.
+    // unparseable / missing installed => never churn, and never freeze either: neither
+    // older nor newer, so the slot still converges.
     assert_eq!(present_action(&src, None, "0.2.0"), PresentAction::NoOp);
     assert_eq!(present_action(&src, Some("weird"), "0.2.0"), PresentAction::NoOp);
+}
+
+#[test]
+fn present_action_freezes_a_strictly_newer_install() {
+    // A strictly-newer install belongs to a coexisting newer binary: never downgraded
+    // (that was always true) and now `Frozen` rather than `NoOp`, because the two
+    // differ on the status-line slot. `NoOp` converges the slot; taking it here would
+    // point a newer binary's status line at this older one, on every session.
+    let src = Source::Embedded;
+    assert_eq!(present_action(&src, Some("0.3.0"), "0.2.0"), PresentAction::Frozen);
+    assert_eq!(present_action(&src, Some("1.0.0"), "0.2.0"), PresentAction::Frozen);
+    // Same for a `--path` install: the freeze is about who owns the install, not the
+    // source it came from.
+    assert_eq!(present_action(&Source::Path(PathBuf::from("/tmp/tree")), Some("0.3.0"), "0.2.0"), PresentAction::Frozen);
 }
 
 #[test]
@@ -111,6 +126,16 @@ fn present_action_github_present_is_converged_no_version_churn() {
     assert_eq!(present_action(&github(), Some("0.1.0"), "0.2.0"), PresentAction::NoOp);
     assert_eq!(present_action(&github(), Some("0.9.0"), "0.2.0"), PresentAction::NoOp);
     assert_eq!(present_action(&github(), None, "0.2.0"), PresentAction::NoOp);
+}
+
+#[test]
+fn present_action_github_outranks_the_freeze() {
+    // The github arm is matched FIRST, so a newer-looking github install is `NoOp`
+    // (converged, slot written), not `Frozen`. It has to be: its version tracks a
+    // default branch, so a newer number there is drift, not another binary's install —
+    // freezing on it would silently stop writing the slot for every github host whose
+    // default branch moved ahead of the baked version.
+    assert_eq!(present_action(&github(), Some("9.9.9"), "0.2.0"), PresentAction::NoOp);
 }
 
 #[test]

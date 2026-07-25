@@ -30,6 +30,13 @@ path = "src/bin/embedded_github_fixture.rs"
 name = "fake_claude"
 path = "src/bin/fake_claude.rs"
 
+# The same for `copilot`: the copilot-cli backend's `detect()` is `which("copilot")`,
+# so without a double on PATH the fan-out skips the agent and no hermetic test can
+# reach its status-line slot.
+[[bin]]
+name = "fake_copilot"
+path = "src/bin/fake_copilot.rs"
+
 [lints]
 workspace = true
 
