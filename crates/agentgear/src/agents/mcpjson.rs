@@ -8,7 +8,7 @@ use std::path::Path;
 use serde_json::{Map, Value};
 
 use super::BackendState;
-use super::confedit::{json_edit, json_obj_at};
+use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove};
 use crate::components::{McpKind, McpServer};
 use crate::error::{Error, Result};
 use crate::host::Outcome;
@@ -239,19 +239,21 @@ pub(crate) fn probe_surface(path: &Path, key_path: &[&str], servers: &[McpServer
 /// Remove exactly our server keys under `key_path`, leaving others. Ownership is
 /// the same writable filter reconcile uses, so a server we declared but never
 /// wrote (non-portable, or unsupported by this dialect) can never shadow-delete a
-/// same-named user entry. Conservatively leaves an emptied object in place rather
-/// than dropping the file.
+/// same-named user entry. The container object and then the file follow our last key
+/// out when our own removal is what emptied them, so an uninstall leaves nothing of
+/// ours behind; a container the user had empty before us is untouched.
 pub(crate) fn remove(path: &Path, key_path: &[&str], servers: &[McpServer], shape: ServerShape) -> Result<Outcome> {
     if !path.exists() {
         return Ok(Outcome::NoOp);
     }
-    let changed = json_edit(path, |root| {
-        if let Some(obj) = navigate_mut(root, key_path) {
+    let changed = json_remove(path, |root| {
+        json_prune_obj(root, key_path, |obj| {
             for server in writable(servers, shape) {
                 obj.remove(&server.name);
             }
-        }
-        Ok(())
+            Ok(())
+        })
+        .map(|_| ())
     })?;
     Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
 }
@@ -262,14 +264,6 @@ fn navigate<'a>(root: &'a Value, key_path: &[&str]) -> Option<&'a Map<String, Va
         cur = cur.get(key)?;
     }
     cur.as_object()
-}
-
-fn navigate_mut<'a>(root: &'a mut Value, key_path: &[&str]) -> Option<&'a mut Map<String, Value>> {
-    let mut cur = root;
-    for key in key_path {
-        cur = cur.get_mut(key)?;
-    }
-    cur.as_object_mut()
 }
 
 #[cfg(test)]

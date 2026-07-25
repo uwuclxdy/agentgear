@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 use super::BackendState;
-use super::confedit::{json_edit, json_obj_at};
+use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove};
 use crate::components::expand_client;
 use crate::doctor::{CheckStatus, DoctorCheck};
 use crate::error::{Error, Result};
@@ -265,6 +265,8 @@ pub(crate) fn reconcile(
 ///
 /// An unparseable settings file refuses the whole edit (`Error::Config`) rather than
 /// clobbering it, so the stash is never consumed against a file that could not be read.
+///
+/// A settings file left holding nothing at all is dropped: it was ours to begin with.
 pub(crate) fn remove(path: &Path, key_path: &[&str], plugin: &Plugin, scope: &Scope, client: &str, shape: SlotShape) -> Result<bool> {
     let Some((_, our_command)) = rendered(plugin, client, shape) else {
         return Ok(false);
@@ -273,21 +275,22 @@ pub(crate) fn remove(path: &Path, key_path: &[&str], plugin: &Plugin, scope: &Sc
         return Ok(false);
     };
     let stashed = stamp::read(plugin, scope, client)?.and_then(|m| m.statusline_original);
-    json_edit(path, |root| {
-        // Navigate without creating: a settings file with no container object never
-        // held a slot of ours, and creating one here would leave an empty `"ui": {}`
-        // behind — a write, on a teardown that had nothing to undo.
-        let Some(obj) = obj_at_mut(root, containers) else {
-            return Ok(());
-        };
-        if !obj.get(slot).is_some_and(|existing| is_ours(existing, &our_command, shape)) {
-            return Ok(());
-        }
-        match &stashed {
-            Some(original) => obj.insert(slot.to_string(), original.clone()),
-            None => obj.remove(slot),
-        };
-        Ok(())
+    json_remove(path, |root| {
+        // Navigates without creating, and takes the container back out when our slot
+        // key is what emptied it: reconcile created that container, so leaving an
+        // empty `"ui": {}` behind would be a write on a teardown that had nothing to
+        // undo. A restore refills the slot, so the prune only fires on the drop arm.
+        json_prune_obj(root, containers, |obj| {
+            if !obj.get(slot).is_some_and(|existing| is_ours(existing, &our_command, shape)) {
+                return Ok(());
+            }
+            match &stashed {
+                Some(original) => obj.insert(slot.to_string(), original.clone()),
+                None => obj.remove(slot),
+            };
+            Ok(())
+        })
+        .map(|_| ())
     })
 }
 
@@ -408,16 +411,6 @@ fn value_at<'a>(root: &'a Value, key_path: &[&str]) -> Option<&'a Value> {
         cur = cur.get(key)?;
     }
     Some(cur)
-}
-
-/// The mutable, NON-creating counterpart of [`value_at`] for the container path:
-/// `None` when any level is missing or is not an object.
-fn obj_at_mut<'a>(root: &'a mut Value, key_path: &[&str]) -> Option<&'a mut Map<String, Value>> {
-    let mut cur = root;
-    for key in key_path {
-        cur = cur.get_mut(key)?;
-    }
-    cur.as_object_mut()
 }
 
 #[cfg(test)]

@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::cchooks::{hook_is_portable, render_hook_group};
-use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem, yaml_scalar};
+use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem, yaml_scalar};
 use super::mcpjson::{self, ServerShape};
 use super::report;
 use super::{AgentBackend, BackendState};
@@ -253,21 +253,23 @@ fn reconcile_settings(settings: &Path, servers: &[McpServer], hooks: &[HookBindi
 /// Strip exactly our mcp keys + hook handlers from settings.json in one edit, leaving
 /// the user's own entries. Hook ownership mirrors `reconcile_settings`'s writable
 /// filter (portable AND mapped) so a command from an unmapped event — never written
-/// here — is never treated as ours. A group/event array we empty is dropped; the file
-/// is left in place (merge-safe, like the mcp keys).
+/// here — is never treated as ours. A group/event array we empty is dropped, then the
+/// `mcpServers`/`hooks` key our own last entry emptied, then the file itself once
+/// nothing but our writes is left in it.
 fn remove_from_settings(settings: &Path, server_names: &[&str], hooks: &[HookBinding]) -> Result<bool> {
     if !settings.exists() {
         return Ok(false);
     }
     let ours: BTreeSet<&str> =
         hooks.iter().filter(|h| hook_is_portable(h) && map_event(&h.event).is_some()).map(|h| h.command.as_str()).collect();
-    json_edit(settings, |root| {
-        if let Some(mcp) = root.get_mut("mcpServers").and_then(Value::as_object_mut) {
+    json_remove(settings, |root| {
+        json_prune_obj(root, &["mcpServers"], |mcp| {
             for name in server_names {
                 mcp.remove(*name);
             }
-        }
-        if let Some(events) = root.get_mut("hooks").and_then(Value::as_object_mut) {
+            Ok(())
+        })?;
+        json_prune_obj(root, &["hooks"], |events| {
             for groups in events.values_mut() {
                 let Some(list) = groups.as_array_mut() else { continue };
                 for group in list.iter_mut() {
@@ -278,7 +280,8 @@ fn remove_from_settings(settings: &Path, server_names: &[&str], hooks: &[HookBin
                 list.retain(|group| group.get("hooks").and_then(Value::as_array).is_none_or(|h| !h.is_empty()));
             }
             events.retain(|_, groups| groups.as_array().is_none_or(|a| !a.is_empty()));
-        }
+            Ok(())
+        })?;
         Ok(())
     })
 }

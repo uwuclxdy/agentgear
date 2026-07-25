@@ -37,7 +37,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 use super::cchooks::hook_is_portable;
-use super::confedit::{json_edit, json_obj_at, write_file_idem};
+use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, write_file_idem};
 use super::mcpjson::{self, ServerShape};
 use super::report;
 use super::skillsdir;
@@ -264,8 +264,9 @@ fn reconcile_config(config: &Path, servers: &[McpServer], hooks: &[HookBinding])
 
 /// Strip exactly our mcp server keys and our hook entries (matched by command
 /// string) from the one `crush.json`, dropping a hook event array we emptied. A
-/// user server or hook sharing a key/event with ours survives; the file itself is
-/// left in place (merge-safe).
+/// user server or hook sharing a key/event with ours survives; the `mcp`/`hooks` key
+/// our own last entry emptied goes with it, and so does the file once nothing but our
+/// writes is left in it.
 fn remove_config(config: &Path, server_names: &[&str], hooks: &[HookBinding]) -> Result<bool> {
     if !config.exists() {
         return Ok(false);
@@ -277,13 +278,14 @@ fn remove_config(config: &Path, server_names: &[&str], hooks: &[HookBinding]) ->
     let ours: BTreeSet<&str> =
         hooks.iter().filter(|h| hook_is_portable(h) && map_event(&h.event).is_some()).map(|h| h.command.as_str()).collect();
     let managed: BTreeSet<&str> = hooks.iter().filter(|h| hook_is_portable(h)).filter_map(|h| map_event(&h.event)).collect();
-    json_edit(config, |root| {
-        if let Some(mcp) = root.get_mut("mcp").and_then(Value::as_object_mut) {
+    json_remove(config, |root| {
+        json_prune_obj(root, &["mcp"], |mcp| {
             for name in server_names {
                 mcp.remove(*name);
             }
-        }
-        if let Some(events) = root.get_mut("hooks").and_then(Value::as_object_mut) {
+            Ok(())
+        })?;
+        json_prune_obj(root, &["hooks"], |events| {
             // Only clean up an event array we actually emptied — a user's pre-existing
             // empty array under an event we manage (or any unmanaged event) survives.
             let mut emptied: Vec<String> = Vec::new();
@@ -299,7 +301,8 @@ fn remove_config(config: &Path, server_names: &[&str], hooks: &[HookBinding]) ->
             for event in emptied {
                 events.remove(&event);
             }
-        }
+            Ok(())
+        })?;
         Ok(())
     })
 }

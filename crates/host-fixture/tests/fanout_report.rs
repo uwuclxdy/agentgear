@@ -120,8 +120,12 @@ fn a_failing_agent_does_not_strand_the_rest_of_the_fanout() {
     // uninstall: gemini's remove fails, droid's entries still come out.
     let (ok, out) = env.fixture(&["uninstall"]);
     assert!(!ok, "uninstall must surface gemini's failure: {out}");
-    let mcp = fs::read_to_string(&droid_mcp).unwrap();
-    assert!(!mcp.contains("\"ez-fixture\""), "droid's mcp entry must be removed despite gemini failing first:\n{mcp}");
+    // Our entry was all this mcp.json ever held, so taking it back takes the file.
+    assert!(
+        !droid_mcp.exists(),
+        "droid's mcp entry must be removed despite gemini failing first:\n{}",
+        fs::read_to_string(&droid_mcp).unwrap()
+    );
 }
 
 /// A github-source host with a config-merge backend in `agents = [...]`: the

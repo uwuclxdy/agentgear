@@ -2,6 +2,10 @@
 //! files a non-CC backend owns. Two invariants: never clobber a config we could
 //! not parse (returns [`Error::Config`] instead of overwriting), and a semantic
 //! no-op skips the write so a second reconcile is a true `NoOp`.
+//!
+//! Removal paths take a second pair ([`json_remove`] + [`json_prune_obj`]) that undoes
+//! what the creating write laid down, so an uninstall leaves the file as it found it
+//! rather than a shell of the containers we made.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,6 +18,19 @@ use crate::error::{Error, IoContext, Result};
 /// write it back pretty + trailing `\n`, no BOM, via temp-then-rename. Creates
 /// parents. Returns whether the document changed (drives NoOp vs Installed).
 pub(crate) fn json_edit(path: &Path, edit: impl FnOnce(&mut Value) -> Result<()>) -> Result<bool> {
+    json_write(path, false, edit)
+}
+
+/// [`json_edit`] for a removal path: identical, except that a root our edit left
+/// empty takes the file with it. A root holding nothing once we have taken our own
+/// keys back held nothing but them, so dropping it is the exact inverse of the
+/// install that created it. Install never routes here, so nothing on that side can
+/// delete a file.
+pub(crate) fn json_remove(path: &Path, edit: impl FnOnce(&mut Value) -> Result<()>) -> Result<bool> {
+    json_write(path, true, edit)
+}
+
+fn json_write(path: &Path, drop_empty_root: bool, edit: impl FnOnce(&mut Value) -> Result<()>) -> Result<bool> {
     let mut root = match fs::read(path) {
         // Empty/whitespace-only (a `touch`ed or interrupted-write file) is a common
         // real state and means the same as a missing file: start from `{}`.
@@ -35,6 +52,12 @@ pub(crate) fn json_edit(path: &Path, edit: impl FnOnce(&mut Value) -> Result<()>
     // unchanged root also skips creating an empty file.
     if root == before {
         return Ok(false);
+    }
+    // Unreachable from a missing file: `before` would be `{}` too, so an emptied root
+    // equals it and returns above without touching the path.
+    if drop_empty_root && root.as_object().is_some_and(Map::is_empty) {
+        remove_file_idem(path)?;
+        return Ok(true);
     }
 
     let mut bytes = serde_json::to_vec_pretty(&root).map_err(|source| Error::Json { what: "config".into(), source })?;
@@ -120,6 +143,52 @@ pub(crate) fn json_obj_at<'a>(root: &'a mut Value, path: &[&str]) -> &'a mut Map
         cur = ensure_object(cur).entry((*key).to_string()).or_insert_with(|| Value::Object(Map::new()));
     }
     ensure_object(cur)
+}
+
+/// The removal-side counterpart of [`json_obj_at`]: run `edit` on the value at
+/// `path` — navigating WITHOUT creating — then drop every level `edit` left empty.
+/// Returns whether anything was dropped.
+///
+/// Emptiness is measured ACROSS `edit`, not after it. A container already empty when
+/// we arrive is the user's own and survives, so a teardown that takes nothing back
+/// removes nothing. An ancestor needs no such test: it held the level we just
+/// dropped, so it was non-empty by construction.
+///
+/// `[]` addresses the root, which has no parent to be dropped from — [`json_remove`]
+/// is what takes the file itself.
+pub(crate) fn json_prune_at(root: &mut Value, path: &[&str], edit: impl FnOnce(&mut Value) -> Result<()>) -> Result<bool> {
+    let Some((key, rest)) = path.split_first() else {
+        edit(root)?;
+        return Ok(false);
+    };
+    let Some(map) = root.as_object_mut() else { return Ok(false) };
+    let Some(child) = map.get_mut(*key) else { return Ok(false) };
+    let was_empty = is_empty_container(child);
+    let pruned_below = json_prune_at(child, rest, edit)?;
+    let now_empty = is_empty_container(child);
+    if !was_empty && now_empty {
+        map.remove(*key);
+        return Ok(true);
+    }
+    Ok(pruned_below)
+}
+
+/// [`json_prune_at`] for the usual case, an object container. A key holding anything
+/// else is left untouched, matching what a non-creating `as_object_mut` walk did.
+pub(crate) fn json_prune_obj(root: &mut Value, path: &[&str], edit: impl FnOnce(&mut Map<String, Value>) -> Result<()>) -> Result<bool> {
+    json_prune_at(root, path, |value| match value.as_object_mut() {
+        Some(map) => edit(map),
+        None => Ok(()),
+    })
+}
+
+/// An object or array with no members — the only shapes a removal of ours empties.
+fn is_empty_container(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => map.is_empty(),
+        Value::Array(items) => items.is_empty(),
+        _ => false,
+    }
 }
 
 fn ensure_object(v: &mut Value) -> &mut Map<String, Value> {

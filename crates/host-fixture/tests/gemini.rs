@@ -181,3 +181,41 @@ fn gemini_full_lifecycle() {
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.settings().contains("ez-fixture"), "re-install did not re-add our server");
 }
+
+#[test]
+fn gemini_uninstall_leaves_no_shell_of_the_containers_it_created() {
+    // The class fix, on a backend with no status line: install creates `hooks` from
+    // nothing (the seed has none), and a removal that only deletes its own leaf keys
+    // leaves `"hooks": {}` behind in a file the user owns. `mcpServers` is the control
+    // — it holds a server of theirs, so it must survive with exactly that in it.
+    let env = Env::new("no-container-shells");
+    let seed: serde_json::Value = serde_json::from_str(SEED_SETTINGS).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "gemini"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    let installed: serde_json::Value = serde_json::from_str(&env.settings()).unwrap();
+    assert!(installed.get("hooks").is_some(), "the arm under test needs install to create `hooks`:\n{installed:#}");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+    let after: serde_json::Value = serde_json::from_str(&env.settings()).unwrap();
+    assert_eq!(after, seed, "uninstall must leave the settings file exactly as it found it");
+}
+
+#[test]
+fn gemini_uninstall_drops_a_settings_file_it_authored() {
+    // Nothing but our own writes was ever in this file, so the honest inverse of the
+    // install that created it is to take it back out — not to leave a husk of empty
+    // containers on a machine where the plugin was never anything but ours.
+    let env = Env::new("authored-settings");
+    let settings = env.gemini.join("settings.json");
+    fs::remove_file(&settings).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "gemini"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert!(settings.exists(), "the arm under test needs install to author the settings file");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+    assert!(!settings.exists(), "uninstall orphaned a settings file it authored:\n{}", fs::read_to_string(&settings).unwrap());
+}

@@ -551,3 +551,50 @@ fn qwen_code_full_lifecycle() {
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.settings().contains("ez-fixture"), "re-install did not re-add our server");
 }
+
+#[test]
+fn qwen_code_uninstall_leaves_no_shell_of_the_containers_it_created() {
+    // The proven symptom, end to end: the status-line write creates `ui` from nothing,
+    // and a removal that only deletes its own leaf keys leaves `"ui": {}` behind in a
+    // file the user owns. `mcpServers`/`hooks` are the controls — both hold entries of
+    // theirs, so both must survive holding exactly those; `security` is the second
+    // control, an empty container nothing of ours ever writes into, which must survive
+    // empty rather than be swept by a teardown looking for husks.
+    const SEED: &str = r#"{
+  "theme": "dark",
+  "security": {},
+  "mcpServers": { "theirs": { "command": "their-server", "args": [] } },
+  "hooks": { "SessionStart": [ { "hooks": [ { "type": "command", "command": "their-startup-hook.sh" } ] } ] }
+}
+"#;
+    let env = Env::seeded("no-container-shells", ".qwen", SEED);
+    let seed: Value = serde_json::from_str(SEED).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "qwen-code"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    let installed: Value = serde_json::from_str(&env.settings()).unwrap();
+    assert!(installed.get("ui").is_some(), "the arm under test needs install to create `ui`:\n{installed:#}");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+    let after: Value = serde_json::from_str(&env.settings()).unwrap();
+    assert_eq!(after, seed, "uninstall must leave the settings file exactly as it found it");
+}
+
+#[test]
+fn qwen_code_uninstall_drops_a_settings_file_it_authored() {
+    // Nothing but our own writes was ever in this file, so the honest inverse of the
+    // install that created it is to take it back out. The stash is empty here (there
+    // was no slot to displace), which is exactly the arm that used to leave
+    // `{"mcpServers":{},"hooks":{},"ui":{}}` sitting on disk forever.
+    let env = Env::new("authored-settings");
+    fs::remove_file(env.settings_path()).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "qwen-code"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert!(env.settings_path().exists(), "the arm under test needs install to author the settings file");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+    assert!(!env.settings_path().exists(), "uninstall orphaned a settings file it authored:\n{}", env.settings());
+}

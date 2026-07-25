@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem, yaml_quote};
+use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem, yaml_quote};
 use super::report;
 use super::skillsdir;
 use super::{AgentBackend, BackendState};
@@ -256,19 +256,21 @@ fn reconcile_mcp(config: &Path, servers: &[McpServer], reenable: bool) -> Result
     })
 }
 
-/// Remove exactly our server keys under `mcp`, leaving others. Conservatively
-/// leaves an emptied `mcp` object in place rather than dropping the file.
+/// Remove exactly our server keys under `mcp`, leaving others. The `mcp` object goes
+/// with our last key when our own removal is what emptied it, and the file goes with
+/// an emptied root; a `mcp` the user had empty before us is untouched.
 fn remove_mcp(config: &Path, names: &[&str]) -> Result<bool> {
     if !config.exists() || names.is_empty() {
         return Ok(false);
     }
-    json_edit(config, |root| {
-        if let Some(obj) = root.get_mut("mcp").and_then(Value::as_object_mut) {
+    json_remove(config, |root| {
+        json_prune_obj(root, &["mcp"], |obj| {
             for name in names {
                 obj.remove(*name);
             }
-        }
-        Ok(())
+            Ok(())
+        })
+        .map(|_| ())
     })
 }
 

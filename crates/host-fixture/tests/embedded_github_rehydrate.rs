@@ -48,8 +48,12 @@ impl Env {
         (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
+    fn settings_path(&self) -> PathBuf {
+        self.root.join(".gemini").join("settings.json")
+    }
+
     fn settings(&self) -> String {
-        fs::read_to_string(self.root.join(".gemini").join("settings.json")).unwrap()
+        fs::read_to_string(self.settings_path()).unwrap()
     }
 
     /// Marker files under the scratch `XDG_DATA_HOME` (`data_root` = data dir +
@@ -97,7 +101,8 @@ fn embedded_install_on_a_github_default_host_stays_embedded() {
     let (ok, out) = env.fixture(&["uninstall-report"]);
     assert!(ok, "uninstall failed:\n{out}");
     assert!(out.lines().any(|l| l == "gemini: removed"), "uninstall must strip the embedded install, never skip it:\n{out}");
-    let s = env.settings();
-    assert!(!s.contains("ez-fixture"), "uninstall orphaned gemini's config entries:\n{s}");
+    // The install authored this settings.json from nothing, so the uninstall takes it
+    // back out rather than leaving the shells of the containers it created.
+    assert!(!env.settings_path().exists(), "uninstall orphaned a settings.json it authored: {}", env.settings());
     assert!(env.marker_files().is_empty(), "uninstall must clear gemini's marker");
 }

@@ -45,7 +45,7 @@ use serde_json::{Map, Value};
 
 use super::cchooks::hook_is_portable;
 use super::ccregistry::registry_lists_plugin;
-use super::confedit::{json_edit, json_obj_at, remove_file_idem, write_file_idem};
+use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem};
 use super::mcpjson::{self, ServerShape};
 use super::report;
 use super::skillsdir;
@@ -289,17 +289,17 @@ fn remove_hooks(path: &Path, hooks: &[HookBinding]) -> Result<bool> {
         return Ok(false);
     }
     let ours: BTreeSet<&str> = hooks.iter().filter(|h| hook_is_portable(h)).map(|h| h.command.as_str()).collect();
-    json_edit(path, |root| {
-        let Some(events) = root.get_mut("hooks").and_then(Value::as_object_mut) else {
-            return Ok(());
-        };
-        for list in events.values_mut() {
-            if let Some(arr) = list.as_array_mut() {
-                arr.retain(|e| e.get("command").and_then(Value::as_str).is_none_or(|c| !ours.contains(c)));
+    json_remove(path, |root| {
+        json_prune_obj(root, &["hooks"], |events| {
+            for list in events.values_mut() {
+                if let Some(arr) = list.as_array_mut() {
+                    arr.retain(|e| e.get("command").and_then(Value::as_str).is_none_or(|c| !ours.contains(c)));
+                }
             }
-        }
-        events.retain(|_, list| list.as_array().is_none_or(|a| !a.is_empty()));
-        Ok(())
+            events.retain(|_, list| list.as_array().is_none_or(|a| !a.is_empty()));
+            Ok(())
+        })
+        .map(|_| ())
     })
 }
 
