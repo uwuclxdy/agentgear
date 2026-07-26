@@ -46,6 +46,14 @@ omp's `PI_CODING_AGENT_DIR`, and crush's higher-precedence `$XDG_DATA_HOME/crush
 (`CRUSH_GLOBAL_DATA`) — a known limitation if a user sets one. HOME-based backends (gemini, cursor,
 droid, augment) take no override.
 
+An override set to the **empty string** is a special case worth knowing, because the tools disagree
+about it. `claude` and `copilot` both read an empty value as the config dir itself, resolving
+`settings.json` against the current working directory, so agentgear refuses that input: setting
+`CLAUDE_CONFIG_DIR=` or `COPILOT_HOME=` fails that agent's install with an error naming the variable,
+rather than writing to `~/.claude` or `~/.copilot` where the tool would never look. Other backends
+still read an empty override as unset and fall back to their default root; what their tools do with
+an empty value has not been probed.
+
 ## See also
 
 - [Capabilities](Capabilities) — the index.
