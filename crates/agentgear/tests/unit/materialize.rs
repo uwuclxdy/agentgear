@@ -33,7 +33,7 @@ fn fixture_blob() -> Vec<u8> {
 }
 
 fn scratch() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ez-mat-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-mat");
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }

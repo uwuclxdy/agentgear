@@ -14,7 +14,7 @@ use crate::components::HookBinding;
 fn subagent_start_maps_to_cursors_camelcase_event() {
     assert_eq!(map_event("SubagentStart"), Some("subagentStart"), "SubagentStart must map to cursor's subagentStart");
 
-    let dir = std::env::temp_dir().join(format!("ez-cursor-subagentstart-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-cursor-subagentstart");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("hooks.json");
     let sub = HookBinding { event: "SubagentStart".into(), matcher: None, command: "host_fixture note".into() };
@@ -56,7 +56,7 @@ fn agentgear_client_token_expands_to_this_backend_id() {
     let backend = super::CursorBackend;
     let id = backend.id();
 
-    let src = std::env::temp_dir().join(format!("ez-cidtok-src-{:016x}", fastrand::u64(..)));
+    let src = crate::scratch::path("ez-cidtok-src");
     std::fs::create_dir_all(src.join(".claude-plugin")).unwrap();
     std::fs::create_dir_all(src.join("hooks")).unwrap();
     std::fs::write(
@@ -79,7 +79,7 @@ fn agentgear_client_token_expands_to_this_backend_id() {
         statusline: None,
         blob: &[],
     };
-    let project = std::env::temp_dir().join(format!("ez-cidtok-dst-{:016x}", fastrand::u64(..)));
+    let project = crate::scratch::path("ez-cidtok-dst");
     let scope = Scope::Project { path: project.clone() };
     let source = Source::Path(src.clone());
 

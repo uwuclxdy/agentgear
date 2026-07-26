@@ -8,7 +8,7 @@ use crate::agents::mcpjson::{ServerShape, probe as mcp_probe};
 use crate::components::{McpKind, McpServer};
 
 fn scratch(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("ez-kiro-unit-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-kiro-unit");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(name)
 }

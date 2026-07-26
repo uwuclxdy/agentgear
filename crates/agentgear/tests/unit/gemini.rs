@@ -7,7 +7,7 @@ use super::{hook_is_portable, reconcile_hooks, remove_hooks};
 use crate::components::HookBinding;
 
 fn scratch(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("ez-gemini-unit-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-gemini-unit");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(name)
 }
@@ -84,7 +84,7 @@ fn agentgear_client_token_expands_to_this_backend_id() {
     let backend = super::GeminiBackend;
     let id = backend.id();
 
-    let src = std::env::temp_dir().join(format!("ez-cidtok-src-{:016x}", fastrand::u64(..)));
+    let src = crate::scratch::path("ez-cidtok-src");
     std::fs::create_dir_all(src.join(".claude-plugin")).unwrap();
     std::fs::create_dir_all(src.join("hooks")).unwrap();
     std::fs::write(
@@ -107,7 +107,7 @@ fn agentgear_client_token_expands_to_this_backend_id() {
         statusline: None,
         blob: &[],
     };
-    let project = std::env::temp_dir().join(format!("ez-cidtok-dst-{:016x}", fastrand::u64(..)));
+    let project = crate::scratch::path("ez-cidtok-dst");
     let scope = Scope::Project { path: project.clone() };
     let source = Source::Path(src.clone());
 

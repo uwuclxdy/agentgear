@@ -115,6 +115,9 @@ mod lock;
 mod manifest;
 mod materialize;
 mod restart;
+#[cfg(test)]
+#[path = "../tests/unit/scratch.rs"]
+mod scratch;
 mod selfheal;
 mod stamp;
 mod util;

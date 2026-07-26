@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use super::registry_lists_plugin;
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ez-ccregistry-unit-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-ccregistry-unit");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(name)
 }

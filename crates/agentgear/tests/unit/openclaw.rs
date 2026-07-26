@@ -15,7 +15,7 @@ use crate::components::{McpKind, McpServer};
 use crate::host::Outcome;
 
 fn scratch(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("ez-openclaw-unit-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-openclaw-unit");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(name)
 }

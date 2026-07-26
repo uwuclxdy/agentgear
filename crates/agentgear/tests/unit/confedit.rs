@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use super::{json_edit, json_obj_at, json_prune_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem};
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ez-confedit-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-confedit");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(name)
 }

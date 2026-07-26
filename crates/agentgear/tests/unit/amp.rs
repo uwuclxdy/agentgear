@@ -24,7 +24,7 @@ fn srv(name: &str, command: &str, args: &[&str]) -> McpServer {
 }
 
 fn scratch() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("ez-amp-unit-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-amp-unit");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join("settings.json")
 }

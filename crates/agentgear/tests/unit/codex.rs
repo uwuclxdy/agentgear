@@ -11,7 +11,7 @@ use crate::components::{HookBinding, McpKind, McpServer};
 use crate::host::Outcome;
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ez-codex-unit-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-codex-unit");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(name)
 }
@@ -109,7 +109,7 @@ fn probe_renders_from_the_resolved_source_not_the_embedded_blob() {
     use crate::host::{Desired, Plugin, Scope, Source};
 
     // A minimal multi-surface plugin TREE on disk (the `--path` source).
-    let src = std::env::temp_dir().join(format!("ez-codex-probe-src-{:016x}", fastrand::u64(..)));
+    let src = crate::scratch::path("ez-codex-probe-src");
     std::fs::create_dir_all(src.join(".claude-plugin")).unwrap();
     std::fs::create_dir_all(src.join("hooks")).unwrap();
     std::fs::create_dir_all(src.join("commands")).unwrap();
@@ -137,7 +137,7 @@ fn probe_renders_from_the_resolved_source_not_the_embedded_blob() {
         statusline: None,
         blob: &[],
     };
-    let project = std::env::temp_dir().join(format!("ez-codex-probe-dst-{:016x}", fastrand::u64(..)));
+    let project = crate::scratch::path("ez-codex-probe-dst");
     let scope = Scope::Project { path: project.clone() };
     let source = Source::Path(src.clone());
 
@@ -196,7 +196,7 @@ fn agentgear_client_token_expands_to_this_backend_id() {
     let backend = super::CodexBackend;
     let id = backend.id();
 
-    let src = std::env::temp_dir().join(format!("ez-cidtok-src-{:016x}", fastrand::u64(..)));
+    let src = crate::scratch::path("ez-cidtok-src");
     std::fs::create_dir_all(src.join(".claude-plugin")).unwrap();
     std::fs::create_dir_all(src.join("hooks")).unwrap();
     std::fs::write(
@@ -219,7 +219,7 @@ fn agentgear_client_token_expands_to_this_backend_id() {
         statusline: None,
         blob: &[],
     };
-    let project = std::env::temp_dir().join(format!("ez-cidtok-dst-{:016x}", fastrand::u64(..)));
+    let project = crate::scratch::path("ez-cidtok-dst");
     let scope = Scope::Project { path: project.clone() };
     let source = Source::Path(src.clone());
 

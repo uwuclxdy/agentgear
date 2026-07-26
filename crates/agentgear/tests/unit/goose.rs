@@ -14,7 +14,7 @@ use crate::agents::BackendState;
 use crate::components::{HookBinding, McpKind, McpServer};
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ez-goose-unit-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-goose-unit");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(name)
 }
@@ -186,7 +186,7 @@ fn probe_mcp_missing_config_is_healthy_when_no_portable_server() {
 
 #[test]
 fn reconcile_hooks_writes_the_owned_dir_skips_unmapped_events_and_remove_drops_it() {
-    let root = std::env::temp_dir().join(format!("ez-goose-hooks-{:016x}", fastrand::u64(..)));
+    let root = crate::scratch::path("ez-goose-hooks");
     let plugin_dir = root.join(".agents").join("plugins").join("ez-fixture-plugin");
     let hooks_json = plugin_dir.join("hooks").join("hooks.json");
 

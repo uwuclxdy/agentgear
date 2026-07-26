@@ -15,7 +15,7 @@ use crate::components::{McpKind, McpServer};
 /// A fresh unique config path per call, so cargo's parallel test threads never
 /// share a `kilo.json` (mirrors the codex/gemini unit-test scratch helpers).
 fn scratch() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ez-kilo-unit-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-kilo-unit");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join("kilo.json")
 }

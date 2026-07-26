@@ -120,7 +120,7 @@ const SLOT: &[&str] = &["statusLine"];
 /// cases exercise the no-record fallback, which is what they are about. The
 /// record-carrying path needs a real install and lives in the host-fixture tests.
 fn state_of(slot: Value, shape: SlotShape) -> BackendState {
-    let dir = std::env::temp_dir().join(format!("ez-slotstate-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-slotstate");
     std::fs::create_dir_all(&dir).expect("scratch dir");
     let path = dir.join("settings.json");
     std::fs::write(&path, serde_json::to_vec(&json!({ "statusLine": slot })).expect("json")).expect("write");

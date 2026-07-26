@@ -44,8 +44,7 @@ fn hook_command_survives_the_wrapper_as_one_argument() {
 fn precompact_hook_maps_and_lands_in_the_scanned_dir() {
     assert_eq!(map_event("PreCompact"), Some("PreCompact"), "PreCompact must map to cline's identically-named event");
 
-    let dir = std::env::temp_dir().join(format!("ez-cline-precompact-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::scratch::path("ez-cline-precompact");
     std::fs::create_dir_all(&dir).unwrap();
 
     let changed = reconcile_hooks(&dir, "ez-plugin", std::slice::from_ref(&event_hook("PreCompact"))).unwrap();
@@ -72,8 +71,7 @@ fn sessionend_maps_to_sessionshutdown_and_lands() {
     assert_eq!(map_event("SessionEnd"), Some("SessionShutdown"), "SessionEnd must map to cline's session-level SessionShutdown");
     assert_eq!(map_event("SessionStart"), None, "SessionStart has no cline session-level analog and must stay skipped");
 
-    let dir = std::env::temp_dir().join(format!("ez-cline-sessionend-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::scratch::path("ez-cline-sessionend");
     std::fs::create_dir_all(&dir).unwrap();
 
     let changed = reconcile_hooks(&dir, "ez-plugin", std::slice::from_ref(&event_hook("SessionEnd"))).unwrap();

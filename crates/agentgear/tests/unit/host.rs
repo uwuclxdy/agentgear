@@ -12,8 +12,7 @@ use super::*;
 #[cfg(unix)]
 #[test]
 fn project_scope_key_is_stable_through_a_symlink() {
-    let root = std::env::temp_dir().join(format!("agentgear-scope-key-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = crate::scratch::path("agentgear-scope-key");
     let real = root.join("real-project");
     std::fs::create_dir_all(&real).expect("create real project dir");
     let link = root.join("link-to-project");

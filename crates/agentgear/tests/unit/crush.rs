@@ -15,7 +15,7 @@ use super::{BackendState, HookBinding, MarkdownDoc, McpKind, McpServer};
 use super::{command_rel, hook_is_portable, map_event, portable_names, reconcile_config, remove_config, render_command};
 
 fn scratch(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("ez-crush-unit-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-crush-unit");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(name)
 }

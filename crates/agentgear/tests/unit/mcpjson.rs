@@ -22,7 +22,7 @@ fn remote_server(name: &str, kind: McpKind) -> McpServer {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ez-mcpjson-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-mcpjson");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(name)
 }

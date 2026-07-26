@@ -37,7 +37,7 @@ fn empty_or_absent_override_falls_back_to_home_dot_pi() {
 fn detection_gate_follows_the_resolved_dir() {
     // The `.is_dir()` gate detect() applies over the resolved dir: an existing
     // override dir means "pi present here", a missing path does not.
-    let present = std::env::temp_dir().join(format!("ez-pi-unit-{:016x}", fastrand::u64(..)));
+    let present = crate::scratch::path("ez-pi-unit");
     std::fs::create_dir_all(&present).unwrap();
     assert!(
         resolve_pi_dir(Some(present.as_os_str()), None).as_deref().is_some_and(Path::is_dir),

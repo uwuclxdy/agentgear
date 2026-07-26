@@ -16,7 +16,7 @@ use crate::components::{HookBinding, McpKind, McpServer};
 use crate::host::{Outcome, Scope};
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ez-antigravity-cli-unit-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-antigravity-cli-unit");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(name)
 }

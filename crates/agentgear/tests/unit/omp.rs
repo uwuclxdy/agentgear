@@ -19,7 +19,7 @@ use crate::host::Outcome;
 const KEY: &[&str] = &["mcpServers"];
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ez-omp-unit-{:016x}", fastrand::u64(..)));
+    let dir = crate::scratch::path("ez-omp-unit");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(name)
 }
