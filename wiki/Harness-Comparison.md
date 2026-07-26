@@ -122,7 +122,7 @@ that cannot be read off disk.
 | antigravity-cli | ✓ | ✓ | project scope loads only after the folder is trusted |
 | augment | ✓ | — | the tool serves `.augment/` too; the backend stays user-only |
 | cline | ✓ | ✓ | mcp is user-global whichever scope you pass; hooks and workflows honor both |
-| codex | ✓ | ✓ | project needs `trust_level="trusted"` in the user `config.toml`. `codex mcp list` never reads a project config |
+| codex | ✓ | ✓ | project needs `trust_level="trusted"` in the user `config.toml`. a trusted session loads the project's servers; `codex mcp list` never shows them |
 | crush | ✓ | ✓ | a same-key entry in `$XDG_DATA_HOME/crush/crush.json` silently outranks ours |
 | cursor | ✓ | ✓ | project wins a same-key mcp collision |
 | devin | ✓ | ✓ | project overrides user on a same name |

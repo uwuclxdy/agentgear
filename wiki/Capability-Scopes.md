@@ -19,7 +19,7 @@ story.
 | antigravity-cli | ✅ | ✅ | project scope needs folder trust |
 | augment | ✅ | ❌ | the tool serves project + local; backend is user-only by design |
 | cline | ✅ | ✅ | mcp is user/global-only; project config activates on cwd, no trust gate found |
-| codex | ✅ | ✅ | project trust-gated (`trust_level="trusted"` in the user `config.toml`); asymmetric — project hooks fire once trusted, but `codex mcp` never reads a project config |
+| codex | ✅ | ✅ | project trust-gated (`trust_level="trusted"` in the user `config.toml`); once trusted, a session loads the project's hooks and mcp servers, though the `codex mcp` management CLI still only reads the user config |
 | copilot-cli | ✅ | ❌ | native install only, no `--scope`. a native install registers as plugin-provided, outranking a same-named workspace server |
 | crush | ✅ | ✅ | presence-only. a same-key entry in `$XDG_DATA_HOME/crush/crush.json` silently beats ours |
 | cursor | ✅ | ✅ | no gate. project wins on a same-key mcp collision |
