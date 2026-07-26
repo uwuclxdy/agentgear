@@ -248,3 +248,83 @@ fn kimi_never_clobbers_a_foreign_skill() {
         assert_eq!(fs::read_to_string(&skill).unwrap(), seed, "uninstall altered the foreign skill ({label})");
     }
 }
+
+/// The uninstall inverse at file level, over kimi's array-of-tables instead of
+/// codex's table: a `config.toml` whose every entry was ours goes with them, instead
+/// of surviving as the 0 bytes an emptied `[[hooks]]` renders to. The lifecycle test
+/// pins the other direction (the seeded foreign hooks and `model` key keep the file),
+/// so this seeds only a comment — which goes too, our own removal having emptied
+/// every entry it could have belonged to.
+#[test]
+fn kimi_uninstall_takes_a_config_toml_holding_nothing_but_ours() {
+    let env = Env::new("empty-config");
+    let config = env.kimi.join("config.toml");
+    // Overwrite Env::new's seed: `SEED_CONFIG`'s foreign hooks and `model` key are
+    // exactly what must NOT be here for the uninstall to be able to take the file.
+    fs::write(&config, "# my kimi config\n").unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "kimi"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert!(env.config_toml().contains("[[hooks]]"), "install did not write our hooks:\n{}", env.config_toml());
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+    assert!(!config.exists(), "uninstall left a config.toml holding nothing but what it had just taken back");
+
+    // Re-install from nothing lands again, so taking the file is not a one-way door.
+    let (ok, out) = env.fixture(&["setup", "--agent", "kimi"]);
+    assert!(ok && out == "Installed", "re-install after the file was taken should install, got {out}");
+    assert!(env.config_toml().contains("[[hooks]]"), "re-install did not re-add our hooks");
+}
+
+/// The guard on the other side of the same arm: a `config.toml` the user is already
+/// keeping empty of our entries holds nothing for us to take back, so the teardown
+/// must not write — or delete — at all. A comment-only file parses to an empty root,
+/// which is what a root-emptiness test alone would misread as ours.
+#[test]
+fn kimi_uninstall_leaves_a_config_toml_it_never_wrote_to() {
+    let env = Env::new("foreign-config");
+    let config = env.kimi.join("config.toml");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "kimi"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    // Hand the config back with our hooks already gone: that state is the user's own.
+    let user_owned = "# my kimi config\n";
+    fs::write(&config, user_owned).unwrap();
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall over a user-emptied config failed: {out}");
+    assert!(config.exists(), "uninstall took a comment-only config it never wrote to");
+    assert_eq!(env.config_toml(), user_owned, "uninstall rewrote a config that held nothing of ours");
+}
+
+/// The blocker the delete gate exists to avoid: `toml_edit` normalizes CRLF decor to
+/// LF and strips a BOM, so a comment-only `config.toml` saved by a Windows editor does
+/// not round-trip through its own renderer. A file arm keyed on "the text changed"
+/// would read that as our own doing and delete a config we never wrote a byte to.
+/// Keyed on the container prune instead, both survive byte-for-byte.
+///
+/// Byte survival is the NO-OP path's property, not a line-ending policy: a write we
+/// genuinely have to make renders the whole document, so it lands LF and BOM-free
+/// whatever came in. What is pinned here is that a teardown taking nothing back makes
+/// no write at all.
+#[test]
+fn kimi_uninstall_leaves_a_windows_saved_config_toml_untouched() {
+    for (label, seed) in [("crlf", "# my kimi config\r\n".as_bytes()), ("bom", "\u{feff}# my kimi config\n".as_bytes())] {
+        let env = Env::new(&format!("windows-{label}"));
+        let config = env.kimi.join("config.toml");
+
+        let (ok, out) = env.fixture(&["setup", "--agent", "kimi"]);
+        assert!(ok && out == "Installed", "setup failed ({label}): {out}");
+
+        // Hand the config back the way the user's own editor would have saved it,
+        // with nothing of ours left in it.
+        fs::write(&config, seed).unwrap();
+
+        let (ok, out) = env.fixture(&["uninstall"]);
+        assert!(ok, "uninstall over a {label} config failed: {out}");
+        assert!(config.exists(), "uninstall took a {label} comment-only config it never wrote to");
+        assert_eq!(fs::read(&config).unwrap(), seed, "uninstall rewrote a {label} config that held nothing of ours");
+    }
+}

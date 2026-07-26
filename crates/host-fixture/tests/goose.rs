@@ -206,8 +206,9 @@ fn goose_full_lifecycle() {
 /// emptied it. Phase 1 pins the drop end to end (install creates the mapping,
 /// uninstall takes it); phase 2 pins the guard on the other side, where the user is
 /// keeping an empty mapping of their own and the teardown must not write at all.
-/// Neither phase takes the file: a YAML config can carry comments nothing could
-/// give back.
+/// Neither phase takes the file: `GOOSE_MODEL` survives in both, so the root is never
+/// empty. The file arm itself is
+/// `goose_uninstall_takes_a_config_yaml_holding_nothing_but_ours`.
 #[test]
 fn goose_uninstall_prunes_only_the_extensions_mapping_it_emptied() {
     let env = Env::new("prune");
@@ -315,8 +316,36 @@ fn goose_honors_goose_path_root() {
     // uninstall follows the same relocated paths and cleans them up.
     let (ok, out) = env.fixture(&["uninstall"]);
     assert!(ok && out == "Removed", "uninstall under GOOSE_PATH_ROOT failed: {out}");
-    let c = fs::read_to_string(&relocated_config).unwrap();
-    assert!(!c.contains("ez-fixture"), "our extension survived uninstall under GOOSE_PATH_ROOT:\n{c}");
+    // The relocated config held nothing but our extension, so it goes with it.
+    assert!(!relocated_config.exists(), "our extension survived uninstall under GOOSE_PATH_ROOT: {}", relocated_config.display());
     let relocated_plugin_dir = path_root.join(".agents").join("plugins").join("ez-fixture-plugin");
     assert!(!relocated_plugin_dir.exists(), "the relocated plugin hooks dir survived uninstall: {}", relocated_plugin_dir.display());
+}
+
+/// The uninstall inverse at file level, the arm
+/// `goose_uninstall_prunes_only_the_extensions_mapping_it_emptied` stops one level
+/// short of: a `config.yaml` whose every key was ours goes with the `extensions`
+/// mapping. That test's seed keeps `GOOSE_MODEL`, so its file must survive; this one
+/// seeds only a comment, which goes too — our own removal having emptied every key it
+/// could have belonged to.
+#[test]
+fn goose_uninstall_takes_a_config_yaml_holding_nothing_but_ours() {
+    let env = Env::new("empty-config");
+    let config = env.goose.join("config.yaml");
+    // Overwrite Env::new's seed: `SEED_CONFIG`'s foreign extension and top-level keys
+    // are exactly what must NOT be here for the uninstall to be able to take the file.
+    fs::write(&config, "# my goose config\n").unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "goose"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert!(env.config_yaml().contains("extensions:"), "install did not create the extensions mapping:\n{}", env.config_yaml());
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+    assert!(!config.exists(), "uninstall left a config.yaml holding nothing but what it had just taken back");
+
+    // Re-install from nothing lands again, so taking the file is not a one-way door.
+    let (ok, out) = env.fixture(&["setup", "--agent", "goose"]);
+    assert!(ok && out == "Installed", "re-install after the file was taken should install, got {out}");
+    assert!(env.config_yaml().contains("ez-fixture"), "re-install did not re-add our extension");
 }

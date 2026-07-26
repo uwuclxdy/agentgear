@@ -1,8 +1,16 @@
 //! Codex's toml `[mcp_servers.<name>]` renderer/reconciler, over
 //! [`confedit::toml_edit`]. Bespoke: codex hosts mcp in `config.toml`, not the
 //! shared json `mcpServers` object. Every write is merge-safe — only our own
-//! `[mcp_servers.<name>]` sub-tables are inserted/updated; the user's other
-//! servers, comments, key order, and every unrelated top-level table survive.
+//! `[mcp_servers.<name>]` sub-tables are inserted/updated; the user's other servers,
+//! key order, and every unrelated top-level table survive.
+//!
+//! Comment survival is narrower than key survival, and only on the removal side.
+//! `toml_edit` attaches a comment to the item it precedes, so one written above an
+//! `[mcp_servers…]` header goes out with that header — whether that is our own
+//! sub-table or the `[mcp_servers]` container we prune once it holds nothing of ours.
+//! A comment anywhere else in the file is untouched. And a `config.toml` our removal
+//! empties outright is deleted ([`confedit::toml_remove`]), taking any comment left in
+//! it: our removal having emptied every key means it was already orphaned.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -99,22 +107,26 @@ pub(crate) fn probe_surface(path: &Path, servers: &[McpServer]) -> Result<Option
     Ok(Some(probe(path, servers)?))
 }
 
-/// Remove exactly our server keys from `[mcp_servers]`, leaving others.
+/// Remove exactly our server keys from `[mcp_servers]`, leaving others. The table
+/// goes with them once ours were the last keys in it — the exact inverse of the
+/// [`mcp_table`] that created it — and a `config.toml` left holding nothing goes too.
 ///
-/// Known gap, not a policy: the table is implicit, so emptying it renders to nothing
-/// and a file that held only our servers is left 0 bytes. The json path drops such a
-/// file; doing the same here waits on proving a delete cannot cost a user's comments.
+/// Pruning the table is what makes the file arm honest: `mcp_table` creates it
+/// implicit, so an emptied one renders to zero bytes while still keying the root, and
+/// a naive root test would read that 0-byte file as a document worth keeping.
 pub(crate) fn remove(path: &Path, names: &[&str]) -> Result<Outcome> {
     if !path.exists() || names.is_empty() {
         return Ok(Outcome::NoOp);
     }
-    let changed = confedit::toml_edit(path, |doc| {
-        if let Some(table) = doc.as_table_mut().get_mut("mcp_servers").and_then(Item::as_table_mut) {
-            for name in names {
-                table.remove(name);
+    let changed = confedit::toml_remove(path, |doc| {
+        confedit::toml_prune(doc, "mcp_servers", |item| {
+            if let Some(table) = item.as_table_mut() {
+                for name in names {
+                    table.remove(name);
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     })?;
     Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
 }

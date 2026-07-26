@@ -97,8 +97,8 @@ fn remove_mcp_prunes_only_an_extensions_mapping_it_emptied() {
     let servers = std::slice::from_ref(&srv);
 
     // Ours were the only extensions: the mapping `reconcile_mcp` created goes with
-    // them, leaving the user's own top-level key alone. The file always stays — a
-    // YAML config can carry comments no removal could give back.
+    // them, leaving the user's own top-level key alone. The file stays because that
+    // key is still in it; one holding nothing else goes too (`confedit`'s own tests).
     let ours = scratch("config.yaml");
     fs::write(&ours, "GOOSE_MODEL: gpt-x\n").unwrap();
     reconcile_mcp(&ours, servers, true).unwrap();
@@ -129,10 +129,11 @@ fn non_portable_server_never_reaches_config_yaml() {
     assert!(text.contains("ez-fixture"), "portable server must be written:\n{text}");
     assert!(!text.contains("rooted"), "non-portable server leaked into config.yaml:\n{text}");
 
-    // remove keys off the same filtered set, so it never targets a server it never wrote.
+    // remove keys off the same filtered set, so it never targets a server it never
+    // wrote. Ours was the whole file here, so the file goes with the mapping.
     let removed = remove_mcp(&config, &writable_names(&servers)).unwrap();
     assert!(removed);
-    assert!(!fs::read_to_string(&config).unwrap().contains("ez-fixture"));
+    assert!(!config.exists(), "a config.yaml holding nothing but our extension must go with it");
 
     let _ = fs::remove_dir_all(config.parent().unwrap());
 }

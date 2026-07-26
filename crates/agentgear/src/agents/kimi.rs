@@ -243,17 +243,23 @@ fn probe_hooks(config: &Path, hooks: &[HookBinding]) -> Result<Option<BackendSta
 
 /// Strip exactly our `[[hooks]]` entries (matched by command string), leaving the
 /// user's — including one under an event we also write to. A hook we never wrote (a
-/// non-portable one, or a user's own) survives, since it never enters `ours`.
+/// non-portable one, or a user's own) survives, since it never enters `ours`. The
+/// array goes with them once ours were the last entries in it — the exact inverse of
+/// the [`hooks_array`] that created it — and a `config.toml` left holding nothing
+/// goes too. An emptied array-of-tables renders to zero bytes while still keying the
+/// root, so pruning it is what lets the file arm see an empty document.
 fn remove_hooks(config: &Path, hooks: &[HookBinding]) -> Result<bool> {
     if !config.exists() {
         return Ok(false);
     }
     let ours: BTreeSet<&str> = hooks.iter().filter(|h| hook_is_portable(h)).map(|h| h.command.as_str()).collect();
-    confedit::toml_edit(config, |doc| {
-        if let Some(arr) = doc.as_table_mut().get_mut("hooks").and_then(Item::as_array_of_tables_mut) {
-            arr.retain(|t| t.get("command").and_then(Item::as_str).is_none_or(|c| !ours.contains(c)));
-        }
-        Ok(())
+    confedit::toml_remove(config, |doc| {
+        confedit::toml_prune(doc, "hooks", |item| {
+            if let Some(arr) = item.as_array_of_tables_mut() {
+                arr.retain(|t| t.get("command").and_then(Item::as_str).is_none_or(|c| !ours.contains(c)));
+            }
+            Ok(())
+        })
     })
 }
 

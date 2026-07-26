@@ -41,8 +41,10 @@ fn non_portable_server_never_reaches_config_toml() {
     // remove must key off the same filtered set, never touching a same-named
     // user entry it never wrote (there is none here, but this proves the two
     // call sites — reconcile's writer and remove's deleter — stay in lockstep).
+    // Ours was the whole file here, so the file goes with the `[mcp_servers]` table
+    // rather than staying behind as the 0 bytes an emptied implicit table renders to.
     assert_eq!(mcptoml::remove(&path, &portable_names(&servers)).unwrap(), Outcome::Removed);
-    assert!(!std::fs::read_to_string(&path).unwrap().contains("ez-fixture"));
+    assert!(!path.exists(), "a config.toml holding nothing but our server must go with it");
 }
 
 #[test]

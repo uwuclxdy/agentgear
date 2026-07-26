@@ -3,11 +3,13 @@
 //! not parse (returns [`Error::Config`] instead of overwriting), and a semantic
 //! no-op skips the write so a second reconcile is a true `NoOp`.
 //!
-//! Removal paths take a second pair ([`json_remove`] + [`json_prune_obj`]) that undoes
-//! what the creating write laid down, so an uninstall leaves the file as it found it
-//! rather than a shell of the containers we made. `yaml_prune_map` is the YAML half of
-//! the container rule; the file-delete half stays JSON-only, since a YAML config can
-//! carry comments the user would lose with it.
+//! Removal paths take a second editor per format ([`json_remove`], [`toml_remove`],
+//! [`yaml_remove`]) plus a container pruner ([`json_prune_obj`], [`toml_prune`],
+//! [`yaml_prune_map`]), which together undo what the creating write laid down: the
+//! containers we made go with our keys, and a root left holding nothing takes the file.
+//! Emptying a file is what proves every key in it was ours, so a comment surviving in
+//! one was already orphaned. Install never routes through a `*_remove`, so no install
+//! path can delete a file.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -73,6 +75,30 @@ fn json_write(path: &Path, drop_empty_root: bool, edit: impl FnOnce(&mut Value) 
 /// kimi's hook-bearing config.toml).
 #[cfg(any(feature = "codex", feature = "kimi"))]
 pub(crate) fn toml_edit(path: &Path, edit: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()>) -> Result<bool> {
+    toml_write(path, |doc| edit(doc).map(|()| false))
+}
+
+/// [`toml_edit`] for a removal path: identical, except that a root our edit left
+/// empty takes the file with it, exactly as [`json_remove`] does. Install never
+/// routes here, so nothing on that side can delete a file.
+///
+/// `edit` reports whether it dropped a root key ([`toml_prune`]'s return value), and
+/// the file goes only when it did AND the root is now empty. That pair is exactly
+/// "our own removal emptied this document": every non-comment byte of a TOML file is
+/// a root key, so an empty root can only have been reached through that prune.
+///
+/// Deliberately not keyed on "the document changed", the way the JSON twin is. A
+/// TOML document can only be compared through its render, and `toml_edit` carries
+/// comment decor no parsed-value compare would see, so "changed" here also covers a
+/// file whose only difference is a comment we never touched. Gating the delete on
+/// that would take a `config.toml` we never wrote a byte to.
+#[cfg(any(feature = "codex", feature = "kimi"))]
+pub(crate) fn toml_remove(path: &Path, edit: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<bool> {
+    toml_write(path, edit)
+}
+
+#[cfg(any(feature = "codex", feature = "kimi"))]
+fn toml_write(path: &Path, edit: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<bool> {
     let existing = match fs::read_to_string(path) {
         Ok(s) => Some(s),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -84,17 +110,70 @@ pub(crate) fn toml_edit(path: &Path, edit: impl FnOnce(&mut toml_edit::DocumentM
         .parse()
         .map_err(|e: toml_edit::TomlError| Error::Config { path: path.display().to_string(), detail: e.to_string() })?;
 
-    edit(&mut doc)?;
+    // Compared against the document's OWN render, not against the bytes on disk, so
+    // the comparison is semantic the way the JSON and YAML twins' is. `toml_edit` does
+    // not round-trip byte-exact — it normalizes CRLF to LF in decor and strips a BOM —
+    // so a disk compare reads a Windows-saved config as changed by the mere act of
+    // reading it, and rewrites a file no edit touched. Empty for a missing file, which
+    // keeps the "a no-op edit creates nothing" guarantee.
+    let before = doc.to_string();
+    let emptied_root = edit(&mut doc)?;
     let rendered = doc.to_string();
-    let unchanged = match &existing {
-        Some(s) => *s == rendered,
-        None => rendered.is_empty(),
-    };
-    if unchanged {
+    if rendered == before {
         return Ok(false);
+    }
+    // Keyed on the prune, never on the no-op test above: see [`toml_remove`]. Even
+    // made semantic, that test answers "did anything change", and a Windows-saved
+    // comment-only config can answer yes while holding nothing of ours. Unreachable
+    // from a missing file, which has no root key for the prune to have dropped.
+    if emptied_root && doc.as_table().is_empty() {
+        remove_file_idem(path)?;
+        return Ok(true);
     }
     atomic_write(path, rendered.as_bytes())?;
     Ok(true)
+}
+
+/// The TOML twin of [`yaml_prune_map`] / [`json_prune_obj`], and the removal-side
+/// counterpart of a create-on-the-way-in accessor (`mcptoml::mcp_table`, kimi's
+/// `hooks_array`): run `edit` on the item at root key `key` — navigating WITHOUT
+/// creating — then drop `key` if `edit` left it empty. Returns whether it was dropped.
+///
+/// Emptiness is measured ACROSS `edit`, exactly as both twins measure it: a container
+/// already empty when we arrive is the user's own and survives, so a teardown that
+/// takes nothing back removes nothing.
+///
+/// One level, no path walk, matching the YAML twin: both TOML callers address one
+/// top-level container. The returned flag is what [`toml_remove`] gates its file
+/// delete on, so a caller that discards it silently gives up the delete.
+#[cfg(any(feature = "codex", feature = "kimi"))]
+pub(crate) fn toml_prune(
+    doc: &mut toml_edit::DocumentMut, key: &str, edit: impl FnOnce(&mut toml_edit::Item) -> Result<()>,
+) -> Result<bool> {
+    let root = doc.as_table_mut();
+    let Some(item) = root.get_mut(key) else { return Ok(false) };
+    let was_empty = toml_item_is_empty(item);
+    edit(item)?;
+    if !was_empty && toml_item_is_empty(item) {
+        root.remove(key);
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// A TOML container with no members. Only the two header-table spellings, because
+/// only those are reachable: both call-site closures navigate with `as_table_mut` /
+/// `as_array_of_tables_mut`, which return `None` for an inline `{...}` or `[...]`
+/// value, so an inline container can never be emptied by us and its `was_empty` would
+/// always equal its post-edit emptiness anyway.
+#[cfg(any(feature = "codex", feature = "kimi"))]
+fn toml_item_is_empty(item: &toml_edit::Item) -> bool {
+    use toml_edit::Item;
+    match item {
+        Item::Table(table) => table.is_empty(),
+        Item::ArrayOfTables(tables) => tables.is_empty(),
+        _ => false,
+    }
 }
 
 /// Same as [`json_edit`] for YAML via `serde_norway`. Unlike the toml editor this
@@ -106,6 +185,24 @@ pub(crate) fn toml_edit(path: &Path, edit: impl FnOnce(&mut toml_edit::DocumentM
 /// already-converged config is never rewritten. Goose-only for now.
 #[cfg(feature = "goose")]
 pub(crate) fn yaml_edit(path: &Path, edit: impl FnOnce(&mut serde_norway::Value) -> Result<()>) -> Result<bool> {
+    yaml_write(path, false, edit)
+}
+
+/// [`yaml_edit`] for a removal path: identical, except that a root our edit left
+/// empty takes the file with it, exactly as [`json_remove`] does. Install never
+/// routes here, so nothing on that side can delete a file.
+///
+/// A comment-only config parses to an empty root too, but reaches the no-op arm first
+/// (nothing of ours to take back means nothing changed), so only a root WE emptied is
+/// dropped. Losing a comment that survived in one is accepted: our own removal having
+/// taken every key means it was already orphaned.
+#[cfg(feature = "goose")]
+pub(crate) fn yaml_remove(path: &Path, edit: impl FnOnce(&mut serde_norway::Value) -> Result<()>) -> Result<bool> {
+    yaml_write(path, true, edit)
+}
+
+#[cfg(feature = "goose")]
+fn yaml_write(path: &Path, drop_empty_root: bool, edit: impl FnOnce(&mut serde_norway::Value) -> Result<()>) -> Result<bool> {
     use serde_norway::{Mapping, Value as Yaml};
     let mut root = match fs::read(path) {
         Ok(bytes) if bytes.iter().all(u8::is_ascii_whitespace) => Yaml::Mapping(Mapping::new()),
@@ -128,6 +225,12 @@ pub(crate) fn yaml_edit(path: &Path, edit: impl FnOnce(&mut serde_norway::Value)
     edit(&mut root)?;
     if root == before {
         return Ok(false);
+    }
+    // Unreachable from a missing file: `before` is an empty mapping too, so an emptied
+    // root equals it and returns above without touching the path.
+    if drop_empty_root && root.as_mapping().is_some_and(Mapping::is_empty) {
+        remove_file_idem(path)?;
+        return Ok(true);
     }
 
     let text = serde_norway::to_string(&root)
@@ -205,9 +308,8 @@ fn is_empty_container(value: &Value) -> bool {
 /// behalf and this guard then reads that as our own doing.
 ///
 /// One level, no path walk: [`json_prune_at`] recurses because its callers address
-/// nested containers, and the single YAML caller has one top-level mapping. There is
-/// no YAML twin of [`json_remove`] either — a YAML config can carry comments, so
-/// taking the file costs more than the empty-`{}` file JSON accepts.
+/// nested containers, and the single YAML caller has one top-level mapping. Dropping
+/// the mapping is what leaves the root empty for [`yaml_remove`] to take the file on.
 #[cfg(feature = "goose")]
 pub(crate) fn yaml_prune_map(
     root: &mut serde_norway::Value, key: &str, edit: impl FnOnce(&mut serde_norway::Mapping) -> Result<()>,

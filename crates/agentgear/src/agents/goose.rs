@@ -37,7 +37,7 @@ use serde_json::{Map, Value};
 use serde_norway::{Mapping, Value as Yaml};
 
 use super::cchooks::{hook_is_portable, render_hook_group};
-use super::confedit::{write_file_idem, yaml_edit, yaml_prune_map};
+use super::confedit::{write_file_idem, yaml_edit, yaml_prune_map, yaml_remove};
 use super::report;
 use super::skillsdir;
 use super::{AgentBackend, BackendState};
@@ -295,15 +295,13 @@ fn reconcile_mcp(config: &Path, servers: &[McpServer], reenable: bool) -> Result
 /// Remove exactly our extension keys under `extensions`, leaving others. The mapping
 /// goes with them once ours were the last keys in it — the exact inverse of the
 /// `ext_map` that created it — while one the user was already keeping empty is not
-/// ours to take.
-///
-/// The file itself stays either way: a user may have unrelated top-level keys, and a
-/// YAML config can carry comments no file-delete arm could give back.
+/// ours to take. A `config.yaml` left holding nothing goes with the mapping; one
+/// still carrying the user's own top-level keys is rewritten, never dropped.
 fn remove_mcp(config: &Path, names: &[&str]) -> Result<bool> {
     if !config.exists() || names.is_empty() {
         return Ok(false);
     }
-    yaml_edit(config, |root| {
+    yaml_remove(config, |root| {
         yaml_prune_map(root, "extensions", |exts| {
             for name in names {
                 exts.remove(*name);

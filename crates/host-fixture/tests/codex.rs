@@ -270,3 +270,116 @@ fn codex_project_scope_mcp_is_isolated_from_user_scope() {
     assert!(!pc.contains("[mcp_servers.ez-fixture]"), "our mcp server survived project-scope uninstall:\n{pc}");
     assert_eq!(env.config_toml(), SEED_CONFIG, "project-scope uninstall touched the user-scope config.toml:\n{}", env.config_toml());
 }
+
+/// The uninstall inverse at file level: a `config.toml` whose every key was ours goes
+/// with them, instead of surviving as the 0 bytes an emptied implicit `[mcp_servers]`
+/// renders to. The lifecycle test above pins the other direction (a foreign server and
+/// a top-level key beside ours keep the file), so this seeds only a comment — which
+/// goes too, our own removal having emptied every key it could have belonged to.
+#[test]
+fn codex_uninstall_takes_a_config_toml_holding_nothing_but_ours() {
+    let env = Env::new("empty-config");
+    let config = env.codex.join("config.toml");
+    // Overwrite Env::new's seed: `SEED_CONFIG`'s foreign server and `model` key are
+    // exactly what must NOT be here for the uninstall to be able to take the file.
+    fs::write(&config, "# my codex config\n").unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "codex"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert!(env.config_toml().contains("[mcp_servers.ez-fixture]"), "install did not write our server:\n{}", env.config_toml());
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+    assert!(!config.exists(), "uninstall left a config.toml holding nothing but what it had just taken back");
+
+    // Re-install from nothing lands again, so taking the file is not a one-way door.
+    let (ok, out) = env.fixture(&["setup", "--agent", "codex"]);
+    assert!(ok && out == "Installed", "re-install after the file was taken should install, got {out}");
+    assert!(env.config_toml().contains("[mcp_servers.ez-fixture]"), "re-install did not re-add our server");
+}
+
+/// The guard on the other side of the same arm: a `config.toml` the user is already
+/// keeping empty of our keys holds nothing for us to take back, so the teardown must
+/// not write — or delete — at all. A comment-only file parses to an empty root, which
+/// is what a root-emptiness test alone would misread as ours.
+#[test]
+fn codex_uninstall_leaves_a_config_toml_it_never_wrote_to() {
+    let env = Env::new("foreign-config");
+    let config = env.codex.join("config.toml");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "codex"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    // Hand the config back with our server already gone: that state is the user's own.
+    let user_owned = "# my codex config\n";
+    fs::write(&config, user_owned).unwrap();
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall over a user-emptied config failed: {out}");
+    assert!(config.exists(), "uninstall took a comment-only config it never wrote to");
+    assert_eq!(env.config_toml(), user_owned, "uninstall rewrote a config that held nothing of ours");
+}
+
+/// The blocker the delete gate exists to avoid: `toml_edit` normalizes CRLF decor to
+/// LF and strips a BOM, so a comment-only `config.toml` saved by a Windows editor does
+/// not round-trip through its own renderer. A file arm keyed on "the text changed"
+/// would read that as our own doing and delete a config we never wrote a byte to.
+/// Keyed on the container prune instead, both survive byte-for-byte.
+///
+/// Byte survival is the NO-OP path's property, not a line-ending policy: a write we
+/// genuinely have to make renders the whole document, so it lands LF and BOM-free
+/// whatever came in. What is pinned here is that a teardown taking nothing back makes
+/// no write at all.
+#[test]
+fn codex_uninstall_leaves_a_windows_saved_config_toml_untouched() {
+    for (label, seed) in [("crlf", "# my codex config\r\n".as_bytes()), ("bom", "\u{feff}# my codex config\n".as_bytes())] {
+        let env = Env::new(&format!("windows-{label}"));
+        let config = env.codex.join("config.toml");
+
+        let (ok, out) = env.fixture(&["setup", "--agent", "codex"]);
+        assert!(ok && out == "Installed", "setup failed ({label}): {out}");
+
+        // Hand the config back the way the user's own editor would have saved it,
+        // with nothing of ours left in it.
+        fs::write(&config, seed).unwrap();
+
+        let (ok, out) = env.fixture(&["uninstall"]);
+        assert!(ok, "uninstall over a {label} config failed: {out}");
+        assert!(config.exists(), "uninstall took a {label} comment-only config it never wrote to");
+        assert_eq!(fs::read(&config).unwrap(), seed, "uninstall rewrote a {label} config that held nothing of ours");
+    }
+}
+
+/// The install side of the same no-op arm, which nothing else in the suite reaches.
+/// `toml_write`'s convergence test compares the document's own render against itself
+/// rather than against the bytes on disk, so a `config.toml` already holding exactly
+/// what we would write converges even when its line endings or BOM mean it never
+/// round-trips. Without that, every `setup` on a Windows-saved config reports
+/// `Installed` and rewrites the file, and self_heal's adopt row misreports with it.
+///
+/// Covers both TOML backends: the arm lives in the shared `confedit::toml_write`, and
+/// kimi's hook reconcile reaches it through the same `toml_edit` wrapper.
+#[test]
+fn codex_second_setup_over_a_windows_saved_config_toml_is_a_noop() {
+    for (label, reseed) in [
+        ("crlf", (|s: &str| s.replace('\n', "\r\n")) as fn(&str) -> String),
+        ("bom", (|s: &str| format!("\u{feff}{s}")) as fn(&str) -> String),
+    ] {
+        let env = Env::new(&format!("windows-noop-{label}"));
+        let config = env.codex.join("config.toml");
+
+        let (ok, out) = env.fixture(&["setup", "--agent", "codex"]);
+        assert!(ok && out == "Installed", "setup failed ({label}): {out}");
+        assert!(env.config_toml().contains("[mcp_servers.ez-fixture]"), "install did not write our server ({label})");
+
+        // Re-save the CONVERGED config the way the user's editor would: our server is
+        // still in it, byte-identical in meaning, different on disk.
+        let windows_saved = reseed(&env.config_toml());
+        fs::write(&config, &windows_saved).unwrap();
+
+        let (ok, out) = env.fixture(&["setup", "--agent", "codex"]);
+        assert!(ok, "second setup over a {label} config failed: {out}");
+        assert_eq!(out, "NoOp", "a converged {label} config must report NoOp, not a rewrite");
+        assert_eq!(fs::read_to_string(&config).unwrap(), windows_saved, "second setup rewrote a converged {label} config");
+    }
+}
