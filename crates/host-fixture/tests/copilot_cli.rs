@@ -467,6 +467,44 @@ fn copilot_cli_statusline_is_user_scope_only() {
 }
 
 #[test]
+fn copilot_cli_empty_config_dir_is_rejected_without_stranding_other_backends() {
+    // Positive control first: the identical install with a real `COPILOT_HOME` must
+    // succeed, so the rejection below is provably about the empty value and not about
+    // this harness never installing at all.
+    let env = Env::new("empty-config-dir");
+    env.seed_settings();
+    let (ok, out) = env.fixture(&["setup", "--agent", "copilot-cli"]);
+    assert!(ok && out == "Installed", "control install with a real COPILOT_HOME should succeed, got {out}");
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "control uninstall should succeed, got {out}");
+
+    // gemini is HOME-based detection (`~/.gemini`), so it needs no CLI double on
+    // PATH — a second, working backend to prove the empty override only fails
+    // copilot-cli.
+    fs::create_dir_all(env.root.join(".gemini")).unwrap();
+
+    let mut cmd = Command::new(BIN);
+    cmd.args(["setup-report", "--agent", "copilot-cli", "--agent", "gemini"]);
+    env.apply(&mut cmd);
+    cmd.env("COPILOT_HOME", "");
+    // An empty override resolves against the current directory — the exact behavior
+    // under test — so cwd is pinned to the scratch root; without this a rejected
+    // resolver would still leave `fake_copilot`'s CWD-relative registry write behind in
+    // the real crate directory instead of a directory that gets torn down.
+    cmd.current_dir(&env.root);
+    let out = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+
+    assert!(!out.status.success(), "an empty COPILOT_HOME must fail the fan-out:\n{stdout}");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(
+        lines.iter().any(|l| l.starts_with("copilot-cli: failed: ") && l.contains("COPILOT_HOME")),
+        "copilot-cli's failure must name the empty variable:\n{stdout}"
+    );
+    assert!(lines.contains(&"gemini: installed"), "gemini must still install despite copilot-cli failing:\n{stdout}");
+}
+
+#[test]
 fn copilot_cli_teardown_with_nothing_installed_writes_no_file() {
     // A teardown that owns nothing must not create a settings file in the user's config
     // dir at all — `forget` runs unconditionally, so an eager write here would leave a

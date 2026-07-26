@@ -5,8 +5,11 @@
 //! adapters give the contract real evidence, so external + in-crate backends both
 //! implement it. `probe` is the classification self_heal keys its marker table on.
 
+use std::ffi::OsString;
+use std::path::PathBuf;
+
 use crate::doctor::DoctorReport;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 #[cfg(feature = "claude")]
@@ -114,6 +117,30 @@ pub(crate) use cfg_config_backends;
 // in neither set loses `confedit` entirely and reds with `E0432` that no
 // `--all-features` gate leg can see. A backend that writes none (`pi`) belongs in
 // neither set and compiles clean without it.
+/// Reject an empty config-dir env override (`CLAUDE_CONFIG_DIR`, `COPILOT_HOME`)
+/// instead of silently falling back to the default: both CLIs join their config
+/// paths onto the value literally, so an empty override resolves to the current
+/// directory rather than behaving as unset. Shared by `claude::cc_config_dir` and
+/// `copilot_cli::copilot_home`, the two backends this was proven on.
+///
+/// Pure so the unset/empty/set decision is unit-testable without mutating process
+/// env (`std::env::set_var` is `unsafe` and racy across threads in edition 2024);
+/// [`config_dir_override`] below does the actual lookup.
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
+pub(crate) fn non_empty_config_dir(var: &'static str, value: Option<OsString>) -> Result<Option<PathBuf>> {
+    match value {
+        None => Ok(None),
+        Some(v) if v.is_empty() => Err(Error::EmptyConfigDirOverride { var }),
+        Some(v) => Ok(Some(PathBuf::from(v))),
+    }
+}
+
+/// [`non_empty_config_dir`] wired to the real `var` lookup.
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
+pub(crate) fn config_dir_override(var: &'static str) -> Result<Option<PathBuf>> {
+    non_empty_config_dir(var, std::env::var_os(var))
+}
+
 #[cfg(any(feature = "claude", feature = "copilot-cli"))]
 #[allow(dead_code)]
 pub(crate) mod confedit;
@@ -350,5 +377,41 @@ pub fn backend_for(id: &str) -> Option<Box<dyn AgentBackend>> {
         #[cfg(feature = "augment")]
         "augment" => Some(Box::new(augment::AugmentBackend)),
         _ => None,
+    }
+}
+
+#[cfg(all(test, any(feature = "claude", feature = "copilot-cli")))]
+mod config_dir_tests {
+    use super::non_empty_config_dir;
+    use crate::error::Error;
+
+    #[test]
+    fn unset_resolves_to_none() {
+        assert!(matches!(non_empty_config_dir("TEST_VAR", None), Ok(None)));
+    }
+
+    #[test]
+    fn non_empty_resolves_to_the_path() {
+        let resolved = non_empty_config_dir("TEST_VAR", Some("/some/dir".into())).unwrap();
+        assert_eq!(resolved, Some(std::path::PathBuf::from("/some/dir")));
+    }
+
+    #[test]
+    fn empty_is_rejected_naming_the_variable() {
+        let err = non_empty_config_dir("TEST_VAR", Some("".into())).unwrap_err();
+        assert!(matches!(err, Error::EmptyConfigDirOverride { var: "TEST_VAR" }), "wrong variant: {err:?}");
+    }
+
+    // Non-UTF8 values are a real `var_os` result (an env var set via raw bytes), so the
+    // resolver must not assume valid UTF-8 anywhere on the non-empty path.
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_value_still_resolves() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let raw = OsString::from_vec(vec![0x66, 0x6f, 0xff, 0x6f]); // "fo\xFFo"
+        let resolved = non_empty_config_dir("TEST_VAR", Some(raw.clone())).unwrap();
+        assert_eq!(resolved, Some(std::path::PathBuf::from(raw)));
     }
 }

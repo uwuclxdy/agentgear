@@ -400,6 +400,42 @@ fn claude_statusline_remove_leaves_a_foreign_value_alone() {
 }
 
 #[test]
+fn claude_statusline_empty_config_dir_is_rejected_without_stranding_other_backends() {
+    // Positive control first: the identical install with a real `CLAUDE_CONFIG_DIR`
+    // must succeed, so the rejection below is provably about the empty value and not
+    // about this harness never installing at all.
+    let env = Env::new("empty-config-dir");
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok && out == "Installed", "control install with a real CLAUDE_CONFIG_DIR should succeed, got {out}");
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "control uninstall should succeed, got {out}");
+
+    // gemini is HOME-based detection (`~/.gemini`), so it needs no CLI double on
+    // PATH — a second, working backend to prove the empty override only fails claude.
+    fs::create_dir_all(env.root.join(".gemini")).unwrap();
+
+    let mut cmd = Command::new(BIN);
+    cmd.args(["setup-report", "--agent", "claude", "--agent", "gemini"]);
+    env.apply(&mut cmd);
+    cmd.env("CLAUDE_CONFIG_DIR", "");
+    // An empty override resolves against the current directory — the exact behavior
+    // under test — so cwd is pinned to the scratch root; without this a rejected
+    // resolver would still leave `fake_claude`'s CWD-relative registry write behind in
+    // the real crate directory instead of a directory that gets torn down.
+    cmd.current_dir(&env.root);
+    let out = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+
+    assert!(!out.status.success(), "an empty CLAUDE_CONFIG_DIR must fail the fan-out:\n{stdout}");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(
+        lines.iter().any(|l| l.starts_with("claude: failed: ") && l.contains("CLAUDE_CONFIG_DIR")),
+        "claude's failure must name the empty variable:\n{stdout}"
+    );
+    assert!(lines.contains(&"gemini: installed"), "gemini must still install despite claude failing:\n{stdout}");
+}
+
+#[test]
 fn claude_statusline_uninstall_deletes_the_slot_with_nothing_stashed() {
     // The other arm of the branch every test above takes: install onto an empty slot
     // displaces nothing, so uninstall has no original to put back and has to delete

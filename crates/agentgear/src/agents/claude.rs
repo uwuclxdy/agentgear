@@ -366,9 +366,17 @@ fn settings_file(scope: &Scope) -> Result<PathBuf> {
     }
 }
 
+/// CC's config dir: `CLAUDE_CONFIG_DIR` when set and non-empty, else `~/.claude`.
+///
+/// Real `claude` 2.1.220 takes `CLAUDE_CONFIG_DIR=""` literally for every config-dir
+/// join, writing `settings.json` and `plugins/*` next to the current directory
+/// instead of under `~/.claude` (`docs/design.md` § empty `CLAUDE_CONFIG_DIR`). A
+/// silent fallback here would therefore write a settings file CC itself never reads
+/// behind a green doctor, so the empty case is rejected instead through the shared
+/// [`super::non_empty_config_dir`].
 fn cc_config_dir() -> Result<PathBuf> {
-    if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|v| !v.is_empty()) {
-        return Ok(PathBuf::from(dir));
+    if let Some(dir) = super::config_dir_override("CLAUDE_CONFIG_DIR")? {
+        return Ok(dir);
     }
     dirs::home_dir()
         .map(|home| home.join(".claude"))

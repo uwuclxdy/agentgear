@@ -341,17 +341,16 @@ fn remove(plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
 
 /// copilot's config dir: `$COPILOT_HOME` when set and non-empty, else `~/.copilot`.
 ///
-/// The empty case deliberately diverges from copilot's own
-/// `process.env.COPILOT_HOME ?? join(homedir(), ".copilot")` (1.0.75 bundle,
-/// `docs/research/statusline-survey.md` §4): `??` is nullish-only, so copilot reads
-/// `COPILOT_HOME=""` as the config dir itself and resolves `settings.json` against the
-/// CWD. Treating empty as unset keeps a stray `export COPILOT_HOME=` from dropping a
-/// `settings.json` into whatever directory the host binary happened to run in — an
-/// ineffective write under `~/.copilot` is the better failure. Ceiling: on that one
-/// input we write where copilot will not read. Same idiom as claude's `cc_config_dir`.
+/// copilot's own bundle resolves `process.env.COPILOT_HOME ?? join(homedir(),
+/// ".copilot")` (1.0.75 bundle, `docs/research/statusline-survey.md` §4): `??` is
+/// nullish-only, so copilot reads `COPILOT_HOME=""` as the config dir itself and
+/// resolves `settings.json` against the CWD, not `~/.copilot`. A silent fallback here
+/// would therefore write a settings file copilot itself never reads behind a green
+/// doctor, so the empty case is rejected instead through the shared
+/// [`super::non_empty_config_dir`]. Same idiom as claude's `cc_config_dir`.
 fn copilot_home() -> Result<PathBuf> {
-    if let Some(dir) = std::env::var_os("COPILOT_HOME").filter(|v| !v.is_empty()) {
-        return Ok(PathBuf::from(dir));
+    if let Some(dir) = super::config_dir_override("COPILOT_HOME")? {
+        return Ok(dir);
     }
     dirs::home_dir()
         .map(|home| home.join(".copilot"))
