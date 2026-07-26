@@ -107,7 +107,6 @@ macro_rules! cfg_config_backends {
         $item
     };
 }
-pub(crate) use cfg_config_backends;
 
 // Shared config-writing helpers, compiled only when a non-CC backend needs them.
 // `allow(dead_code)`: not every enabled backend uses every helper, so a single-

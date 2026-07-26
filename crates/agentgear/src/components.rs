@@ -16,8 +16,9 @@ use crate::error::{Error, Result};
 /// executable command, so an author writes the client id once and each harness sees
 /// its own. Plugin-native backends (CC/copilot) copy the whole tree and substitute it
 /// everywhere (see materialize); the config-translating backends expand only the
-/// command surfaces they render — hook commands and mcp command/args ([`with_client`]).
-pub(crate) const AGENTGEAR_CLIENT_TOKEN: &str = "${AGENTGEAR_CLIENT}";
+/// command surfaces they render — hook commands and mcp command/args
+/// ([`with_client`](PluginComponents::with_client)).
+pub const AGENTGEAR_CLIENT_TOKEN: &str = "${AGENTGEAR_CLIENT}";
 
 /// Replace every [`AGENTGEAR_CLIENT_TOKEN`] in `s` with `client`. A no-op when the
 /// token is absent.
@@ -131,37 +132,35 @@ pub struct SkillDir {
     pub files: Vec<(String, Vec<u8>)>,
 }
 
-// Only a config-merge backend renders from the IR, so only those builds carry the
-// expansion: the two plugin-native backends substitute the token across the whole
-// materialized tree instead, and `pi` renders nothing at all.
-crate::agents::cfg_config_backends! {
-    impl PluginComponents {
-        /// Expand every [`AGENTGEAR_CLIENT_TOKEN`] to `client` across the surfaces that
-        /// carry an executable command — hook commands and mcp command/args — so each
-        /// backend renders its own canonical client id. Matchers, env, and markdown are
-        /// left verbatim; a token-free plugin is unchanged.
-        pub(crate) fn with_client(mut self, client: &str) -> Self {
-            for hook in &mut self.hooks {
-                if hook.command.contains(AGENTGEAR_CLIENT_TOKEN) {
-                    hook.command = expand_client(&hook.command, client);
-                }
-            }
-            for server in &mut self.mcp_servers {
-                if server.command.contains(AGENTGEAR_CLIENT_TOKEN) {
-                    server.command = expand_client(&server.command, client);
-                }
-                for arg in &mut server.args {
-                    if arg.contains(AGENTGEAR_CLIENT_TOKEN) {
-                        *arg = expand_client(arg, client);
-                    }
-                }
-            }
-            self
-        }
-    }
-}
-
 impl PluginComponents {
+    /// Expand every [`AGENTGEAR_CLIENT_TOKEN`] to `client` across the surfaces that
+    /// carry an executable command — hook commands and mcp command/args — so each
+    /// backend renders its own canonical client id. Matchers, env, and markdown are
+    /// left verbatim; a token-free plugin is unchanged.
+    ///
+    /// Public so an out-of-crate [`AgentBackend`](crate::AgentBackend) can expand the
+    /// token after obtaining the IR through
+    /// [`Plugin::components`](crate::host::Plugin::components), instead of shipping the
+    /// literal token into a harness config or re-implementing the walk.
+    pub fn with_client(mut self, client: &str) -> Self {
+        for hook in &mut self.hooks {
+            if hook.command.contains(AGENTGEAR_CLIENT_TOKEN) {
+                hook.command = expand_client(&hook.command, client);
+            }
+        }
+        for server in &mut self.mcp_servers {
+            if server.command.contains(AGENTGEAR_CLIENT_TOKEN) {
+                server.command = expand_client(&server.command, client);
+            }
+            for arg in &mut server.args {
+                if arg.contains(AGENTGEAR_CLIENT_TOKEN) {
+                    *arg = expand_client(arg, client);
+                }
+            }
+        }
+        self
+    }
+
     /// Parse from flattened `(rel-path, bytes)` tree entries.
     pub(crate) fn parse(entries: &[(String, Vec<u8>)]) -> Result<Self> {
         let mut out = PluginComponents::default();
