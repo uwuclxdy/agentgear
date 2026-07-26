@@ -37,6 +37,9 @@ use serde_json::{Value, json};
 /// equal passes.
 const VERSION_LINE: &str = "2.1.196 (Claude Code)";
 
+/// The state file's name, joined onto whatever `resolve_config_dir` returns.
+const STATE_FILENAME: &str = "fake-claude-state.json";
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -178,7 +181,7 @@ impl State {
 
 fn state_path() -> PathBuf {
     let dir = resolve_config_dir(std::env::var_os("CLAUDE_CONFIG_DIR"), std::env::var_os("HOME"));
-    dir.join("fake-claude-state.json")
+    dir.join(STATE_FILENAME)
 }
 
 /// Pure resolution behind `state_path()`, taking both env lookups as parameters so it's
@@ -198,24 +201,24 @@ mod tests {
     #[test]
     fn empty_config_dir_resolves_cwd_relative_no_home_fallback() {
         let dir = resolve_config_dir(Some(OsString::new()), Some(OsString::from("/home/someone")));
-        assert_eq!(dir.join("fake-claude-state.json"), PathBuf::from("fake-claude-state.json"));
+        assert_eq!(dir.join(STATE_FILENAME), PathBuf::from(STATE_FILENAME));
     }
 
     #[test]
     fn explicit_config_dir_wins_over_home() {
         let dir = resolve_config_dir(Some(OsString::from("/explicit/dir")), Some(OsString::from("/home/someone")));
-        assert_eq!(dir.join("fake-claude-state.json"), PathBuf::from("/explicit/dir/fake-claude-state.json"));
+        assert_eq!(dir.join(STATE_FILENAME), PathBuf::from("/explicit/dir").join(STATE_FILENAME));
     }
 
     #[test]
     fn unset_config_dir_falls_back_to_home_dot_claude() {
         let dir = resolve_config_dir(None, Some(OsString::from("/home/someone")));
-        assert_eq!(dir.join("fake-claude-state.json"), PathBuf::from("/home/someone/.claude/fake-claude-state.json"));
+        assert_eq!(dir.join(STATE_FILENAME), PathBuf::from("/home/someone/.claude").join(STATE_FILENAME));
     }
 
     #[test]
     fn unset_config_dir_and_no_home_falls_back_to_dot_claude() {
         let dir = resolve_config_dir(None, None);
-        assert_eq!(dir.join("fake-claude-state.json"), PathBuf::from(".claude/fake-claude-state.json"));
+        assert_eq!(dir.join(STATE_FILENAME), PathBuf::from(".claude").join(STATE_FILENAME));
     }
 }
