@@ -109,6 +109,16 @@ impl Env {
     fn hooks_json(&self) -> String {
         fs::read_to_string(self.codex.join("hooks.json")).unwrap()
     }
+
+    /// The project root a `--project`-scoped run installs into: its config base is
+    /// `<project>/.codex`, independent of `CODEX_HOME`.
+    fn project(&self) -> PathBuf {
+        self.root.join("project")
+    }
+
+    fn project_config_toml(&self) -> String {
+        fs::read_to_string(self.project().join(".codex").join("config.toml")).unwrap_or_default()
+    }
 }
 
 impl Drop for Env {
@@ -223,4 +233,42 @@ fn codex_full_lifecycle() {
     let (ok, out) = env.fixture(&["setup", "--agent", "codex"]);
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.config_toml().contains("[mcp_servers.ez-fixture]"), "re-install did not re-add our server");
+}
+
+#[test]
+fn codex_project_scope_mcp_is_isolated_from_user_scope() {
+    // `codex_base(Scope::Project { path })` resolves to `<path>/.codex`, a live
+    // surface (docs/harness/codex.md gotcha 6): a real codex session run inside a
+    // trusted project directory loads `[mcp_servers]` straight out of that project's
+    // own `.codex/config.toml`, while codex's own `mcp` management CLI never reads it.
+    // That CLI blindness is what made the write look dead, so this pins it.
+    let env = Env::new("project-mcp");
+    let project = env.project();
+    let project_config = project.join(".codex").join("config.toml");
+
+    // install: project-scope setup only ever touches <project>/.codex.
+    let (ok, out) = env.fixture(&["setup", "--agent", "codex", "--project", &project.display().to_string()]);
+    assert!(ok, "project-scope setup failed: {out}");
+    assert_eq!(out, "Installed", "first project-scope setup should install, got {out}");
+
+    let pc = env.project_config_toml();
+    let body = mcp_table_body(&pc, "[mcp_servers.ez-fixture]");
+    assert!(body.contains("command = \"host_fixture\""), "project config missing our mcp command:\n{pc}");
+    assert!(project_config.exists(), "project config.toml not written: {}", project_config.display());
+
+    // scope isolation: the user-scope config seeded by Env::new must be untouched —
+    // no our-server entry landed there, and the seeded content survives byte-for-byte.
+    let uc = env.config_toml();
+    assert!(!uc.contains("ez-fixture"), "project-scope install leaked our server into user-scope config:\n{uc}");
+    assert_eq!(uc, SEED_CONFIG, "project-scope install modified the user-scope config.toml at all:\n{uc}");
+
+    // remove: a project-scope uninstall takes the entry back out of the project file
+    // only, leaving the (still-untouched) user-scope file alone.
+    let (ok, out) = env.fixture(&["uninstall", "--project", &project.display().to_string()]);
+    assert!(ok, "project-scope uninstall failed: {out}");
+    assert_eq!(out, "Removed", "project-scope uninstall should remove our entry, got {out}");
+
+    let pc = env.project_config_toml();
+    assert!(!pc.contains("[mcp_servers.ez-fixture]"), "our mcp server survived project-scope uninstall:\n{pc}");
+    assert_eq!(env.config_toml(), SEED_CONFIG, "project-scope uninstall touched the user-scope config.toml:\n{}", env.config_toml());
 }

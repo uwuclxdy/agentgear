@@ -13,7 +13,9 @@
 //!   We still write it so a user can approve it.
 //! - project scope (`<cwd>/.codex/`) is inert unless the repo path is marked
 //!   trusted in the user `config.toml`; v1 is user-scope-primary and does not
-//!   seed that trust entry.
+//!   seed that trust entry. Once trusted, a real session does load the project
+//!   file's `[mcp_servers]` (A/B-proven 2026-07-26), even though codex's own `mcp`
+//!   management CLI only ever reads `$CODEX_HOME/config.toml`.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
