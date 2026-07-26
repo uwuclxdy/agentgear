@@ -150,7 +150,7 @@ Every fallible call in the crate returns `Result<T, Error>` (`type Result<T> = s
 | `ClaudeTooOld { found, floor }` | `claude` is below the required version floor |
 | `CopilotNotFound` | `copilot` is not on PATH |
 | `CopilotTooOld { found }` | `copilot` is below 1.0.71, the plugin-management floor |
-| `EmptyConfigDirOverride { var }` | `CLAUDE_CONFIG_DIR` or `COPILOT_HOME` is set to the empty string; both CLIs read that as the current directory, so no write target is correct and the agent's install fails instead of writing where the tool never reads |
+| `EmptyConfigDirOverride { var }` | `CLAUDE_CONFIG_DIR` or `COPILOT_HOME` is set to the empty string; both CLIs read that as the current directory, so no write target is correct. Raised before any CLI call, so the install fails with the tool's registry untouched. Only reachable for a host that declares a status line, the one surface whose path agentgear resolves itself |
 | `Cli { bin, args, code, stderr }` | a CLI invocation exited nonzero |
 | `Json { what, source }` | a JSON parse failed |
 | `Io { context, source }` | a filesystem operation failed |

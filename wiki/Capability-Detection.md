@@ -50,9 +50,13 @@ An override set to the **empty string** is a special case worth knowing, because
 about it. `claude` and `copilot` both read an empty value as the config dir itself, resolving
 `settings.json` against the current working directory, so agentgear refuses that input: setting
 `CLAUDE_CONFIG_DIR=` or `COPILOT_HOME=` fails that agent's install with an error naming the variable,
-rather than writing to `~/.claude` or `~/.copilot` where the tool would never look. Other backends
-still read an empty override as unset and fall back to their default root; what their tools do with
-an empty value has not been probed.
+rather than writing to `~/.claude` or `~/.copilot` where the tool would never look. The refusal lands
+before any `claude`/`copilot` call, so a rejected install leaves the tool's own plugin registry
+untouched, and `doctor` reports the same condition as a failing check. It only applies to a host that
+declares a status line, since that is the one surface agentgear resolves the config dir for itself;
+a host without one installs normally, because the CLI resolves its own paths. Other backends still
+read an empty override as unset and fall back to their default root; what their tools do with an
+empty value has not been probed.
 
 ## See also
 
