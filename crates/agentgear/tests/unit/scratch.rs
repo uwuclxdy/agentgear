@@ -28,31 +28,70 @@ fn scratch_path_carries_this_process_id() {
     assert_ne!(path("ez-scratch-pin"), rendered, "two calls must not share a path");
 }
 
-/// The failure mode this fix has is a *new* unit file copying the old
-/// `temp_dir().join(format!("…{:016x}", fastrand::u64(..)))` shape, which the
-/// single-helper pin above cannot see. So pin the tree-wide property instead:
-/// randomness in a unit test's path comes from this module or from nowhere.
-#[test]
-fn no_unit_test_draws_its_own_path_randomness() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/unit");
-    let mut offenders = Vec::new();
-    let mut scanned = 0usize;
+/// The unit files that reach for `temp_dir` and are not building a path under it:
+/// each binds it as a read-only "a directory that exists" fixture and asserts on
+/// it, so neither can collide with anything. The count is part of the entry — a
+/// blessed file that grows a *second* use reds rather than inheriting the pass.
+const READ_ONLY_TEMP_DIR_FIXTURES: [(&str, usize); 2] = [("claude.rs", 1), ("vscode_copilot.rs", 1)];
 
-    for entry in std::fs::read_dir(&dir).unwrap() {
-        let file = entry.unwrap().path();
-        if file.extension().is_none_or(|e| e != "rs") || file.file_name().is_some_and(|n| n == "scratch.rs") {
+/// The failure mode this fix has is a *new* unit file naming its own path under
+/// the temp dir, which the single-helper pin above cannot see. Banning the
+/// `fastrand` shape alone would miss the worse version of it: a fixed name
+/// (`temp_dir().join("x")`) collides between *every* concurrent process, not one
+/// pair in 96k. So pin what the helper's whole reason for existing is — a unit
+/// test reaches the temp dir through `crate::scratch::path` or not at all —
+/// which holds whatever the next author draws their uniqueness from.
+#[test]
+fn no_unit_test_builds_its_own_temp_path() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/unit");
+    let mut files = Vec::new();
+    collect_rs(&dir, &mut files);
+
+    let mut offenders = Vec::new();
+    let mut blessed_seen = 0usize;
+
+    for file in &files {
+        let name = file.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        if name == "scratch.rs" {
             continue;
         }
-        scanned += 1;
-        if std::fs::read_to_string(&file).unwrap().contains("fastrand") {
-            offenders.push(file.file_name().unwrap().to_string_lossy().into_owned());
+        let allowed = READ_ONLY_TEMP_DIR_FIXTURES.iter().find(|(f, _)| *f == name).map_or(0, |(_, n)| *n);
+        if allowed > 0 {
+            blessed_seen += 1;
+        }
+        let hits = std::fs::read_to_string(file)
+            .unwrap_or_else(|e| panic!("reading unit test {} for the temp-dir sweep: {e}", file.display()))
+            .matches("temp_dir")
+            .count();
+        if hits != allowed {
+            offenders.push(format!("{name}: {hits} `temp_dir` uses, {allowed} allowed"));
         }
     }
 
-    assert!(scanned > 30, "the scan found only {scanned} unit files, so a clean result proves nothing");
+    assert!(files.len() > 30, "the sweep walked only {} files under {}, so a clean result proves nothing", files.len(), dir.display());
     assert!(
         offenders.is_empty(),
-        "these unit files draw their own path randomness instead of calling `crate::scratch::path`, \
-         so two test processes seeded alike share a directory: {offenders:?}"
+        "every unit test must take its scratch path from `crate::scratch::path`, which stamps the pid \
+         that `fastrand` cannot supply; a hand-built temp path collides with a concurrent test process. \
+         Fewer uses than allowed means a stale `READ_ONLY_TEMP_DIR_FIXTURES` entry to delete. {offenders:?}"
     );
+    assert_eq!(
+        blessed_seen,
+        READ_ONLY_TEMP_DIR_FIXTURES.len(),
+        "a `READ_ONLY_TEMP_DIR_FIXTURES` entry names a file the sweep never saw: {READ_ONLY_TEMP_DIR_FIXTURES:?}"
+    );
+}
+
+/// Recursive, so a future `tests/unit/<sub>/x.rs` cannot sit in a blind spot that
+/// the sweep's own anti-zero guard would still count as covered.
+fn collect_rs(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("reading the unit-test dir {}: {e}", dir.display()));
+    for entry in entries {
+        let path = entry.unwrap_or_else(|e| panic!("reading an entry of {}: {e}", dir.display())).path();
+        if path.is_dir() {
+            collect_rs(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
 }
