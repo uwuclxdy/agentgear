@@ -110,6 +110,13 @@ impl AgentBackend for CopilotCliBackend {
         // "present but drifted", or self_heal would resurrect a deliberate uninstall
         // (the Absent arm above already returned). Once the plugin IS registered, a
         // missing or foreign statusLine is drift like any other surface.
+        //
+        // No `ensure_statusline_resolves` hoist here, deliberately: probe never mutates
+        // anything (only reads), so an unresolvable config dir cannot strand a partial
+        // registry write the way `reconcile`/`remove` can. Hoisting it above the
+        // `Absent` early-return would also turn every self-heal poll of a plugin that
+        // was never installed into a hard failure purely from a broken env var, with
+        // nothing to protect and nothing to repair.
         Ok(match statusline_state(plugin, scope)? {
             None | Some(BackendState::Healthy) => registry,
             Some(_) => BackendState::NeedsRepair,
@@ -186,6 +193,7 @@ fn plugin_uninstall(cli: &CopilotCli, id: &str) -> Result<()> {
 // --- reconcile ---------------------------------------------------------------
 
 fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
+    ensure_statusline_resolves(plugin, scope)?;
     let cli = CopilotCli::locate()?;
     let id = plugin.id();
 
@@ -327,6 +335,7 @@ fn classify(source: &Source, entry: Option<&CopilotPlugin>, embedded: &str) -> B
 /// means RESTORE: put back what our write displaced. Either half changing something is
 /// a `Removed`; neither is the `NoOp` this backend's teardown contract promises.
 fn remove(plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
+    ensure_statusline_resolves(plugin, scope)?;
     let cli = CopilotCli::locate()?;
     let mut changed = false;
     if find_plugin(&cli, plugin)?.is_some() {
@@ -382,6 +391,23 @@ fn statusline_target(plugin: &Plugin, scope: &Scope) -> Result<Option<PathBuf>> 
     statuslinejson::target(plugin, CopilotCliBackend.id(), STATUSLINE_SHAPE, statusline_file)
 }
 
+/// Resolve the statusLine settings path before `reconcile`/`remove` run any `copilot`
+/// CLI call, so an empty `COPILOT_HOME` refuses the whole operation up front instead
+/// of letting the registry mutation (marketplace add/install/update/uninstall) run to
+/// completion and only failing afterward on the slot write — which would leave the
+/// plugin installed or removed in copilot's own registry behind a `Failed` status.
+/// `cli.rs` never scrubs `COPILOT_HOME` from the child env, so the real CLI would
+/// otherwise perform its own cwd-relative write before we ever got a chance to reject.
+///
+/// A no-op for a host that declares no status line: `statusline_target`'s own gate
+/// already skips the config-dir lookup in that case (and for project scope), so such a
+/// host keeps converging normally under an empty override — nothing IT writes is
+/// misplaced, since copilot resolves its own config dir independently of ours.
+fn ensure_statusline_resolves(plugin: &Plugin, scope: &Scope) -> Result<()> {
+    statusline_target(plugin, scope)?;
+    Ok(())
+}
+
 fn statusline_reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<bool> {
     let Some(path) = statusline_target(plugin, scope)? else {
         return Ok(false);
@@ -405,6 +431,12 @@ fn statusline_state(plugin: &Plugin, scope: &Scope) -> Result<Option<BackendStat
 
 // --- report ------------------------------------------------------------------
 
+/// No `ensure_statusline_resolves` hoist here, deliberately: `report_checks` builds a
+/// `Vec<DoctorCheck>` and never propagates an `Err` (every failure becomes its own
+/// check), and every CLI call below is a read (`plugin list`, `--version`), never a
+/// mutation, so an unresolvable config dir has no partial state to strand. The
+/// `statusline_check` call below already surfaces it as its own check (a `Fail` for
+/// an empty override, see `statuslinejson::check`).
 fn report_checks(plugin: &Plugin) -> Vec<DoctorCheck> {
     let mut checks = Vec::new();
     let cli = match CopilotCli::locate() {

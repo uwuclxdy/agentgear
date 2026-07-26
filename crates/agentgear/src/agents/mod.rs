@@ -5,11 +5,18 @@
 //! adapters give the contract real evidence, so external + in-crate backends both
 //! implement it. `probe` is the classification self_heal keys its marker table on.
 
+// `OsString`/`PathBuf`/`Error` are used only by the config-dir resolver below and its
+// tests, both gated to the two backends it was proven on: an unconditional import
+// here reds `unused_imports` under every OTHER single-feature build (`-D warnings`).
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 use std::ffi::OsString;
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 use std::path::PathBuf;
 
 use crate::doctor::DoctorReport;
-use crate::error::{Error, Result};
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
+use crate::error::Error;
+use crate::error::Result;
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 #[cfg(feature = "claude")]

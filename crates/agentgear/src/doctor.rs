@@ -202,6 +202,12 @@ pub(crate) fn claude_report(plugin: &Plugin, source: &Source) -> DoctorReport {
     // read settings.json) and stay useful even when `claude` is missing, so they run
     // unconditionally. The statusLine check is absent entirely for a host that
     // declares none, rather than reporting on a surface nobody asked for.
+    //
+    // No `ensure_statusline_resolves` hoist needed here: `claude_report` is infallible
+    // (returns a `DoctorReport`, never propagates an `Err`) and every CLI call above is
+    // a read (`list`, `--version`), never a mutation, so an unresolvable config dir has
+    // no partial state to strand. `statusline_check` already surfaces it as its own
+    // check (a `Fail` for an empty override, see `statuslinejson::check`).
     checks.push(check_tree_hash(plugin, source));
     checks.push(check_hook_commands(plugin));
     checks.extend(crate::agents::claude::statusline_check(plugin));

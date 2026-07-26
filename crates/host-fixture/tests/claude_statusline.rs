@@ -22,6 +22,11 @@ use std::process::{Command, Stdio};
 const BIN: &str = env!("CARGO_BIN_EXE_host_fixture");
 const FAKE_CLAUDE: &str = env!("CARGO_BIN_EXE_fake_claude");
 
+/// Mirrors `fake_claude.rs`'s own `STATE_FILENAME`; a bin target exports nothing an
+/// external test crate can import, so this is a second literal by necessity, not by
+/// oversight (same idiom as `fake_claude_config_dir.rs`'s own copy).
+const FAKE_CLAUDE_STATE_FILENAME: &str = "fake-claude-state.json";
+
 /// The user's own settings before we touch anything: an unrelated key plus a real
 /// status line of theirs. Written in `serde_json::to_vec_pretty` + trailing-newline
 /// form — exactly what `confedit`'s writer emits — so uninstall must restore this
@@ -433,6 +438,71 @@ fn claude_statusline_empty_config_dir_is_rejected_without_stranding_other_backen
         "claude's failure must name the empty variable:\n{stdout}"
     );
     assert!(lines.contains(&"gemini: installed"), "gemini must still install despite claude failing:\n{stdout}");
+
+    // The bug this whole feature exists to fix: the reject must fire BEFORE any
+    // `claude` CLI call, not after a marketplace-add/install already ran. If it fires
+    // late, `fake_claude`'s own state file (its registry) exists at the pinned cwd
+    // despite the reconcile reporting `failed`.
+    assert!(!env.root.join(FAKE_CLAUDE_STATE_FILENAME).exists(), "claude's registry must be untouched when the empty override is rejected");
+}
+
+#[test]
+fn claude_statusline_doctor_reads_empty_config_dir_as_a_fail_not_a_warn() {
+    let env = Env::new("doctor-empty-config-dir");
+
+    let mut cmd = Command::new(BIN);
+    cmd.args(["doctor"]);
+    env.apply(&mut cmd);
+    cmd.env("CLAUDE_CONFIG_DIR", "");
+    cmd.current_dir(&env.root);
+    let out = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+
+    assert!(!out.status.success(), "doctor must exit unhealthy when the override is rejected:\n{stdout}");
+    assert!(
+        stdout.lines().any(|l| l.starts_with("[fail] status line installed: ") && l.contains("CLAUDE_CONFIG_DIR")),
+        "doctor must report the empty override as a Fail naming the variable, not a Warn:\n{stdout}"
+    );
+    assert!(!stdout.contains("[warn] status line installed"), "the empty override must not read as a Warn:\n{stdout}");
+    assert!(!env.root.join(FAKE_CLAUDE_STATE_FILENAME).exists(), "doctor must never write anything for a read-only check");
+}
+
+/// A declaration-free host (no `statusline_fn` at all) must keep installing normally
+/// under an empty `CLAUDE_CONFIG_DIR`: the reject is gated behind the host actually
+/// declaring a status line (`statuslinejson::target`'s own condition), so a host with
+/// no slot to protect has nothing misplaced by the empty override — `claude` resolves
+/// its own config dir independently of ours. `embedded_github_fixture` is the fixture
+/// binary with no `statusline_fn`.
+#[test]
+fn declaration_free_host_still_installs_under_empty_config_dir() {
+    const NO_SLOT_BIN: &str = env!("CARGO_BIN_EXE_embedded_github_fixture");
+
+    let root = std::env::temp_dir().join(format!("ez-cc-no-slot-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let bin = root.join("bin");
+    for dir in [&bin, &root.join("config"), &root.join("data"), &root.join("run")] {
+        fs::create_dir_all(dir).unwrap();
+    }
+    fs::copy(FAKE_CLAUDE, bin.join(format!("claude{}", std::env::consts::EXE_SUFFIX))).unwrap();
+
+    let mut cmd = Command::new(NO_SLOT_BIN);
+    cmd.args(["install"])
+        .env("CLAUDE_CONFIG_DIR", "")
+        .env("HOME", &root)
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_RUNTIME_DIR", root.join("run"))
+        .env("PATH", curated_path(&bin))
+        // Same discipline as the rejected-override test above: pin cwd so a passing
+        // run cannot leave `fake_claude`'s cwd-relative registry write behind either.
+        .current_dir(&root);
+    let out = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+
+    assert!(out.status.success(), "a declaration-free host must install fine under an empty CLAUDE_CONFIG_DIR:\n{stdout}");
+    assert!(stdout.lines().any(|l| l == "claude: installed"), "claude must actually install, not just skip:\n{stdout}");
+
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]

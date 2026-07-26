@@ -76,6 +76,13 @@ impl AgentBackend for ClaudeBackend {
         // "present but drifted", or self_heal would resurrect a deliberate uninstall
         // (the Absent arm above already returned). Once the plugin IS registered, a
         // missing or foreign statusLine is drift like any other surface.
+        //
+        // No `ensure_statusline_resolves` hoist here, deliberately: probe never mutates
+        // anything (only reads), so an unresolvable config dir cannot strand a partial
+        // registry write the way `reconcile`/`remove` can. Hoisting it above the
+        // `Absent` early-return would also turn every self-heal poll of a plugin that
+        // was never installed into a hard failure purely from a broken env var, with
+        // nothing to protect and nothing to repair.
         Ok(match statusline_state(plugin, scope)? {
             None | Some(BackendState::Healthy) => registry,
             Some(_) => BackendState::NeedsRepair,
@@ -162,6 +169,7 @@ fn plugin_enable(cli: &ClaudeCli, id: &str, scope: &Scope) -> Result<()> {
 // --- reconcile ---------------------------------------------------------------
 
 pub(crate) fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
+    ensure_statusline_resolves(plugin, scope)?;
     match reconcile_registry(plugin, desired, scope)? {
         // Frozen: someone else owns this install, so its statusLine is theirs too.
         RegistryOutcome::Frozen => Ok(Outcome::NoOp),
@@ -337,6 +345,7 @@ fn verify_present(cli: &ClaudeCli, scope: &Scope, plugin: &Plugin) -> Result<()>
 // --- remove ------------------------------------------------------------------
 
 pub(crate) fn remove(plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
+    ensure_statusline_resolves(plugin, scope)?;
     let cli = ClaudeCli::locate()?;
     let id = plugin.id();
 
@@ -389,6 +398,23 @@ fn cc_config_dir() -> Result<PathBuf> {
 /// no use for.
 fn statusline_target(plugin: &Plugin, scope: &Scope) -> Result<Option<PathBuf>> {
     statuslinejson::target(plugin, ClaudeBackend.id(), STATUSLINE_SHAPE, || settings_file(scope))
+}
+
+/// Resolve the statusLine settings path before `reconcile`/`remove` run any `claude`
+/// CLI call, so an empty `CLAUDE_CONFIG_DIR` refuses the whole operation up front
+/// instead of letting the registry mutation (marketplace add/install/update/uninstall)
+/// run to completion and only failing afterward on the slot write — which would leave
+/// the plugin installed or removed in CC's own registry behind a `Failed` status.
+/// `cli.rs` never scrubs `CLAUDE_CONFIG_DIR` from the child env, so the real CLI would
+/// otherwise perform its own cwd-relative write before we ever got a chance to reject.
+///
+/// A no-op for a host that declares no status line: `statusline_target`'s own gate
+/// already skips the config-dir lookup in that case, so such a host keeps converging
+/// normally under an empty override — nothing IT writes is misplaced, since `claude`
+/// resolves its own config dir independently of ours.
+fn ensure_statusline_resolves(plugin: &Plugin, scope: &Scope) -> Result<()> {
+    statusline_target(plugin, scope)?;
+    Ok(())
 }
 
 fn statusline_reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<bool> {

@@ -349,8 +349,12 @@ pub(crate) fn read_settings(path: &Path) -> Result<Option<Value>> {
 /// another tool is a real (and user-visible) state, not a broken install.
 ///
 /// `settings` is the backend's already-resolved path as a `Result`, because doctor
-/// reports rather than fails: a config-dir lookup that could not resolve becomes a
-/// Warn here instead of taking the whole report down.
+/// reports rather than fails: a config-dir lookup that could not resolve GENUINELY
+/// (no HOME) becomes a Warn here instead of taking the whole report down. An empty
+/// config-dir override is different: `reconcile`/`remove` hard-reject it (see each
+/// backend's `ensure_statusline_resolves`), so a Warn here would contradict an install
+/// that just failed on the exact same condition — this one variant is a Fail instead,
+/// matched on the type rather than its rendered message.
 pub(crate) fn check(
     settings: Result<PathBuf>, key_path: &[&str], plugin: &Plugin, client: &str, shape: SlotShape, harness: &str,
 ) -> Option<DoctorCheck> {
@@ -359,6 +363,15 @@ pub(crate) fn check(
     let slot = key_path.join(".");
     let path = match settings {
         Ok(path) => path,
+        Err(Error::EmptyConfigDirOverride { var }) => {
+            return Some(DoctorCheck {
+                name,
+                status: CheckStatus::Fail {
+                    problem: format!("`{var}` is set to an empty string, so {harness}'s config dir cannot be resolved"),
+                    fix: format!("unset `{var}` or point it at a real directory"),
+                },
+            });
+        }
         Err(e) => return Some(DoctorCheck { name, status: CheckStatus::Warn(format!("could not locate {harness}'s settings: {e}")) }),
     };
     let root = read_settings(&path).ok().flatten();

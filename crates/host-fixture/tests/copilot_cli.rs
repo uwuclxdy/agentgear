@@ -28,6 +28,11 @@ use serde_json::{Value, json};
 const BIN: &str = env!("CARGO_BIN_EXE_host_fixture");
 const FAKE_COPILOT: &str = env!("CARGO_BIN_EXE_fake_copilot");
 
+/// Mirrors `fake_copilot.rs`'s own state-file name; a bin target exports nothing an
+/// external test crate can import, so this is a second literal by necessity, not by
+/// oversight (same idiom `claude_statusline.rs` uses for `fake_claude`'s).
+const FAKE_COPILOT_STATE_FILENAME: &str = "fake-copilot-state.json";
+
 /// The user's own settings before we touch anything: an unrelated key plus a real
 /// status line of theirs. Written in `serde_json::to_vec_pretty` + trailing-newline
 /// form — exactly what `confedit`'s writer emits — so uninstall must restore this file
@@ -502,6 +507,37 @@ fn copilot_cli_empty_config_dir_is_rejected_without_stranding_other_backends() {
         "copilot-cli's failure must name the empty variable:\n{stdout}"
     );
     assert!(lines.contains(&"gemini: installed"), "gemini must still install despite copilot-cli failing:\n{stdout}");
+
+    // The bug this whole feature exists to fix: the reject must fire BEFORE any
+    // `copilot` CLI call, not after a marketplace-add/install already ran. If it fires
+    // late, `fake_copilot`'s own state file (its registry) exists at the pinned cwd
+    // despite the reconcile reporting `failed`.
+    assert!(
+        !env.root.join(FAKE_COPILOT_STATE_FILENAME).exists(),
+        "copilot-cli's registry must be untouched when the empty override is rejected"
+    );
+}
+
+#[test]
+fn copilot_cli_statusline_doctor_reads_empty_config_dir_as_a_fail_not_a_warn() {
+    let env = Env::new("doctor-empty-config-dir");
+    env.seed_settings();
+
+    let mut cmd = Command::new(BIN);
+    cmd.args(["doctor"]);
+    env.apply(&mut cmd);
+    cmd.env("COPILOT_HOME", "");
+    cmd.current_dir(&env.root);
+    let out = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+
+    assert!(!out.status.success(), "doctor must exit unhealthy when the override is rejected:\n{stdout}");
+    assert!(
+        stdout.lines().any(|l| l.starts_with("[fail] status line installed: ") && l.contains("COPILOT_HOME")),
+        "doctor must report the empty override as a Fail naming the variable, not a Warn:\n{stdout}"
+    );
+    assert!(!stdout.contains("[warn] status line installed"), "the empty override must not read as a Warn:\n{stdout}");
+    assert!(!env.root.join(FAKE_COPILOT_STATE_FILENAME).exists(), "doctor must never write anything for a read-only check");
 }
 
 #[test]
