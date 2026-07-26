@@ -76,6 +76,13 @@ included, rather than going through the event mapper.
   `PreInvocation`.
 - **cline** hooks are event-named executables in a dir the CLI scans — `~/Documents/Cline/Hooks/`
   (user) and `.clinerules/hooks/` (project), a sibling of `Rules`, not a child.
+- **cursor keeps one key on uninstall.** Removal takes back every hook agentgear wrote, prunes the
+  event arrays and the `hooks` object it emptied, and deletes a file left with an empty root. What it
+  never takes back is cursor's mandatory top-level `version`, so a machine that had no `hooks.json`
+  before the install keeps `{"version": 1}` afterwards. The value agentgear writes is cursor's own
+  current schema version, identical to what a hand-written file or cursor itself would hold, so
+  dropping it would mean deleting a key agentgear cannot prove it wrote. The leftover is an empty
+  hook config: nothing fires from it, and a later install lands on it cleanly.
 - **kiro** hosts hooks only inside user-owned per-agent config files; its run-default agent is a
   setting, not a file, so there is no target agentgear can own without editing the user's agents.
 
