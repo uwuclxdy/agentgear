@@ -17,13 +17,16 @@
 //! read as "unknown, assume fine" rather than letting the double invent a version.
 //!
 //! State lives in `<config-dir>/fake-claude-state.json`, where `<config-dir>` is
-//! `CLAUDE_CONFIG_DIR` (else `$HOME/.claude`) — the same resolution the real CLI uses.
+//! `CLAUDE_CONFIG_DIR` (else `$HOME/.claude`). An empty `CLAUDE_CONFIG_DIR` resolves
+//! cwd-relative rather than falling back to `$HOME`, matching real `claude` 2.1.220's
+//! config-dir joins (probed 2026-07-26; see `docs/design.md` § empty `CLAUDE_CONFIG_DIR`).
 //!
 //! It is also SCOPE-BLIND: one flat registry per config dir, with `--scope` and the
 //! process cwd swallowed by the argument rest-patterns. Every test driving it today is
 //! user-scope; a project-scope test would pass here for the wrong reason, so widen this
 //! before writing one.
 
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -174,9 +177,45 @@ impl State {
 }
 
 fn state_path() -> PathBuf {
-    let dir = std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude")))
-        .unwrap_or_else(|| PathBuf::from(".claude"));
+    let dir = resolve_config_dir(std::env::var_os("CLAUDE_CONFIG_DIR"), std::env::var_os("HOME"));
     dir.join("fake-claude-state.json")
+}
+
+/// Pure resolution behind `state_path()`, taking both env lookups as parameters so it's
+/// testable without mutating process env. A `Some(empty string)` `config_dir` resolves
+/// literally (cwd-relative), never falling back to `home` — see the module doc.
+fn resolve_config_dir(config_dir: Option<OsString>, home: Option<OsString>) -> PathBuf {
+    match config_dir {
+        Some(dir) => PathBuf::from(dir),
+        None => home.map(|home| PathBuf::from(home).join(".claude")).unwrap_or_else(|| PathBuf::from(".claude")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_config_dir_resolves_cwd_relative_no_home_fallback() {
+        let dir = resolve_config_dir(Some(OsString::new()), Some(OsString::from("/home/someone")));
+        assert_eq!(dir.join("fake-claude-state.json"), PathBuf::from("fake-claude-state.json"));
+    }
+
+    #[test]
+    fn explicit_config_dir_wins_over_home() {
+        let dir = resolve_config_dir(Some(OsString::from("/explicit/dir")), Some(OsString::from("/home/someone")));
+        assert_eq!(dir.join("fake-claude-state.json"), PathBuf::from("/explicit/dir/fake-claude-state.json"));
+    }
+
+    #[test]
+    fn unset_config_dir_falls_back_to_home_dot_claude() {
+        let dir = resolve_config_dir(None, Some(OsString::from("/home/someone")));
+        assert_eq!(dir.join("fake-claude-state.json"), PathBuf::from("/home/someone/.claude/fake-claude-state.json"));
+    }
+
+    #[test]
+    fn unset_config_dir_and_no_home_falls_back_to_dot_claude() {
+        let dir = resolve_config_dir(None, None);
+        assert_eq!(dir.join("fake-claude-state.json"), PathBuf::from(".claude/fake-claude-state.json"));
+    }
 }
