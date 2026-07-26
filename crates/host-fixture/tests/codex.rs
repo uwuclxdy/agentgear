@@ -244,7 +244,6 @@ fn codex_project_scope_mcp_is_isolated_from_user_scope() {
     // That CLI blindness is what made the write look dead, so this pins it.
     let env = Env::new("project-mcp");
     let project = env.project();
-    let project_config = project.join(".codex").join("config.toml");
 
     // install: project-scope setup only ever touches <project>/.codex.
     let (ok, out) = env.fixture(&["setup", "--agent", "codex", "--project", &project.display().to_string()]);
@@ -254,7 +253,6 @@ fn codex_project_scope_mcp_is_isolated_from_user_scope() {
     let pc = env.project_config_toml();
     let body = mcp_table_body(&pc, "[mcp_servers.ez-fixture]");
     assert!(body.contains("command = \"host_fixture\""), "project config missing our mcp command:\n{pc}");
-    assert!(project_config.exists(), "project config.toml not written: {}", project_config.display());
 
     // scope isolation: the user-scope config seeded by Env::new must be untouched —
     // no our-server entry landed there, and the seeded content survives byte-for-byte.
