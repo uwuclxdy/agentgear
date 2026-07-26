@@ -415,11 +415,11 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// The pid matches `materialize::rand_suffix` and is not decoration: `fastrand`'s
-/// only cross-process entropy is `Instant::now()`, and the lifecycle flock narrows
-/// rather than excludes — `lock_path()` falls back to `std::env::temp_dir()` when
-/// `XDG_RUNTIME_DIR` is unset, so two processes under different `TMPDIR`s share no
-/// lock file at all and can otherwise pick the same temp name for the same config.
+/// The pid is not decoration: `fastrand`'s only cross-process entropy is
+/// `Instant::now()`, and the lifecycle flock narrows rather than excludes —
+/// `lock_path()` falls back to `std::env::temp_dir()` when `XDG_RUNTIME_DIR` is
+/// unset, so two processes under different `TMPDIR`s share no lock file at all and
+/// can otherwise pick the same temp name for the same config.
 fn tmp_sibling(path: &Path) -> PathBuf {
     let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
     name.push(format!(".tmp.{:016x}.{}", fastrand::u64(..), std::process::id()));
