@@ -100,8 +100,11 @@ impl StatusLineDecl {
 /// `${AGENTGEAR_CLIENT}` token expands to it, so a host reads it straight off its
 /// own `--client` argument.
 ///
-/// A stash naming the host's own command reads as `None`: it can only have got there
-/// through a bad write, and running it would re-enter this binary from inside itself.
+/// A stash naming the command the host declares RIGHT NOW reads as `None`, so the
+/// common poisoned stash does not re-enter this binary from inside itself. A stash
+/// naming a command the host declared in an *earlier* release is not covered and is
+/// still run; the recursion that opens, and what closing it would take, is written out
+/// on this module's `is_own_command`.
 ///
 /// Ceiling on the project lookup: `cwd` is matched against the project path the
 /// install was scoped to, EXACTLY. A session started in a subdirectory of that root
@@ -198,6 +201,22 @@ fn own_command(plugin: &Plugin, client: &str) -> Option<String> {
 /// re-renders. A stash can only carry our command through a marker written by a
 /// binary whose ownership test was wrong, or by another process; either way the
 /// recovery is to drop the row, never to run it.
+///
+/// CEILING — this compares against the command declared NOW, so a stash carrying a
+/// command the host declared in an EARLIER release is executed. Whenever that rename
+/// was additive (a flag added to the same subcommand, an argument reordered) the old
+/// string still dispatches to this binary's own status-line entrypoint, which calls
+/// `compose` -> [`user_original`] -> this same stash, and the recursion is unbounded:
+/// every level owns a fresh [`USER_COMMAND_TIMEOUT`] and [`reap`] kills only the direct
+/// child, so no level cancels the ones below it.
+///
+/// Reachable, not theoretical: an install stamped before `Marker::statusline_command`
+/// existed carries no ownership record, so the first renamed release reads its own
+/// value as foreign and stashes it — producing exactly the stash this guard then fails
+/// to recognise. Closing it needs a spawn-depth sentinel in the child's environment
+/// rather than a wider string compare; a stash is verbatim harness JSON and carries no
+/// record of who wrote it, so no comparison against the current declaration can span
+/// an arbitrary rename.
 fn is_own_command(stashed: &StatusLineDecl, ours: Option<&str>) -> bool {
     ours == Some(stashed.command.as_str())
 }

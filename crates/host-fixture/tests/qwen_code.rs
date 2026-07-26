@@ -105,6 +105,33 @@ impl Env {
         (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
+    /// The same run with the fixture host declaring a RENAMED status-line subcommand,
+    /// standing in for a later release of the host that changed its own command string.
+    /// Both halves move together, exactly as they would in a real release: what the
+    /// declaration renders into the slot, and what the binary answers to.
+    fn fixture_renamed(&self, args: &[&str], subcommand: &str) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args);
+        self.apply(&mut cmd);
+        cmd.env(RENAME_VAR, subcommand);
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// [`Self::fixture_stdin`] under that same rename: the renamed binary rendering its
+    /// own bar, which is where a stash poisoned with our own command re-enters.
+    fn fixture_stdin_renamed(&self, args: &[&str], stdin: &str, subcommand: &str) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        self.apply(&mut cmd);
+        cmd.env("PATH", with_inherited_path(&self.path));
+        cmd.env(RENAME_VAR, subcommand);
+        let mut child = cmd.spawn().unwrap();
+        child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim_end_matches(['\n', '\r']).to_string())
+    }
+
     /// The same run with `QWEN_HOME` dropped: `~/.qwen` under the temp HOME is then
     /// the config base, so a layout whose base is elsewhere reads as an uninstalled
     /// qwen-code (`detect()` keys on that dir existing, or `qwen` on PATH).
@@ -229,6 +256,19 @@ const SESSION_JSON: &str = r#"{"session_id":"abc"}"#;
 
 /// What the fixture host declares, with `${AGENTGEAR_CLIENT}` expanded for qwen-code.
 const OUR_COMMAND: &str = "host_fixture statusline --client qwen-code";
+
+/// The env var the fixture host reads its status-line subcommand name out of, and the
+/// name a "later release" of it uses. Deliberately not a prefix or suffix of
+/// `statusline`: the ownership record is compared for equality, and a name that
+/// contains the old one would pass a substring bug too.
+const RENAME_VAR: &str = "EZ_FIXTURE_STATUSLINE_SUBCOMMAND";
+const RENAMED_SUBCOMMAND: &str = "bar";
+const RENAMED_COMMAND: &str = "host_fixture bar --client qwen-code";
+
+/// What the renamed release writes into the slot.
+fn renamed_status_line() -> Value {
+    json!({"type": "command", "command": RENAMED_COMMAND, "padding": 0})
+}
 
 /// The value the backend must have written: CC's single-object command shape, under
 /// qwen-code's own `ui` container.
@@ -360,10 +400,9 @@ fn qwen_code_statusline_stash_survives_a_declaration_change() {
     // cannot fire at a single version — only across the change — which is why an
     // install-then-uninstall test at one version proves almost nothing here.
     //
-    // Ceiling, deliberately not asserted: a release that changes the COMMAND STRING
-    // still reads as foreign (docs/design.md § host-owned statusLine). The declared
-    // command carries `${AGENTGEAR_CLIENT}` and is otherwise stable across releases;
-    // the rendered body is what moves.
+    // A release that changes the COMMAND STRING is the other half of the same failure
+    // and rides on the marker's record of what we last wrote rather than on the
+    // declaration; `qwen_code_statusline_stash_survives_a_subcommand_rename` owns it.
     let env = Env::seeded("statusline-version-change", ".qwen", SEED_WITH_STATUSLINE);
     let settings = env.settings_path();
     let seeded_text = status_line_text(&settings);
@@ -398,6 +437,59 @@ fn qwen_code_statusline_stash_survives_a_declaration_change() {
     let (ok, out) = env.fixture(&["uninstall"]);
     assert!(ok && out == "Removed", "uninstall failed: {out}");
     assert_eq!(status_line_text(&settings), seeded_text, "the stash did not survive the version change plus update");
+}
+
+#[test]
+fn qwen_code_statusline_stash_survives_a_subcommand_rename() {
+    // The sibling test above covers a release changing what it RENDERS. This covers a
+    // release changing the command string itself — a renamed status-line subcommand, or
+    // a new flag on it. Nothing in the new declaration can derive the old string, so
+    // ownership decided against the current declaration alone reads version N's own
+    // value as foreign: it stashes our own command over the user's real original, and
+    // uninstall then hands them back a command pointing at a subcommand that no longer
+    // exists. The stamp marker's record of what we last wrote is the only thing that
+    // spans the two versions.
+    //
+    // Drives the two versions through one binary by renaming BOTH halves at once (the
+    // declaration and the dispatch), which is what a real release does.
+    let env = Env::seeded("statusline-rename", ".qwen", SEED_WITH_STATUSLINE);
+    let settings = env.settings_path();
+    let seeded_text = status_line_text(&settings);
+
+    // Version N: takes the slot, stashes the user's own line.
+    let (ok, out) = env.fixture(&["setup", "--agent", "qwen-code"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert_eq!(status_line_at(&settings), our_status_line(), "our ui.statusLine did not land");
+    assert_eq!(env.stashed_original(), seed_status_line(), "install did not stash the user's original");
+
+    // Version N+1's FIRST run is whatever the user types, and `doctor` before `setup`
+    // is the likely one. Its whole-value compare cannot match version N's command
+    // either, so without the same widened ownership it tells a user with a working
+    // install that another tool has taken the slot — naming their own binary.
+    let (_, report) = env.fixture_renamed(&["doctor"], RENAMED_SUBCOMMAND);
+    assert!(
+        report.contains(&format!("`ez-fixture-plugin` owns the ui.statusLine slot in {}", settings.display())),
+        "doctor did not recognise our own pre-rename value as ours:\n{report}"
+    );
+    assert!(!report.contains("another status line owns"), "doctor read our own pre-rename value as a foreign line:\n{report}");
+
+    // Version N+1, renamed. It finds version N's command in the slot.
+    let (ok, out) = env.fixture_renamed(&["setup", "--agent", "qwen-code"], RENAMED_SUBCOMMAND);
+    assert!(ok, "setup after a rename failed: {out}");
+    assert_eq!(status_line_at(&settings), renamed_status_line(), "the renamed release did not converge the slot to its own command");
+    assert_eq!(env.stashed_original(), seed_status_line(), "the rename stashed our own previous command over the user's original");
+
+    // Asserted before the restore, for the same reason the sibling test does it: a
+    // stash holding OUR command is what makes the host re-enter itself here instead of
+    // printing the user's row, so this is the anti-recursion positive control.
+    let (ok, out) = env.fixture_stdin_renamed(&[RENAMED_SUBCOMMAND, "--client", "qwen-code"], SESSION_JSON, RENAMED_SUBCOMMAND);
+    assert!(ok, "renamed statusline subcommand failed: {out}");
+    assert_eq!(out, "ez-fixture row\ntheir-bar-row", "compose lost the user's row across the rename");
+
+    // And the whole point: the value that comes back is the user's, byte for byte.
+    let (ok, out) = env.fixture_renamed(&["uninstall"], RENAMED_SUBCOMMAND);
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+    assert_eq!(status_line_text(&settings), seeded_text, "the rename lost the user's original");
 }
 
 #[test]

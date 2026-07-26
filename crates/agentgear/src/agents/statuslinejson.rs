@@ -193,19 +193,35 @@ pub(crate) fn target(
 /// value, and `compose` would then run the host binary from inside itself on every
 /// turn.
 ///
-/// Ceiling: a release that changes the COMMAND itself (renamed subcommand, new flag)
-/// still reads as foreign, so it stashes its own old command and the user's value is
-/// lost. The statusline module refuses to RUN a stash naming its own command, so the
-/// worst case stays a missing row rather than re-entry. Upgrade path: write an
-/// ownership key beside `command` — which needs each harness's settings schema proven
-/// tolerant of an unknown key first.
-pub(crate) fn is_ours(existing: &Value, our_command: &str, shape: SlotShape) -> bool {
-    command_of(existing, shape) == Some(our_command)
+/// `last_written` is the command the stamp marker says this backend last put in the
+/// slot (`Marker::statusline_command`), and it is what makes ownership survive a host
+/// renaming its own status-line subcommand: the value we wrote at the old name matches
+/// neither the new declaration nor anything derivable from it, so without the record it
+/// reads as foreign and gets stashed over the user's real original. `None` — every
+/// install predating the record — falls back to the current-command compare alone. A
+/// rename over one of those still stashes our own previous command, and the guard that
+/// is supposed to refuse to RUN such a stash has a ceiling of its own; it is written
+/// out at `statusline::is_own_command`.
+///
+/// A recorded command only ever widens ownership onto a value whose command string is
+/// literally that record, and the record is written only after the settings write it
+/// names succeeded, so it can never claim a command that did not reach the slot.
+pub(crate) fn is_ours(existing: &Value, our_command: &str, last_written: Option<&str>, shape: SlotShape) -> bool {
+    let Some(command) = command_of(existing, shape) else {
+        return false;
+    };
+    command == our_command || last_written == Some(command)
+}
+
+/// The command this backend last wrote into `scope`'s slot, per the stamp marker.
+fn last_written(marker: Option<&stamp::Marker>) -> Option<&str> {
+    marker.and_then(|m| m.statusline_command.as_deref())
 }
 
 /// Converge the harness's single slot to the host's declaration, returning whether
 /// the settings file changed. A foreign value already in the slot is stashed verbatim
-/// into the stamp marker so [`remove`] can put it back.
+/// into the stamp marker so [`remove`] can put it back, and the command we wrote is
+/// recorded there too so a later release that renames it still reads the value as ours.
 pub(crate) fn reconcile(
     path: &Path, key_path: &[&str], plugin: &Plugin, source: &Source, scope: &Scope, client: &str, shape: SlotShape,
 ) -> Result<bool> {
@@ -216,24 +232,37 @@ pub(crate) fn reconcile(
         return Ok(false);
     };
 
-    // Stash BEFORE writing, in both senses — and only one of them is defended by a
-    // test, so keep them apart when editing this:
+    // Three orderings around the settings write, each load-bearing for its own reason
+    // and only the first defended by a test, so keep them apart when editing this:
     //
-    // - the READ must precede the write. Afterwards the slot reads as ours, `is_ours`
-    //   is true, and nothing is ever stashed, so the restore has nothing to put back.
-    //   Moving this block below `json_edit` reds most of the claude suite.
-    // - the marker WRITE landing before the settings write is the crash window: an
-    //   ENOSPC/EPERM/kill between the two loses the user's value outright. Hoisting
-    //   only the read and stashing afterwards is invisible to every test, so nothing
-    //   but this comment holds it.
+    // - the READ must precede the settings write. Afterwards the slot reads as ours,
+    //   `is_ours` is true, and nothing is ever stashed, so the restore has nothing to
+    //   put back. Moving this block below `json_edit` reds most of the claude suite.
+    // - the STASH must precede the settings write. That leaves a crash window — an
+    //   ENOSPC/EPERM/kill between the two loses the user's value outright — but the
+    //   other order loses it on every run, not just a crashing one. Hoisting only the
+    //   read and stashing afterwards is invisible to every test, so nothing but this
+    //   comment holds it.
+    // - the COMMAND RECORD must FOLLOW a settings write that succeeded, which is the
+    //   opposite direction because its failure mode is the opposite one. `json_edit`
+    //   refuses an unparseable settings file (`Error::Config`) while `read_settings`
+    //   above reads that same file as an empty slot, so recording first overwrites a
+    //   TRUE record of what is still sitting in the slot with a command that never got
+    //   written — and the next rename then reads the real value as foreign and stashes
+    //   it over the user's original, which is exactly the loss this record exists to
+    //   stop. Recording after needs a crash between the two writes AND a further rename
+    //   before any successful reconcile; recording before needs one parse error.
     //
     // An empty slot writes no stash at all, so "user deletes our line, self_heal
-    // re-adds it" cannot erase what they had before we ever wrote.
+    // re-adds it" cannot erase what they had before we ever wrote. The command record
+    // is unconditional: tying it to the stash would leave every install that took an
+    // EMPTY slot with no record, and those renames lose nothing but still misread.
+    let marker = stamp::read(plugin, scope, client)?;
     let existing = read_settings(path)?.and_then(|root| value_at(&root, key_path).cloned());
-    if let Some(existing) = existing.clone()
-        && !is_ours(&existing, &our_command, shape)
+    if let Some(displaced) = existing.clone()
+        && !is_ours(&displaced, &our_command, last_written(marker.as_ref()), shape)
     {
-        stamp::stash_statusline(plugin, scope, source, client, existing)?;
+        stamp::stash_statusline(plugin, scope, source, client, displaced)?;
     }
 
     // Carry the harness-owned keys off the value we are replacing, so taking the slot
@@ -241,27 +270,38 @@ pub(crate) fn reconcile(
     // (the user deleted our line and self_heal is re-adding it) the stash is the last
     // record of that preference, so it is the fallback — re-adding without it resets
     // exactly what the carry exists to protect. Never worse than carrying nothing: the
-    // stash either holds the key, or it does not and we are back to writing none.
+    // stash either holds the key, or it does not and we are back to writing none. Read
+    // off the marker as it was BEFORE the stash above, which is the same value here: the
+    // two are mutually exclusive, since the stash fires only on a live slot and this
+    // fallback arm only on an absent one.
     let carry_source = match &existing {
         Some(_) => existing.clone(),
-        None if !shape.carry.is_empty() => stamp::read(plugin, scope, client)?.and_then(|m| m.statusline_original),
+        None if !shape.carry.is_empty() => marker.and_then(|m| m.statusline_original),
         None => None,
     };
     let ours = with_carried(&ours, carry_source.as_ref(), shape);
-    json_edit(path, |root| {
+    let changed = json_edit(path, |root| {
         let obj = json_obj_at(root, containers);
         if obj.get(slot) != Some(&ours) {
             obj.insert(slot.to_string(), ours.clone());
         }
         Ok(())
-    })
+    })?;
+    // Unconditional on `changed`: a no-op write still proves the slot holds this
+    // command, and an install predating the record reaches its very first pass with
+    // that command ALREADY in the slot — so gating this on `changed` would leave
+    // exactly the population this record exists for without one, forever. Pinned by
+    // `claude_statusline_a_converged_slot_still_records_its_command`.
+    stamp::record_statusline_command(plugin, scope, source, client, &our_command)?;
+    Ok(changed)
 }
 
 /// Undo the slot write: restore the stashed original, or delete the slot key when
-/// there was nothing to stash. Ownership is [`is_ours`] — the command string — so a
-/// user who nudged only the padding on our line does not strand a command pointing at
-/// the binary being uninstalled, while a genuinely foreign value is left exactly as
-/// it is.
+/// there was nothing to stash. Ownership is [`is_ours`] — the declared command string,
+/// or the one the marker records we last wrote — so a user who nudged only the padding
+/// on our line does not strand a command pointing at the binary being uninstalled, and
+/// neither does an uninstall run by a release that renamed its own subcommand after the
+/// slot was last written. A genuinely foreign value is left exactly as it is.
 ///
 /// An unparseable settings file refuses the whole edit (`Error::Config`) rather than
 /// clobbering it, so the stash is never consumed against a file that could not be read.
@@ -274,14 +314,16 @@ pub(crate) fn remove(path: &Path, key_path: &[&str], plugin: &Plugin, scope: &Sc
     let Some((containers, slot)) = slot_of(key_path) else {
         return Ok(false);
     };
-    let stashed = stamp::read(plugin, scope, client)?.and_then(|m| m.statusline_original);
+    let marker = stamp::read(plugin, scope, client)?;
+    let last = last_written(marker.as_ref()).map(str::to_string);
+    let stashed = marker.and_then(|m| m.statusline_original);
     json_remove(path, |root| {
         // Navigates without creating, and takes the container back out when our slot
         // key is what emptied it: reconcile created that container, so leaving an
         // empty `"ui": {}` behind would be a write on a teardown that had nothing to
         // undo. A restore refills the slot, so the prune only fires on the drop arm.
         json_prune_obj(root, containers, |obj| {
-            if !obj.get(slot).is_some_and(|existing| is_ours(existing, &our_command, shape)) {
+            if !obj.get(slot).is_some_and(|existing| is_ours(existing, &our_command, last.as_deref(), shape)) {
                 return Ok(());
             }
             match &stashed {
@@ -305,7 +347,10 @@ pub(crate) fn remove(path: &Path, key_path: &[&str], plugin: &Plugin, scope: &Sc
 ///   evidence our plugin is installed. Report it as present-but-drifted and
 ///   `report::compose` counts it as a present surface, which defeats the all-`Absent`
 ///   arm; self_heal's `(no marker, NeedsRepair)` adopt row then reinstalls the WHOLE
-///   translation over a plugin the user deliberately removed.
+///   translation over a plugin the user deliberately removed. The marker's recorded
+///   command widens that presence test without widening this hole: the record and the
+///   marker self_heal reads `has_marker` off are the same file, so the no-marker half
+///   of that adopt row can only ever see the current-command compare.
 /// - **convergence** is whole-value equality. Our own rendering with a drifted
 ///   `padding` is exactly the drift a repair exists to fix, so it is `NeedsRepair`
 ///   rather than `Healthy`.
@@ -319,17 +364,20 @@ pub(crate) fn remove(path: &Path, key_path: &[&str], plugin: &Plugin, scope: &Sc
 /// An unparseable settings file reads as `Absent`; the reconcile that follows refuses
 /// to clobber it and surfaces the parse error instead of silently overwriting the
 /// user's file.
-pub(crate) fn state(path: &Path, key_path: &[&str], plugin: &Plugin, client: &str, shape: SlotShape) -> Result<Option<BackendState>> {
+pub(crate) fn state(
+    path: &Path, key_path: &[&str], plugin: &Plugin, scope: &Scope, client: &str, shape: SlotShape,
+) -> Result<Option<BackendState>> {
     let Some((ours, our_command)) = rendered(plugin, client, shape) else {
         return Ok(None);
     };
+    let marker = stamp::read(plugin, scope, client)?;
     let root = read_settings(path)?;
     Ok(Some(match root.as_ref().and_then(|r| value_at(r, key_path)) {
         None => BackendState::Absent,
         // Compared against the value reconcile WOULD write for this live slot, carry
         // included — otherwise a carried field is drift that never converges.
         Some(existing) if *existing == with_carried(&ours, Some(existing), shape) => BackendState::Healthy,
-        Some(existing) if is_ours(existing, &our_command, shape) => BackendState::NeedsRepair,
+        Some(existing) if is_ours(existing, &our_command, last_written(marker.as_ref()), shape) => BackendState::NeedsRepair,
         Some(_) => BackendState::Absent,
     }))
 }
@@ -348,20 +396,33 @@ pub(crate) fn read_settings(path: &Path) -> Result<Option<Value>> {
 /// A foreign owner is a Warn, not a Fail: the slot holds one value, so losing it to
 /// another tool is a real (and user-visible) state, not a broken install.
 ///
-/// `settings` is the backend's already-resolved path as a `Result`, because doctor
-/// reports rather than fails: a config-dir lookup that could not resolve GENUINELY
-/// (no HOME) becomes a Warn here instead of taking the whole report down. An empty
-/// config-dir override is different: `reconcile`/`remove` hard-reject it (see each
-/// backend's `ensure_statusline_resolves`), so a Warn here would contradict an install
-/// that just failed on the exact same condition — this one variant is a Fail instead,
-/// matched on the type rather than its rendered message.
+/// `resolve` is the backend's own settings-path resolver and is run here, against the
+/// `scope` the marker is also read at, so the two cannot disagree — the same shape
+/// [`target`] uses, and the reason neither is passed as a bare path. It runs only when
+/// there IS a declaration, so a declaration-free host never pays for a config-dir
+/// lookup it has no use for.
+///
+/// Its failure is reported rather than propagated, because doctor reports rather than
+/// fails: a config-dir lookup that could not resolve GENUINELY (no HOME) becomes a Warn
+/// here instead of taking the whole report down. An empty config-dir override is
+/// different: `reconcile`/`remove` hard-reject it (see each backend's
+/// `ensure_statusline_resolves`), so a Warn here would contradict an install that just
+/// failed on the exact same condition — this one variant is a Fail instead, matched on
+/// the type rather than its rendered message.
+///
+/// The scope buys the same widened ownership [`state`] uses, so that the first doctor
+/// run after a release renames its own status-line subcommand does not report the
+/// user's own binary's previous command as another tool having taken the slot. A marker
+/// read that fails degrades to the current-command compare rather than taking the report
+/// down, matching this function's reports-rather-than-fails posture.
 pub(crate) fn check(
-    settings: Result<PathBuf>, key_path: &[&str], plugin: &Plugin, client: &str, shape: SlotShape, harness: &str,
+    key_path: &[&str], plugin: &Plugin, scope: &Scope, client: &str, shape: SlotShape, harness: &str,
+    resolve: impl FnOnce(&Scope) -> Result<PathBuf>,
 ) -> Option<DoctorCheck> {
     let name = "status line installed";
-    let (ours, _) = rendered(plugin, client, shape)?;
+    let (ours, our_command) = rendered(plugin, client, shape)?;
     let slot = key_path.join(".");
-    let path = match settings {
+    let path = match resolve(scope) {
         Ok(path) => path,
         Err(Error::EmptyConfigDirOverride { var }) => {
             return Some(DoctorCheck {
@@ -374,6 +435,8 @@ pub(crate) fn check(
         }
         Err(e) => return Some(DoctorCheck { name, status: CheckStatus::Warn(format!("could not locate {harness}'s settings: {e}")) }),
     };
+    let marker = stamp::read(plugin, scope, client).ok().flatten();
+    let last = last_written(marker.as_ref());
     let root = read_settings(&path).ok().flatten();
     Some(match root.as_ref().and_then(|r| value_at(r, key_path)) {
         // Same carried comparison `state` uses, or doctor reports a converged slot as
@@ -390,6 +453,18 @@ pub(crate) fn check(
                 )),
             },
             None => DoctorCheck { name, status: CheckStatus::Ok(format!("`{}` owns the {slot} slot", plugin.name)) },
+        },
+        // Ours by command but not converged whole-value: the value a previous release
+        // (or a previous subcommand name) left there, plus anything the user nudged on
+        // our line. It reads as drift for `state` and gets repaired by the next
+        // reconcile, so calling it another tool's line here is simply wrong.
+        Some(existing) if is_ours(existing, &our_command, last, shape) => DoctorCheck {
+            name,
+            status: CheckStatus::Warn(format!(
+                "`{}` owns the {slot} slot in {}, but its value has drifted from what this version writes",
+                plugin.name,
+                path.display()
+            )),
         },
         Some(_) => DoctorCheck {
             name,

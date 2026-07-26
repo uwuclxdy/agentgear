@@ -119,7 +119,7 @@ impl AgentBackend for QwenCodeBackend {
         // `statuslinejson::state`), which keeps an uninstalled plugin at `Absent`
         // instead of handing self_heal's adopt row a reason to reinstall the whole
         // translation over the user's own status line.
-        let statusline = statuslinejson::state(&settings, STATUSLINE_SLOT, plugin, self.id(), STATUSLINE_SHAPE)?;
+        let statusline = statuslinejson::state(&settings, STATUSLINE_SLOT, plugin, scope, self.id(), STATUSLINE_SHAPE)?;
         Ok(report::compose([mcp, hooks, commands, agents, skills, statusline].into_iter().flatten()))
     }
 
@@ -408,7 +408,7 @@ fn report_checks(backend: &QwenCodeBackend, plugin: &Plugin, source: &Source) ->
     checks.push(check_agents_present(&comp.agents, &base.join("agents"), plugin.name));
     // Absent entirely for a host that declares no status line, rather than reporting
     // on a surface nobody asked for.
-    checks.extend(statuslinejson::check(Ok(settings), STATUSLINE_SLOT, plugin, backend.id(), STATUSLINE_SHAPE, "qwen-code"));
+    checks.extend(statuslinejson::check(STATUSLINE_SLOT, plugin, &Scope::User, backend.id(), STATUSLINE_SHAPE, "qwen-code", settings_file));
 
     checks
 }

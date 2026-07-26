@@ -130,7 +130,7 @@ impl AgentBackend for DroidBackend {
         // (`statuslinejson::state`), so a plugin the user removed stays `Absent` here
         // instead of handing self_heal's adopt row a reason to reinstall it.
         let statusline = match statusline_target(plugin, scope)? {
-            Some(path) => statuslinejson::state(&path, STATUSLINE_SLOT, plugin, self.id(), STATUSLINE_SHAPE)?,
+            Some(path) => statuslinejson::state(&path, STATUSLINE_SLOT, plugin, scope, self.id(), STATUSLINE_SHAPE)?,
             None => None,
         };
         Ok(report::compose([mcp, hooks, commands, droids, skills, statusline].into_iter().flatten()))
@@ -391,7 +391,7 @@ fn report_checks(backend: &DroidBackend, plugin: &Plugin, source: &Source) -> Ve
     checks.push(check_docs_present("commands", "commands/", &comp.commands, plugin.name, &base));
     checks.push(check_docs_present("droids", "agents/", &comp.agents, plugin.name, &base));
     // Absent entirely for a host that declares no status line.
-    checks.extend(statuslinejson::check(settings_file(&Scope::User), STATUSLINE_SLOT, plugin, backend.id(), STATUSLINE_SHAPE, "droid"));
+    checks.extend(statuslinejson::check(STATUSLINE_SLOT, plugin, &Scope::User, backend.id(), STATUSLINE_SHAPE, "droid", settings_file));
 
     checks
 }

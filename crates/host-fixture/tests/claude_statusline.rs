@@ -59,6 +59,14 @@ const SESSION_JSON: &str = r#"{"session_id":"abc","cwd":"/nonexistent/project"}"
 /// What the fixture host declares, with `${AGENTGEAR_CLIENT}` expanded for claude.
 const OUR_COMMAND: &str = "host_fixture statusline --client claude";
 
+/// The env var the fixture host reads its status-line subcommand name out of, and the
+/// name a "later release" of it uses. Deliberately not a prefix or suffix of
+/// `statusline`: the ownership record is compared for equality, and a name that
+/// contains the old one would pass a substring bug too.
+const RENAME_VAR: &str = "EZ_FIXTURE_STATUSLINE_SUBCOMMAND";
+const RENAMED_SUBCOMMAND: &str = "bar";
+const RENAMED_COMMAND: &str = "host_fixture bar --client claude";
+
 struct Env {
     root: PathBuf,
     cfg: PathBuf,
@@ -115,6 +123,27 @@ impl Env {
         (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
+    /// The same run with the fixture host declaring a RENAMED status-line subcommand,
+    /// standing in for a later release of the host that changed its own command string.
+    /// Both halves move together, exactly as they would in a real release: what the
+    /// declaration renders into the slot, and what the binary answers to.
+    ///
+    /// Returns stderr alongside stdout, unlike [`Self::fixture`]: the fixture prints a
+    /// failed lifecycle's error there, so a caller asserting a run FAILED can only check
+    /// that it failed for the reason it meant to test by reading it.
+    fn fixture_renamed(&self, args: &[&str], subcommand: &str) -> (bool, String, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args);
+        self.apply(&mut cmd);
+        cmd.env(RENAME_VAR, subcommand);
+        let out = cmd.output().unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        )
+    }
+
     /// Run the fixture with `stdin` piped in — the status-line entrypoint's real
     /// calling convention.
     ///
@@ -166,18 +195,41 @@ impl Env {
     /// questions: a marker holding no stash and no marker at all both read as "nothing
     /// stashed", and only one of them is a state the lifecycle produces.
     fn claude_marker(&self) -> Option<serde_json::Value> {
+        serde_json::from_slice(&fs::read(self.claude_marker_path()?).ok()?).ok()
+    }
+
+    /// The file [`Self::claude_marker`] reads, so a test can edit it in place.
+    fn claude_marker_path(&self) -> Option<PathBuf> {
         let markers = self.data.join("ez-fixture-plugin").join("markers");
         let entries: Vec<_> = fs::read_dir(&markers).map(|d| d.flatten().collect()).unwrap_or_default();
-        entries.into_iter().find_map(|entry| {
-            let marker: serde_json::Value =
-                serde_json::from_slice(&fs::read(entry.path()).unwrap_or_default()).unwrap_or(serde_json::Value::Null);
-            (marker.get("agent").and_then(serde_json::Value::as_str) == Some("claude")).then_some(marker)
-        })
+        entries
+            .into_iter()
+            .find(|entry| {
+                let marker: serde_json::Value =
+                    serde_json::from_slice(&fs::read(entry.path()).unwrap_or_default()).unwrap_or(serde_json::Value::Null);
+                marker.get("agent").and_then(serde_json::Value::as_str) == Some("claude")
+            })
+            .map(|entry| entry.path())
+    }
+
+    /// Take the ownership record back out of the marker, leaving every other field —
+    /// byte-for-byte the shape any install stamped before `statusline_command` existed
+    /// left on disk.
+    fn strip_recorded_command(&self) {
+        let path = self.claude_marker_path().expect("install must stamp a claude marker");
+        let mut marker: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        marker.as_object_mut().unwrap().remove("statusline_command");
+        fs::write(&path, serde_json::to_vec_pretty(&marker).unwrap()).unwrap();
     }
 
     /// The stash the claude backend recorded, as raw JSON.
     fn stashed_original(&self) -> serde_json::Value {
         self.claude_marker().and_then(|m| m.get("statusline_original").cloned()).unwrap_or(serde_json::Value::Null)
+    }
+
+    /// The command the claude backend's marker says it last wrote into the slot.
+    fn recorded_command(&self) -> serde_json::Value {
+        self.claude_marker().and_then(|m| m.get("statusline_command").cloned()).unwrap_or(serde_json::Value::Null)
     }
 
     /// Take the `claude` double off the scratch PATH — the user uninstalling Claude
@@ -228,6 +280,11 @@ fn seed_status_line() -> serde_json::Value {
 /// `${AGENTGEAR_CLIENT}` already expanded.
 fn our_status_line() -> serde_json::Value {
     serde_json::json!({"type": "command", "command": OUR_COMMAND, "padding": 0})
+}
+
+/// What the renamed release writes into the slot.
+fn renamed_status_line() -> serde_json::Value {
+    serde_json::json!({"type": "command", "command": RENAMED_COMMAND, "padding": 0})
 }
 
 #[test]
@@ -340,6 +397,103 @@ fn claude_statusline_our_own_earlier_rendering_is_never_stashed() {
     let (ok, out) = env.fixture(&["uninstall"]);
     assert!(ok && out == "Removed", "uninstall failed: {out}");
     assert_eq!(env.status_line(), seed_status_line(), "uninstall left a command pointing at the uninstalled binary");
+}
+
+#[test]
+fn claude_statusline_a_converged_slot_still_records_its_command() {
+    // The record is written on EVERY successful settings write, not only on one that
+    // changed the file — and the population that depends on the difference is exactly
+    // the one this whole feature exists for. An install stamped before
+    // `statusline_command` existed already holds the current command in its slot, so its
+    // next `setup` writes nothing and reports `NoOp`. Gate the record on that `changed`
+    // flag and such an install never acquires one at all, and the next release's rename
+    // then reads its own value as foreign and destroys the user's original.
+    //
+    // Nothing else in the workspace reds on that one-word gate: every other status-line
+    // test either changes the slot on the pass it asserts, or was installed by a binary
+    // that already recorded. Only the no-op pass separates the two.
+    let env = Env::new("record-on-noop");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    // Both halves of the pre-record state, asserted rather than assumed: no record on
+    // the marker, and a slot already holding what this version would write. Either one
+    // alone reaches a different branch.
+    env.strip_recorded_command();
+    assert_eq!(env.recorded_command(), serde_json::Value::Null, "the arm under test needs the record gone");
+    assert_eq!(env.status_line(), our_status_line(), "and the slot already holding what this version writes");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok, "setup over a converged slot failed: {out}");
+    assert_eq!(out, "NoOp", "the arm under test needs a pass that writes nothing, got {out}");
+    assert_eq!(
+        env.recorded_command(),
+        serde_json::json!(OUR_COMMAND),
+        "a reconcile that changed nothing left the slot with no owner across the next rename"
+    );
+}
+
+#[test]
+fn claude_statusline_a_refused_settings_write_records_no_command() {
+    // The ownership record is only true of the slot if the write it describes landed,
+    // and one designed, documented, recoverable path breaks that: `json_edit` refuses an
+    // unparseable settings file with `Error::Config`, while `read_settings` reads that
+    // same file as an EMPTY slot. Record before the write and a run that fails there
+    // leaves a marker naming a command nothing ever wrote — overwriting the still-true
+    // record of what really is in the slot. The next rename then reads the real value as
+    // foreign and stashes it over the user's original, which is the exact loss the
+    // record exists to prevent.
+    //
+    // The claude backend is where this is reachable: its `statusLine` slot is its only
+    // write outside the plugin registry, so a corrupt settings file fails on the slot
+    // and nowhere earlier.
+    let env = Env::new("refused-write");
+
+    // Version N takes the slot and stashes the user's own line.
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert_eq!(env.stashed_original(), seed_status_line(), "install did not stash the user's original");
+    assert_eq!(env.recorded_command(), serde_json::json!(OUR_COMMAND), "install did not record the command it wrote");
+    let installed = env.settings();
+
+    // Their settings are momentarily unparseable — a half-finished hand edit, a
+    // truncated write — and version N+1 runs `setup` while they are.
+    fs::write(env.settings_path(), "{\n  \"theirSetting\": true,\n").unwrap();
+    let (ok, out, err) = env.fixture_renamed(&["setup", "--agent", "claude"], RENAMED_SUBCOMMAND);
+    assert!(!ok, "an unparseable settings file must refuse the install, got {out}");
+    // Asserted on the REASON, not just on the failure: this test is only about the
+    // window between the marker write and the settings write, so a future change that
+    // failed the reconcile earlier (before the slot code ran at all) would otherwise
+    // leave it green while proving nothing.
+    assert!(
+        err.contains("could not parse config") && err.contains(&env.settings_path().display().to_string()),
+        "the install must have failed on the settings-file parse, not somewhere earlier:\n{err}"
+    );
+    assert_eq!(
+        env.recorded_command(),
+        serde_json::json!(OUR_COMMAND),
+        "a refused settings write recorded a command it never wrote, discarding the true record"
+    );
+
+    // They fix their JSON. The slot still holds version N's command and the stash still
+    // holds theirs, so the run below is version N+1 meeting version N's real value.
+    fs::write(env.settings_path(), &installed).unwrap();
+    assert_eq!(env.status_line(), our_status_line(), "the refused write must have left the slot alone");
+
+    let (ok, out, err) = env.fixture_renamed(&["setup", "--agent", "claude"], RENAMED_SUBCOMMAND);
+    assert!(ok, "setup after the settings file was fixed failed: {out}{err}");
+    assert_eq!(env.status_line(), renamed_status_line(), "the renamed release did not converge the slot to its own command");
+    assert_eq!(
+        env.stashed_original(),
+        seed_status_line(),
+        "the refused write's stale record stashed our own command over the user's original"
+    );
+
+    // And the whole point: what comes back is the user's own line, byte for byte.
+    let (ok, out, err) = env.fixture_renamed(&["uninstall"], RENAMED_SUBCOMMAND);
+    assert!(ok && out == "Removed", "uninstall failed: {out}{err}");
+    assert_eq!(env.settings(), SEED_SETTINGS, "the user's settings did not come back");
 }
 
 #[test]

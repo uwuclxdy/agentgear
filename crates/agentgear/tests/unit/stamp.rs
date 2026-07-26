@@ -20,6 +20,7 @@ fn marker(source_mode: &str, source_path: Option<&str>) -> Marker {
         project_path: None,
         source_path: source_path.map(String::from),
         statusline_original: None,
+        statusline_command: None,
     }
 }
 
@@ -91,6 +92,42 @@ fn an_absent_stash_writes_no_key() {
     // pre-statusLine binary wrote, so an older binary reading it sees no change.
     let rendered = serde_json::to_string(&marker("embedded", None)).expect("marker must serialize");
     assert!(!rendered.contains("statusline_original"), "an empty stash must not emit the key: {rendered}");
+}
+
+#[test]
+fn marker_without_statusline_command_still_deserializes() {
+    // Every marker written before the slot's ownership record existed carries no such
+    // key. It must load as "no record", which puts ownership back on the
+    // current-command compare — not fail the whole marker read, which is treated as
+    // absent and would silently re-adopt the install.
+    let json = r#"{
+        "binary_version": "0.1.0",
+        "plugin_version": "0.1.0",
+        "source_mode": "embedded",
+        "scope": "user",
+        "agent": "claude",
+        "statusline_original": {"type": "command", "command": "their-bar"}
+    }"#;
+    let marker: Marker = serde_json::from_str(json).expect("an old marker without statusline_command must still load");
+    assert_eq!(marker.statusline_command, None);
+    assert!(marker.statusline_original.is_some(), "the stash beside it must still load");
+}
+
+#[test]
+fn an_absent_statusline_command_writes_no_key() {
+    // `skip_serializing_if` keeps a record-free marker byte-identical to what a binary
+    // predating the field wrote, so an older binary reading it sees no change.
+    let rendered = serde_json::to_string(&marker("embedded", None)).expect("marker must serialize");
+    assert!(!rendered.contains("statusline_command"), "an unset command record must not emit the key: {rendered}");
+}
+
+#[test]
+fn statusline_command_round_trips() {
+    let mut m = marker("embedded", None);
+    m.statusline_command = Some("mytool statusline --client claude".into());
+    let bytes = serde_json::to_vec(&m).expect("marker must serialize");
+    let back: Marker = serde_json::from_slice(&bytes).expect("round-tripped marker must parse");
+    assert_eq!(back.statusline_command.as_deref(), Some("mytool statusline --client claude"));
 }
 
 #[test]

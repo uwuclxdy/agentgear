@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use super::{SlotShape, is_ours, rendered, state};
 use crate::agents::BackendState;
-use crate::host::Plugin;
+use crate::host::{Plugin, Scope};
 use crate::statusline::StatusLineDecl;
 
 const SHAPE: SlotShape = SlotShape::typed_command();
@@ -70,12 +70,39 @@ fn is_ours_matches_on_the_command_not_the_whole_object() {
     let ours = "mytool statusline --client claude";
     // Our own earlier rendering, padding since changed by a host release: still ours,
     // so it is never stashed as the user's original.
-    assert!(is_ours(&json!({"type": "command", "command": ours, "padding": 1}), ours, SHAPE));
-    assert!(is_ours(&json!({"type": "command", "command": ours}), ours, SHAPE));
+    assert!(is_ours(&json!({"type": "command", "command": ours, "padding": 1}), ours, None, SHAPE));
+    assert!(is_ours(&json!({"type": "command", "command": ours}), ours, None, SHAPE));
     // Genuinely someone else's, and shapes with no command at all.
-    assert!(!is_ours(&json!({"type": "command", "command": "their-bar", "padding": 0}), ours, SHAPE));
-    assert!(!is_ours(&json!({"type": "command"}), ours, SHAPE));
-    assert!(!is_ours(&json!("their-bar"), ours, SHAPE));
+    assert!(!is_ours(&json!({"type": "command", "command": "their-bar", "padding": 0}), ours, None, SHAPE));
+    assert!(!is_ours(&json!({"type": "command"}), ours, None, SHAPE));
+    assert!(!is_ours(&json!("their-bar"), ours, None, SHAPE));
+}
+
+#[test]
+fn is_ours_accepts_the_command_the_marker_says_we_last_wrote() {
+    // The rename this record exists for: the slot holds what version N wrote, version
+    // N+1 declares a different subcommand, and nothing in the declaration can derive
+    // the old string. Reading it as foreign stashes our own command over the user's
+    // real original, which is the value the whole surface exists to hand back.
+    let old = "mytool statusline --client claude";
+    let new = "mytool status-line --client claude";
+    assert!(is_ours(&json!({"type": "command", "command": old}), new, Some(old), SHAPE));
+    // The current declaration still wins on its own, record or no record.
+    assert!(is_ours(&json!({"type": "command", "command": new}), new, Some(old), SHAPE));
+    // A record widens ownership onto exactly one more string, never onto anything else.
+    assert!(!is_ours(&json!({"type": "command", "command": "their-bar"}), new, Some(old), SHAPE));
+}
+
+#[test]
+fn a_recorded_command_never_makes_a_commandless_value_ours() {
+    // `command_of` is `None` for a shape carrying no string command, and so is an
+    // absent record. Comparing the two directly reads `None == None` as a match, which
+    // would hand us ownership of a value that names no command at all — and `remove`
+    // would then delete a slot key it never wrote.
+    let ours = "mytool statusline --client claude";
+    assert!(!is_ours(&json!({"type": "command"}), ours, None, SHAPE));
+    assert!(!is_ours(&json!({"type": "command"}), ours, Some("mytool old"), SHAPE));
+    assert!(!is_ours(&json!("their-bar"), ours, None, SHAPE));
 }
 
 // `state`'s carried comparison. This is the layer the drift loop is visible at: a
@@ -87,13 +114,18 @@ const CARRY_SHAPE: SlotShape = SlotShape::typed_command().carrying(&["enabled"],
 const SLOT: &[&str] = &["statusLine"];
 
 /// Write `slot` into a scratch settings file and classify it.
+///
+/// The marker lookup `state` makes for the ownership record resolves under the real
+/// data root and finds nothing — `ez-sl` is not a plugin anything installs — so these
+/// cases exercise the no-record fallback, which is what they are about. The
+/// record-carrying path needs a real install and lives in the host-fixture tests.
 fn state_of(slot: Value, shape: SlotShape) -> BackendState {
     let dir = std::env::temp_dir().join(format!("ez-slotstate-{:016x}", fastrand::u64(..)));
     std::fs::create_dir_all(&dir).expect("scratch dir");
     let path = dir.join("settings.json");
     std::fs::write(&path, serde_json::to_vec(&json!({ "statusLine": slot })).expect("json")).expect("write");
     let plugin = plugin_with(Some(StatusLineDecl::new("mytool statusline").with_padding(0)));
-    let verdict = state(&path, SLOT, &plugin, "claude", shape).expect("state must classify");
+    let verdict = state(&path, SLOT, &plugin, &Scope::User, "claude", shape).expect("state must classify");
     let _ = std::fs::remove_dir_all(&dir);
     verdict.expect("a declared status line always contributes a state")
 }

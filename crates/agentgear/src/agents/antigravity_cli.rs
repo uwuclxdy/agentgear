@@ -111,7 +111,7 @@ impl AgentBackend for AntigravityCliBackend {
         // (`statuslinejson::state`), so a plugin the user removed stays `Absent` here
         // instead of handing self_heal's adopt row a reason to reinstall it.
         let statusline = match statusline_target(plugin, scope)? {
-            Some(path) => statuslinejson::state(&path, STATUSLINE_SLOT, plugin, self.id(), STATUSLINE_SHAPE)?,
+            Some(path) => statuslinejson::state(&path, STATUSLINE_SLOT, plugin, scope, self.id(), STATUSLINE_SHAPE)?,
             None => None,
         };
         Ok(report::compose([mcp, hooks, statusline].into_iter().flatten()))
@@ -440,7 +440,12 @@ fn report_checks(backend: &AntigravityCliBackend, plugin: &Plugin, source: &Sour
     checks.push(check_hooks_registered(plugin.name, &comp.hooks));
     // Absent entirely for a host that declares no status line. User scope, matching
     // the only scope the surface has.
-    checks.extend(statuslinejson::check(statusline_file(), STATUSLINE_SLOT, plugin, backend.id(), STATUSLINE_SHAPE, "antigravity-cli"));
+    // The resolver ignores the scope it is handed because this backend's slot has only
+    // the user-scope file (see `statusline_target`), so there is no second path for the
+    // scope to select between.
+    checks.extend(statuslinejson::check(STATUSLINE_SLOT, plugin, &Scope::User, backend.id(), STATUSLINE_SHAPE, "antigravity-cli", |_| {
+        statusline_file()
+    }));
 
     checks
 }

@@ -435,12 +435,12 @@ fn statusline_state(plugin: &Plugin, scope: &Scope) -> Result<Option<BackendStat
     let Some(path) = statusline_target(plugin, scope)? else {
         return Ok(None);
     };
-    statuslinejson::state(&path, STATUSLINE_SLOT, plugin, ClaudeBackend.id(), STATUSLINE_SHAPE)
+    statuslinejson::state(&path, STATUSLINE_SLOT, plugin, scope, ClaudeBackend.id(), STATUSLINE_SHAPE)
 }
 
 /// doctor's statusLine slice, or `None` when the host declares no status line.
 pub(crate) fn statusline_check(plugin: &Plugin) -> Option<DoctorCheck> {
-    statuslinejson::check(settings_file(&Scope::User), STATUSLINE_SLOT, plugin, ClaudeBackend.id(), STATUSLINE_SHAPE, "Claude Code")
+    statuslinejson::check(STATUSLINE_SLOT, plugin, &Scope::User, ClaudeBackend.id(), STATUSLINE_SHAPE, "Claude Code", settings_file)
 }
 
 #[cfg(test)]

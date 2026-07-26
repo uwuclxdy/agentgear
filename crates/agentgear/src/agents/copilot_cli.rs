@@ -426,7 +426,7 @@ fn statusline_state(plugin: &Plugin, scope: &Scope) -> Result<Option<BackendStat
     let Some(path) = statusline_target(plugin, scope)? else {
         return Ok(None);
     };
-    statuslinejson::state(&path, STATUSLINE_SLOT, plugin, CopilotCliBackend.id(), STATUSLINE_SHAPE)
+    statuslinejson::state(&path, STATUSLINE_SLOT, plugin, scope, CopilotCliBackend.id(), STATUSLINE_SHAPE)
 }
 
 // --- report ------------------------------------------------------------------
@@ -456,13 +456,17 @@ fn report_checks(plugin: &Plugin) -> Vec<DoctorCheck> {
     check_registered(&cli, plugin, &mut checks);
     // Absent entirely for a host that declares no status line. User scope, matching the
     // only scope this backend (and the surface) has.
+    // The resolver ignores the scope it is handed because this backend's slot has only
+    // the user-scope file (see `statusline_target`), so there is no second path for the
+    // scope to select between.
     checks.extend(statuslinejson::check(
-        statusline_file(),
         STATUSLINE_SLOT,
         plugin,
+        &Scope::User,
         CopilotCliBackend.id(),
         STATUSLINE_SHAPE,
         "GitHub Copilot CLI",
+        |_| statusline_file(),
     ));
     checks
 }
