@@ -137,6 +137,11 @@ pub struct PluginComponents {
 | `MarkdownDoc` | `name: String` (file stem), `rel: String` (the file's path in the tree), `frontmatter: BTreeMap<String, Value>`, `body: String`, `raw: Vec<u8>` (verbatim file bytes) | backs both `commands` and `agents` |
 | `SkillDir` | `name: String`, `files: Vec<(String, Vec<u8>)>` (each file's path under the skill dir, and its bytes) | |
 
+`PluginComponents::with_client(client: &str) -> Self` expands every
+[`${AGENTGEAR_CLIENT}`](Plugin-Tree#agentgear_client-per-harness-client-id) in a hook `command` or
+an MCP server's `command`/`args` to `client`, consuming and returning the IR. Public for an
+out-of-crate `AgentBackend`'s own render; every in-crate config-merge backend calls it too.
+
 What gets parsed from where, and the frontmatter parser's limits, are on
 [Plugin tree](Plugin-Tree#what-is-parsed-from-where).
 

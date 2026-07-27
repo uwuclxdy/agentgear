@@ -133,8 +133,9 @@ An external backend maps its own failures to `Error::Backend { agent, detail }` 
 borrowing an in-crate variant's meaning, builds `report()` from the now-`pub`
 `DoctorReport::from_checks` (or `from_error` on an upfront failure), and renders from
 `Plugin::components(&source)`, the same harness-agnostic IR the in-crate backends parse from,
-rather than walking the plugin tree by hand. Field-level detail on both is on
-[Types and errors](Types-and-Errors).
+rather than walking the plugin tree by hand. Chain `.with_client(id)` on the result to expand
+`${AGENTGEAR_CLIENT}` in hook and MCP server commands the same way the in-crate backends do.
+Field-level detail on both is on [Types and errors](Types-and-Errors).
 
 The id registry `backend_for` resolves stays closed, so the derive's `agents = [...]` still cannot
 name an external backend. It never joins the locked, stamped `install`/`self_heal` fan-out; it

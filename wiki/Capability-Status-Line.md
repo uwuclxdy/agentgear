@@ -30,11 +30,14 @@ that by stashing, not by refusing:
   the host's command. An empty slot stashes nothing.
 - **Uninstall** restores the stash exactly, or deletes the key when there was nothing to restore.
   A settings file agentgear created and then emptied by taking its own key back goes too; a file
-  holding anything else of yours stays. A slot whose command is no longer the host's is left
-  untouched: someone else owns it now.
-- **Ownership is the command string.** Edit the `padding` on the host's line and the next
-  `self_heal` puts it back (that is drift); replace the command and agentgear treats the slot as
-  yours and stops touching it.
+  holding anything else of yours stays. A slot whose command matches neither the host's current
+  declaration nor the last one agentgear wrote there is left untouched: someone else owns it now.
+- **Ownership is the command string, current or last-written.** Edit the `padding` on the host's
+  line and the next `self_heal` puts it back (that is drift); replace the command with something
+  genuinely foreign and agentgear treats the slot as yours and stops touching it. Replacing it with
+  a command agentgear itself put there does not hand ownership away: the marker records the command
+  it last wrote, so a release that renames its own status-line subcommand still recognizes its own
+  earlier value across the rename instead of stashing it over the user's real original.
 - **A harness's own on/off switch is preserved, never overridden.** antigravity-cli's `enabled` is
   the only one today. If you had switched your status line off before installing, it stays off:
   agentgear will not flip a preference you set. `doctor` warns in that state instead of reporting a
@@ -58,9 +61,12 @@ println!("{line}");
 
 `compose` returns the host's own rows first, then runs the user's original command with the same
 session JSON on its stdin and appends its rows (the surface is line-oriented: one line is one
-row). A user command that cannot start, prints nothing, or runs past a 3-second timeout simply
-contributes nothing, so a broken command of theirs never blanks the host's own bar.
-`user_original` returns the stashed declaration directly if a host wants to render it itself.
+row). A user command that cannot start, prints nothing, runs past a 3-second timeout, or would
+re-enter this same binary's own status-line render simply contributes nothing, so a broken command
+of theirs never blanks the host's own bar and a stash naming an old, still-dispatchable version of
+the host's own command stops one level deep instead of recursing. `user_original` returns the
+stashed declaration directly if a host wants to render it itself; that reader is not guarded by the
+re-entry check, since it never spawns anything.
 
 Declare the command with [`${AGENTGEAR_CLIENT}`](Plugin-Tree#agentgear_client-per-harness-client-id)
 (`mytool statusline --client ${AGENTGEAR_CLIENT}`) and each backend expands it to its own id, so

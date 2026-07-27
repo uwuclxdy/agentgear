@@ -36,7 +36,9 @@ sees exactly these plus the shared check above:
 Checks 5 to 7 need no `claude`, so they run even when Claude Code is absent. Check 7 exists only
 for a host that declares a [status line](Capability-Status-Line), and warns rather than fails when
 another tool holds the slot: it holds one value, so being displaced is a real state the user can
-see, not a broken install. Every other status-line backend appends the same check to its own slice,
+see, not a broken install. A slot whose command is still ours (current or last-written) but whose
+value has drifted gets its own warning wording, distinct from a genuinely foreign owner; the next
+`self_heal` repairs it. Every other status-line backend appends the same check to its own slice,
 worded against its own tool and settings file. One more warning arm reaches those: a slot
 agentgear owns sitting behind the tool's own off-switch (antigravity-cli's `enabled`) reports
 `[warn]` naming the switch and how to turn it back on. The install is correct and converged in that

@@ -24,7 +24,7 @@ $ mytool doctor
 [ ok ] claude version: 2.1.201 (Claude Code)
 [ ok ] plugin registered: mytool@mytool v0.4.0 (enabled)
 [ ok ] marketplace registered: `mytool` registered
-[ ok ] manifest validates: ~/.local/share/mytool/current --strict clean
+[ ok ] manifest validates: ~/.local/share/mytool/current@claude --strict clean
 [ ok ] current tree matches embedded: hashes match
 [ ok ] hook commands on PATH: all referenced bare commands resolve
 ```
