@@ -225,7 +225,7 @@ No. In embedded mode the plugin tree is baked into the binary as a compressed bl
 |---|---|
 | MSRV | Rust 1.88, measured rather than the edition 2024 floor: the lib uses let-chains, which 1.87 rejects and 1.88 stabilized. Raising it ships as a minor bump |
 | semver | pre-1.0, so a minor bump may break the API; patch releases stay compatible |
-| changes | [`CHANGELOG.md`](CHANGELOG.md) |
+| changes | each tag's [GitHub Release](https://github.com/uwuclxdy/agentgear/releases) carries its own notes |
 
 ## Documentation
 
