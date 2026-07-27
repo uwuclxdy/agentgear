@@ -53,15 +53,14 @@ const STATUSLINE_SLOT: &[&str] = &["statusLine"];
 /// "simplify" this back into a clean whole-value write.
 ///
 /// - The field persists the user's own `/statusline off` toggle in a file they own.
-///   A whole-value replace drops it, and Antigravity's documented example configures a
-///   status line with `{type, command}` and no `enabled` at all — so absent almost
-///   certainly reads as on, and a dropped `enabled:false` turns their status line back
-///   on, now showing OUR line. Resetting a deliberate preference is the exact thing
-///   this surface exists not to do.
-/// - We preserve the field, we do not interpret it. Its render-time meaning is
-///   unproven (`docs/research/statusline-survey.md` §2(e)), and preserving an unknown
-///   is the only move that is correct under every possible meaning. Synthesizing
-///   `enabled: true` would be a guess in the other direction.
+///   A whole-value replace drops it, and a dropped `enabled:false` turns their status
+///   line back on, now showing OUR line. Resetting a deliberate preference is the exact
+///   thing this surface exists not to do.
+/// - We preserve the field, we do not interpret it. Both halves of its render-time
+///   meaning were proven against `agy` 1.1.7 (`docs/harness/antigravity-cli.md`
+///   § render-time semantics of `enabled`): `false` renders nothing, and absent renders.
+///   So there is nothing to synthesize — writing `enabled: true` would only add a key
+///   the user never had, and it is absent that already means on.
 /// - The carry is deliberate, not an oversight: it is one named field inside an
 ///   otherwise whole-value write, and it is in the CONVERGENCE comparison too, so a
 ///   carried `enabled` reads as converged rather than as drift self_heal rewrites

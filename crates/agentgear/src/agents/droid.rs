@@ -50,11 +50,11 @@ const STATUSLINE_SLOT: &[&str] = &["statusLine"];
 /// Rows droid may render. `compose` structurally emits at least TWO rows whenever the
 /// user already had a status line (ours, then theirs), and droid's `maxRows` defaults
 /// to 1 — so leaving it unset would silently clip off exactly the row the whole compose
-/// design exists to preserve. Its zod schema is `int 1..=3` and the renderer clamps with
-/// `Math.min(3, Math.max(1, floor(maxRows ?? 1)))`, so it reads as a cap rather than a
-/// reservation; 3 is the ceiling and costs nothing when only one row is printed.
-/// UNPROVEN at render time — taken from the schema and the clamp, not from an observed
-/// render (`docs/research/statusline-survey.md` §3).
+/// design exists to preserve. It is a cap rather than a reservation, so 3 is the ceiling
+/// and costs nothing when only one row is printed: proven against `droid` 0.180.0, where
+/// a one-row line lays out identically at 1 and at 3 and the region grows only when a
+/// second row is actually printed (`docs/harness/droid.md` § render-time semantics of
+/// `maxRows`).
 const STATUSLINE_MAX_ROWS: u8 = 3;
 
 /// CC's body plus droid's own row cap. `type` is OPTIONAL here and accepted — the

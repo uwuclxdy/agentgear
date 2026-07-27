@@ -55,9 +55,8 @@ pub(crate) struct SlotShape {
     /// write: the write replaces the object, so a field the harness owns and we do not
     /// model is destroyed unless it is named here.
     ///
-    /// For a field whose render-time meaning is unproven, preserving it is the only
-    /// move that is correct under every possible meaning — we do not interpret it, and
-    /// we never synthesize one that was not there.
+    /// Preserving such a field is correct whether or not its render-time meaning is
+    /// known: we do not interpret it, and we never synthesize one that was not there.
     pub(crate) carry: &'static [&'static str],
     /// What to tell a user whose carried switch is OFF. Only reachable through
     /// [`Self::carry`], so a non-carrying shape never renders it.
