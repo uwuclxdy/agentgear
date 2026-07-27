@@ -57,12 +57,6 @@ The 23 config-merge agents skip the marketplace steps: their `reconcile` read-mo
 
 ## Install
 
-> [!NOTE]
-> Release candidate: `0.1.0-rc.1` is on crates.io and the API may change before `0.1.0`.
-> The snippets below pin `0.1`, which resolves once `0.1.0` ships. To install the RC
-> today, pin the prerelease: `cargo add agentgear@0.1.0-rc.1` (add `--build` for the
-> build-dependency).
-
 ```toml
 [dependencies]
 agentgear = "0.1"

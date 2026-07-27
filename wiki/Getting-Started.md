@@ -12,10 +12,6 @@ agentgear = "0.1"
 agentgear = "0.1"
 ```
 
-> [!NOTE]
-> `0.1` resolves once `0.1.0` ships. During the release candidate, pin the prerelease
-> explicitly: `cargo add agentgear@0.1.0-rc.1` (add `--build` for the build-dependency).
-
 ## 2. Lay out the plugin tree
 
 The binary embeds a plugin tree at compile time. The default location is `plugin/` next to `Cargo.toml`, in the single-plugin root layout:
