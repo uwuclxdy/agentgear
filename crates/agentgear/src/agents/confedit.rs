@@ -112,10 +112,11 @@ fn toml_write(path: &Path, edit: impl FnOnce(&mut toml_edit::DocumentMut) -> Res
 
     // Compared against the document's OWN render, not against the bytes on disk, so
     // the comparison is semantic the way the JSON and YAML twins' is. `toml_edit` does
-    // not round-trip byte-exact — it normalizes CRLF to LF in decor and strips a BOM —
-    // so a disk compare reads a Windows-saved config as changed by the mere act of
-    // reading it, and rewrites a file no edit touched. Empty for a missing file, which
-    // keeps the "a no-op edit creates nothing" guarantee.
+    // not round-trip byte-exact: it normalizes CRLF to LF in decor, strips a BOM, and
+    // adds a missing trailing newline (CRLF inside a multi-line basic or literal string
+    // does survive). So a disk compare reads a Windows-saved config as changed by the
+    // mere act of reading it, and rewrites a file no edit touched. Empty for a missing
+    // file, which keeps the "a no-op edit creates nothing" guarantee.
     let before = doc.to_string();
     let emptied_root = edit(&mut doc)?;
     let rendered = doc.to_string();
