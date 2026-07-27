@@ -143,6 +143,19 @@ mod runner {
     }
 
     #[test]
+    fn a_spawned_command_carries_the_nested_render_sentinel() {
+        // The half of the depth guard observable from in-process: `run_status_command`'s
+        // read needs the sentinel in THIS process's environment, which no test here can
+        // arrange (`set_var` is `unsafe`, forbidden crate-wide). What this pins is the
+        // other half — the child, and so the re-entered host binary below it, sees it.
+        //
+        // The name is spelled out rather than taken from the const: it crosses a shell
+        // into another process, so the literal IS the contract.
+        let out = run_with_timeout("printf '%s' \"$AGENTGEAR_STATUSLINE_NESTED\"", "{}", Duration::from_secs(10));
+        assert_eq!(out.as_deref(), Some("1"), "the spawned child must carry the nested-render sentinel");
+    }
+
+    #[test]
     fn a_session_payload_larger_than_the_pipe_buffer_does_not_deadlock() {
         // 200 KB against a 64 KB pipe: writing the whole payload before reading
         // stdout blocks both sides forever when the child never drains stdin.

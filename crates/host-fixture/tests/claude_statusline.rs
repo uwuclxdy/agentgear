@@ -153,10 +153,19 @@ impl Env {
     /// status-line entrypoint never detects or writes a backend, so a stray harness
     /// CLI on the dev box cannot reach it.
     fn fixture_stdin(&self, args: &[&str], stdin: &str) -> (bool, String) {
+        self.fixture_stdin_env(args, stdin, &[])
+    }
+
+    /// The same run with `extra` forced into the host's environment, for the cases where
+    /// what the status-line entrypoint INHERITS is the thing under test.
+    fn fixture_stdin_env(&self, args: &[&str], stdin: &str, extra: &[(&str, &str)]) -> (bool, String) {
         let mut cmd = Command::new(BIN);
         cmd.args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         self.apply(&mut cmd);
         cmd.env("PATH", with_inherited_path(&self.path));
+        for (key, value) in extra {
+            cmd.env(key, value);
+        }
         let mut child = cmd.spawn().unwrap();
         child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
         let out = child.wait_with_output().unwrap();
@@ -219,6 +228,27 @@ impl Env {
         let path = self.claude_marker_path().expect("install must stamp a claude marker");
         let mut marker: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         marker.as_object_mut().unwrap().remove("statusline_command");
+        fs::write(&path, serde_json::to_vec_pretty(&marker).unwrap()).unwrap();
+    }
+
+    /// Overwrite the marker's stash so it names `command`, the shape a release that
+    /// renamed its own status-line subcommand leaves behind.
+    ///
+    /// By hand because the fixture's rename knob cannot produce a RE-ENTERING stash: it
+    /// changes the subcommand NAME, and the spawned level inherits
+    /// `EZ_FIXTURE_STATUSLINE_SUBCOMMAND`, so a stash naming the old name misses
+    /// `statusline_subcommand()` and lands on the usage arm instead of composing again.
+    /// Only an ADDITIVE rename re-enters, and the fixture declares no additive variant.
+    ///
+    /// Our own command reaching the stash at all is a different thing and needs no hand
+    /// edit — `strip_recorded_command` then a renamed `setup` gets there through the real
+    /// lifecycle. What prevents that in production is `statuslinejson::is_ours` against
+    /// the marker's command record, NOT `statusline::is_own_command`, which only refuses
+    /// to run a stash once it is already poisoned.
+    fn set_stashed_original(&self, command: &str) {
+        let path = self.claude_marker_path().expect("install must stamp a claude marker");
+        let mut marker: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        marker["statusline_original"] = serde_json::json!({"type": "command", "command": command, "padding": 0});
         fs::write(&path, serde_json::to_vec_pretty(&marker).unwrap()).unwrap();
     }
 
@@ -397,6 +427,97 @@ fn claude_statusline_our_own_earlier_rendering_is_never_stashed() {
     let (ok, out) = env.fixture(&["uninstall"]);
     assert!(ok && out == "Removed", "uninstall failed: {out}");
     assert_eq!(env.status_line(), seed_status_line(), "uninstall left a command pointing at the uninstalled binary");
+}
+
+/// A stash that bumps `counter` and then re-enters the host, which is what the two
+/// depth tests below drive.
+///
+/// The re-entry is an ADDITIVE rename, built with no fixture change: `flag_value` ignores
+/// flags it does not know, so `--legacy` differs from the declaration as a STRING while
+/// still reaching the same status-line arm. The counter bump is what makes the spawns
+/// countable — the rows alone cannot separate "bounded at one re-entry" from "level 0
+/// gave up on a timeout".
+///
+/// The `-le 3` bound is a safety belt on the FAILING path, not part of the contract:
+/// `reap` kills only the direct child and sets no process group, so a regression orphans
+/// each level's `host_fixture` to init, and an orphan spawns its successor during
+/// `compose` before dying of EPIPE on its own final write. The frontier is self-sustaining
+/// and outlives the test binary. Bounded, a regression reds at depth ~4 with nothing left
+/// running; unbounded it needs an RLIMIT_NPROC cap to be safe to run at all, and that cap
+/// is per-uid — it fails every parallel process on the box. The counter still
+/// discriminates (4 vs 1). Paths are quoted because `temp_dir` honours `TMPDIR`, which may
+/// contain a space.
+#[cfg(not(windows))]
+fn reentering_stash(counter: &Path) -> String {
+    format!("echo x >> \"{p}\"; [ $(wc -l < \"{p}\") -le 3 ] && host_fixture statusline --client claude --legacy", p = counter.display())
+}
+
+/// Gated for the same reason `tests/unit/statusline.rs`'s runner mod is: the stash under
+/// test has to bump a counter AND re-enter the host in one command string, and `a; b`
+/// chaining is POSIX-only. The guard itself is platform-blind — an env var on the child.
+#[cfg(not(windows))]
+#[test]
+fn claude_statusline_an_earlier_releases_stash_re_enters_at_most_once() {
+    // `is_own_command` compares a stash against the command the host declares NOW, so a
+    // stash naming what an EARLIER release declared reads as foreign and gets run. When
+    // that rename was additive — one more flag on the same subcommand — the old string
+    // still dispatches to this binary's own status-line arm, which reads the same stash
+    // and spawns again. Each level owns a fresh 3s timeout and `reap` kills only its
+    // direct child, so nothing upstream cancels the chain — in production it runs away.
+    // The stash below bounds it so this test cannot (see the comment there).
+    //
+    // Reachable with no wrong code anywhere: an install stamped before
+    // `statusline_command` existed carries no ownership record, so the first renamed
+    // release reads its own slot value as foreign and stashes precisely this.
+    let env = Env::new("earlier-release-stash");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    let spawns = env.root.join("spawns");
+    env.set_stashed_original(&reentering_stash(&spawns));
+
+    let (ok, out) = env.fixture_stdin(&["statusline", "--client", "claude"], SESSION_JSON);
+    assert!(ok, "statusline subcommand failed: {out}");
+
+    // Doubles as the positive control: a stash that silently failed to run at all would
+    // otherwise satisfy every count below for the wrong reason.
+    let spawned = fs::read_to_string(&spawns).expect("the stash must actually have been spawned");
+    assert_eq!(spawned.lines().count(), 1, "the stash re-entered the host more than once:\n{spawned}");
+    // Depth 1 is the whole contract: level 1 renders its own row and spawns nothing, so
+    // the bar carries our row twice. A bounded duplicate is the accepted outcome.
+    assert_eq!(out, "ez-fixture row\nez-fixture row", "the bounded re-entry must render our own row twice and nothing else");
+}
+
+/// POSIX-only for the same reason as its sibling: the stash chains two commands.
+#[cfg(not(windows))]
+#[test]
+fn claude_statusline_a_blank_nested_sentinel_does_not_suppress_the_users_row() {
+    // The sentinel is presence-only and we only ever write "1", so a BLANK value cannot
+    // be ours — it means something else in the environment exported the name. Read as
+    // present, it refuses to spawn the user's command on every render of every host,
+    // dropping their row with nothing observable from outside to explain it. Read as
+    // absent, the only value that can misfire is one we never write.
+    //
+    // Both directions ride in one run: level 0 inherits the blank value and must still
+    // spawn, level 1 gets the real "1" that `run_with_timeout` sets and must still refuse.
+    // So this pins the empty case without weakening the depth bound underneath it.
+    let env = Env::new("blank-sentinel");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    let spawns = env.root.join("spawns");
+    env.set_stashed_original(&reentering_stash(&spawns));
+
+    let (ok, out) = env.fixture_stdin_env(&["statusline", "--client", "claude"], SESSION_JSON, &[("AGENTGEAR_STATUSLINE_NESTED", "")]);
+    assert!(ok, "statusline subcommand failed: {out}");
+
+    // Under a bare `is_some()` read the blank value suppresses level 0's spawn outright,
+    // so the counter file is never created and this is the assertion that reds.
+    let spawned = fs::read_to_string(&spawns).expect("a blank sentinel must not suppress the user's own command");
+    assert_eq!(spawned.lines().count(), 1, "the real sentinel stopped bounding the chain:\n{spawned}");
+    assert_eq!(out, "ez-fixture row\nez-fixture row", "the user's row went missing behind a blank sentinel");
 }
 
 #[test]

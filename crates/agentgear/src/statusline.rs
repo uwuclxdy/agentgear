@@ -15,6 +15,11 @@
 //! A's command as "the user's original", so uninstalling A and then B restores A's
 //! command rather than the user's true original. Accepted and unguarded — a guard
 //! would need a cross-host registry agentgear deliberately does not own.
+//!
+//! The spawn-depth sentinel that bounds a self-re-entering stash (see
+//! [`is_own_command`]) costs this case its DEEPEST row: B runs A, A's own stash is the
+//! user's true original, and that one is refused a level down. Same position as above —
+//! the worst case here is a missing row.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -37,6 +42,12 @@ const USER_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
 /// out until it fires. Far above any real status line, so this is runaway protection
 /// rather than a functional limit — output past it is simply cut.
 const MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
+
+/// Presence-only marker that this process is already running inside a status-line
+/// render. [`run_with_timeout`] both sets it on the child it spawns — so it reaches the
+/// re-entered host binary through the shell — and refuses to spawn while it is already
+/// set. Only presence is read; the value carries nothing beyond being non-empty.
+const NESTED_RENDER_VAR: &str = "AGENTGEAR_STATUSLINE_NESTED";
 
 /// A host-declared status line: one shell command whose stdout is the rendered
 /// bar (line-oriented — each line is one row), plus the harness's optional padding
@@ -102,9 +113,11 @@ impl StatusLineDecl {
 ///
 /// A stash naming the command the host declares RIGHT NOW reads as `None`, so the
 /// common poisoned stash does not re-enter this binary from inside itself. A stash
-/// naming a command the host declared in an *earlier* release is not covered and is
-/// still run; the recursion that opens, and what closing it would take, is written out
-/// on this module's `is_own_command`.
+/// naming a command the host declared in an *earlier* release is not covered here and is
+/// still returned: this reader answers what the marker HOLDS, and a host may ask for
+/// reasons that never spawn anything, so a depth guard here would make it lie. The
+/// re-entry that opens is bounded at the spawn boundary instead, written out on this
+/// module's `is_own_command`.
 ///
 /// Ceiling on the project lookup: `cwd` is matched against the project path the
 /// install was scoped to, EXACTLY. A session started in a subdirectory of that root
@@ -142,9 +155,9 @@ pub fn user_original(plugin: &Plugin, client: &str, cwd: Option<&Path>) -> Resul
 /// The project-or-user scope is taken from the session JSON's `cwd` (falling back
 /// to `workspace.current_dir`), then resolved by [`user_original`].
 ///
-/// A user command that cannot be spawned, prints nothing, or outlives the internal
-/// timeout contributes nothing: a broken or hung command of theirs must not blank
-/// the host's own bar.
+/// A user command that cannot be spawned, prints nothing, outlives the internal
+/// timeout, or is reached from inside another render contributes nothing: a broken or
+/// hung command of theirs must not blank the host's own bar.
 ///
 /// # Examples
 ///
@@ -203,20 +216,23 @@ fn own_command(plugin: &Plugin, client: &str) -> Option<String> {
 /// recovery is to drop the row, never to run it.
 ///
 /// CEILING — this compares against the command declared NOW, so a stash carrying a
-/// command the host declared in an EARLIER release is executed. Whenever that rename
-/// was additive (a flag added to the same subcommand, an argument reordered) the old
-/// string still dispatches to this binary's own status-line entrypoint, which calls
-/// `compose` -> [`user_original`] -> this same stash, and the recursion is unbounded:
-/// every level owns a fresh [`USER_COMMAND_TIMEOUT`] and [`reap`] kills only the direct
-/// child, so no level cancels the ones below it.
+/// command the host declared in an EARLIER release is still executed. Whenever that
+/// rename was additive (a flag added to the same subcommand, an argument reordered) the
+/// old string dispatches straight back into this binary's own status-line entrypoint,
+/// which calls `compose` -> [`user_original`] -> this same stash. No wider string compare
+/// closes it: a stash is verbatim harness JSON and carries no record of who wrote it, so
+/// nothing derivable from the current declaration spans an arbitrary rename.
+///
+/// [`NESTED_RENDER_VAR`] bounds it instead, read at the spawn boundary in
+/// [`run_with_timeout`]. The re-entered level renders the host's own rows and spawns
+/// nothing, so depth is capped at 1: the bar carries one duplicate row instead of a
+/// process chain that no level cancels (each owns a fresh [`USER_COMMAND_TIMEOUT`] and
+/// [`reap`] kills only its direct child). The duplicate row is the accepted outcome.
 ///
 /// Reachable, not theoretical: an install stamped before `Marker::statusline_command`
 /// existed carries no ownership record, so the first renamed release reads its own
 /// value as foreign and stashes it — producing exactly the stash this guard then fails
-/// to recognise. Closing it needs a spawn-depth sentinel in the child's environment
-/// rather than a wider string compare; a stash is verbatim harness JSON and carries no
-/// record of who wrote it, so no comparison against the current declaration can span
-/// an arbitrary rename.
+/// to recognise.
 fn is_own_command(stashed: &StatusLineDecl, ours: Option<&str>) -> bool {
     ours == Some(stashed.command.as_str())
 }
@@ -246,8 +262,33 @@ fn run_status_command(command: &str, session_json: &str) -> Option<String> {
 /// stdin and stdout are each drained on their own thread. Writing the whole payload
 /// before reading deadlocks as soon as either side outgrows its pipe buffer, and the
 /// calling thread has to stay free to enforce `timeout`.
+///
+/// Also the spawn-depth guard, both halves: [`NESTED_RENDER_VAR`] is read on entry and
+/// set on the child, so a render already nested inside another one returns `None` without
+/// starting a process. Keeping the pair here means a later caller of this primitive
+/// inherits the guard instead of having to remember it.
+///
+/// The sentinel goes on the child rather than on this process because the whole subtree
+/// needs to see it (the shell hands it down to whatever it runs, host binary included),
+/// and setting a process-global would need `unsafe`, which this crate forbids.
+///
+/// Not read in [`user_original`]: that reader is public and answers what the marker
+/// holds, which a host may want for reasons that never spawn anything.
+///
+/// An empty value reads as absent. We only ever write `"1"`, so a blank one cannot be
+/// ours — it means something else exported the name — and treating it as present would
+/// silently drop the user's row on every render with nothing to observe from outside.
 fn run_with_timeout(command: &str, session_json: &str, timeout: Duration) -> Option<String> {
-    let mut child = shell_command(command).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    if std::env::var_os(NESTED_RENDER_VAR).is_some_and(|nested| !nested.is_empty()) {
+        return None;
+    }
+    let mut child = shell_command(command)
+        .env(NESTED_RENDER_VAR, "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
 
     if let Some(mut stdin) = child.stdin.take() {
         let payload = session_json.as_bytes().to_vec();
