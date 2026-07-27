@@ -1,6 +1,6 @@
 {
   "name": "ez-fixture-plugin",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0",
   "description": "fixture plugin used by agentgear end-to-end tests",
   "author": { "name": "uwuclxdy" },
   "mcpServers": {

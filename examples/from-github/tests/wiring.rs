@@ -28,7 +28,7 @@ fn default_source_is_the_version_tag() {
         panic!("`default_source = \"github\"` must expand to Source::GitHub");
     };
     assert_eq!(repo, "uwuclxdy/agentgear");
-    assert_eq!(ref_, "v0.1.0-rc.1");
+    assert_eq!(ref_, "v0.1.0");
     assert_eq!(ref_, concat!("v", env!("CARGO_PKG_VERSION")));
 }
 

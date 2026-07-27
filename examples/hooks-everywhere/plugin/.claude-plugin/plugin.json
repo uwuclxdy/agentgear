@@ -1,6 +1,6 @@
 {
   "name": "hooks-everywhere",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0",
   "description": "Hook-lifecycle agentgear example plugin: SessionStart, UserPromptSubmit, PreToolUse, and PostToolUse wired across every hook-capable harness.",
   "author": { "name": "agentgear examples" }
 }

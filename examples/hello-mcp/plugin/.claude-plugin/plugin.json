@@ -1,6 +1,6 @@
 {
   "name": "hello-mcp",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0",
   "description": "Minimal agentgear example plugin: ships one stdio MCP server to Claude Code.",
   "author": { "name": "agentgear examples" },
   "mcpServers": {
