@@ -46,3 +46,12 @@ owned by that harness's workflow, disjoint from every other file:
   and none ships a `mcp call` verb. The native `mcp list` above is the deepest
   auth-free proof of ingestion. The `ez-fixture` server advertises a `ping` tool
   (`host_fixture mcp`) for the day a CLI ships `mcp call`.
+- sweeping every leg locally: loop `run.sh` over the dirs holding a `Dockerfile`,
+  sequentially. **never build two legs concurrently.** They contend on the shared
+  buildkit cache, and the per-leg image tags (`agentgear-harness-<id>`) do not isolate
+  the layer store.
+- a leg that dies deterministically in `exporting layers` with `failed to open writer:
+  ref moby/... locked: unavailable` hit moby's containerd-store duplicate-layer export
+  bug on the host, not a defect in the leg. `docker builder prune -af` clears it. Seen
+  on openclaw across two consecutive runs (2026-07-16); the CLI installed clean every
+  time once pruned.
