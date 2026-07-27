@@ -245,6 +245,7 @@ impl Env {
     /// lifecycle. What prevents that in production is `statuslinejson::is_ours` against
     /// the marker's command record, NOT `statusline::is_own_command`, which only refuses
     /// to run a stash once it is already poisoned.
+    #[cfg(not(windows))]
     fn set_stashed_original(&self, command: &str) {
         let path = self.claude_marker_path().expect("install must stamp a claude marker");
         let mut marker: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
