@@ -58,9 +58,9 @@ impl AgentBackend for ClaudeBackend {
     }
 
     /// The classification self_heal keys on: disabled beats broken beats stale.
-    fn probe(&self, plugin: &Plugin, scope: &Scope, _source: &Source) -> Result<BackendState> {
-        // CLI-based: the `claude plugin` registry is the source of truth, so the
-        // resolved `source` (materialize's input) never enters this probe.
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
+        // CLI-based: the `claude plugin` registry is the source of truth; the
+        // resolved `source` enters only the marketplace-health classifier below.
         let cli = ClaudeCli::locate()?;
         let Some(entry) = find_plugin(&cli, scope, plugin.name, plugin.marketplace)? else {
             return Ok(BackendState::Absent);
@@ -68,9 +68,31 @@ impl AgentBackend for ClaudeBackend {
         if entry.enabled == Some(false) {
             return Ok(BackendState::Disabled);
         }
+        // A non-empty `errors` list means CC computed a load failure for this
+        // entry (a marketplace whose manifest vanished registers 0 hooks and 0
+        // MCP while its files still resolve), so it outranks the file/version
+        // verdicts — a heal that read such an entry as Healthy would stamp a
+        // marker and never repair it (probed 2.1.241).
+        let errors_ok = entry.errors.as_ref().is_none_or(Vec::is_empty);
         let files_ok = entry.install_path.as_ref().is_none_or(|p| Path::new(p).exists());
         let monotonic_current = !version_lt(entry.version.as_deref(), plugin.version);
-        let registry = if files_ok && monotonic_current { BackendState::Healthy } else { BackendState::NeedsRepair };
+        let registry = if errors_ok && files_ok && monotonic_current { BackendState::Healthy } else { BackendState::NeedsRepair };
+        // A healthy-looking entry can still sit on a divergent or broken
+        // marketplace — a registration elsewhere than the materialized pointer
+        // loads fine and reports no errors until its source loses the manifest —
+        // so the marketplace health folds in before the verdict. That is the
+        // second read a heal run pays for; the divergence signal exists nowhere
+        // on the plugin entry.
+        let registry = if matches!(registry, BackendState::Healthy) {
+            let marketplace = find_marketplace(&cli, scope, plugin.marketplace)?;
+            let expected = crate::host::data_root(plugin)?.join(format!("current@{}", ClaudeBackend.id()));
+            match marketplace_health(marketplace.as_ref(), source, &expected) {
+                MarketplaceHealth::Healthy => BackendState::Healthy,
+                MarketplaceHealth::Absent | MarketplaceHealth::Dangling => BackendState::NeedsRepair,
+            }
+        } else {
+            registry
+        };
         // The registry alone decides presence. A statusLine of ours still sitting in
         // settings.json after a manual `claude plugin uninstall` must not read as
         // "present but drifted", or self_heal would resurrect a deliberate uninstall
@@ -115,7 +137,11 @@ impl AgentBackend for ClaudeBackend {
 
 pub(crate) fn find_plugin(cli: &ClaudeCli, scope: &Scope, name: &str, marketplace: &str) -> Result<Option<PluginEntry>> {
     let entries: Vec<PluginEntry> = cli.run_json(&["plugin", "list", "--json"], scope.cwd(), "plugin list --json")?;
-    Ok(entries.into_iter().find(|e| e.matches(name, marketplace)))
+    // Scope-filtered: the same id installed at both user and project scope must
+    // not let a user-scope op read the project entry first (design §self_heal's
+    // former scope-blind caveat; the dead-entry shape a per-session config dir
+    // leaves behind makes the wrong first match a standing heal failure).
+    Ok(entries.into_iter().find(|e| e.matches(name, marketplace) && e.at_scope(scope)))
 }
 
 pub(crate) fn find_marketplace(cli: &ClaudeCli, scope: &Scope, marketplace: &str) -> Result<Option<MarketplaceEntry>> {
@@ -223,7 +249,11 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
     let installed = entry.version.clone();
     let stale = version_lt(installed.as_deref(), plugin.version);
     let newer = installed.as_deref().is_some_and(|v| version_lt(Some(plugin.version), v));
-    let structural_ok = structural_ok(&entry, marketplace.as_ref(), &desired.source);
+    // The path materialize will (re)publish; a registered source diverging from it
+    // (an old checkout dir, a github entry under an embedded host, a pre-client-
+    // scoping pointer) is structural damage a heal repairs by re-pointing.
+    let expected = crate::host::data_root(plugin)?.join(format!("current@{}", ClaudeBackend.id()));
+    let structural_ok = structural_ok(&entry, marketplace.as_ref(), &desired.source, &expected);
 
     // Monotonic: a strictly-newer install belongs to a newer binary. Never touch
     // it — not even to repair a broken one — or two coexisting binaries downgrade
@@ -256,10 +286,12 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
 /// Embedded/path: (re)materialize so `current@claude` is fresh, then add-if-absent /
 /// update-if-present. GitHub: send `owner/repo@ref` to pin the ref; when already
 /// present, `update` if the stored ref still matches, else re-`add` to re-point the
-/// pin (`update` never moves one — design §ref-pinning ground truth). Ceiling: an
-/// install predating client-scoping stays registered on a plain `current`; `update`
-/// refreshes that stale path, so it must be reinstalled to pick up client-scoped
-/// staging.
+/// pin (`update` never moves one — design §ref-pinning ground truth). A present
+/// local-source entry whose registered path diverges from the just-materialized
+/// pointer (an old checkout dir, a github-registered entry, a pre-client-scoping
+/// `current`) is re-pointed the same way: `marketplace add <dir>` over the same
+/// name re-registers the entry in place, while `update` only re-fetches the stale
+/// source and fails on it (probed 2.1.241).
 fn ensure_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: &Source, scope: &Scope, present: Option<&MarketplaceEntry>) -> Result<()> {
     // Client-scope the materialization under this backend's own id, so CC and copilot
     // never collide on the shared data root (each bakes its own `${AGENTGEAR_CLIENT}`).
@@ -270,7 +302,7 @@ fn ensure_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: &Source, scope: 
         Source::Path(p) => materialize(plugin, TreeSource::Dir(p), client)?.display().to_string(),
         Source::GitHub { repo, ref_ } => github_source(repo, ref_),
     };
-    match marketplace_op(source, present) {
+    match marketplace_op(source, present, &source_str) {
         MarketplaceOp::Update => marketplace_update(cli, plugin.marketplace, scope)?,
         MarketplaceOp::Add => marketplace_add(cli, &source_str, scope)?,
     }
@@ -285,26 +317,38 @@ fn github_source(repo: &str, ref_: &str) -> String {
 }
 
 /// Present-branch decision. `Add` re-registers the marketplace: install-if-absent,
-/// or re-point a github pin whose stored ref drifted from the desired one (`update`
-/// never moves a pin). `Update` refreshes an already-present marketplace sitting on
-/// its desired ref, and every non-github source.
+/// re-point a github pin whose stored ref drifted from the desired one (`update`
+/// never moves a pin), or re-point a local-source entry whose registered path
+/// diverged from the just-materialized pointer — `expected` — including a
+/// github-registered entry met by an embedded/path host (the migration case) and a
+/// pre-client-scoping `current` pointer. `Update` refreshes an already-present
+/// marketplace sitting on its desired source.
 #[derive(Debug, PartialEq, Eq)]
 enum MarketplaceOp {
     Add,
     Update,
 }
 
-fn marketplace_op(source: &Source, present: Option<&MarketplaceEntry>) -> MarketplaceOp {
+fn marketplace_op(source: &Source, present: Option<&MarketplaceEntry>, expected: &str) -> MarketplaceOp {
     match (source, present) {
         (_, None) => MarketplaceOp::Add,
         (Source::GitHub { ref_, .. }, Some(entry)) if entry.ref_.as_deref() != Some(*ref_) => MarketplaceOp::Add,
+        (Source::Embedded | Source::Path(_), Some(entry)) if local_entry_diverges(entry, expected) => MarketplaceOp::Add,
         (_, Some(_)) => MarketplaceOp::Update,
     }
 }
 
-/// GitHub entries have no local path to dangle (the registry stores `source:
-/// github` + a ref), so a present github entry is always healthy. A missing local
-/// `path` field reads as healthy, matching the tolerant serde model.
+/// A present marketplace entry that a local-source reconcile must re-point rather
+/// than update: its own source kind is github, or its registered path is not the
+/// materialized pointer the reconcile just staged.
+fn local_entry_diverges(entry: &MarketplaceEntry, expected: &str) -> bool {
+    entry.source.as_deref() == Some("github") || entry.path.as_deref() != Some(expected)
+}
+
+/// A local marketplace's health. `Dangling` covers every shape a heal must repair
+/// by re-pointing: a moved/deleted path, a path whose generated manifest vanished,
+/// a github-registered entry under a local desired source, and a registered path
+/// that diverged from the materialized pointer `expected`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MarketplaceHealth {
     Healthy,
@@ -312,26 +356,38 @@ pub(crate) enum MarketplaceHealth {
     Dangling,
 }
 
-pub(crate) fn marketplace_health(marketplace: Option<&MarketplaceEntry>, source: &Source) -> MarketplaceHealth {
+pub(crate) fn marketplace_health(marketplace: Option<&MarketplaceEntry>, source: &Source, expected: &Path) -> MarketplaceHealth {
     let Some(m) = marketplace else {
         return MarketplaceHealth::Absent;
     };
     match source {
-        Source::Embedded | Source::Path(_) => {
-            if m.path.as_ref().is_none_or(|p| Path::new(p).exists()) {
-                MarketplaceHealth::Healthy
-            } else {
-                MarketplaceHealth::Dangling
-            }
-        }
+        // A github entry has no local path to dangle (the registry stores source +
+        // ref), so it reads healthy only under a github desired source — the same
+        // entry under an embedded/path host is divergence to re-point.
         Source::GitHub { .. } => MarketplaceHealth::Healthy,
+        Source::Embedded | Source::Path(_) => {
+            if m.source.as_deref() == Some("github") {
+                return MarketplaceHealth::Dangling;
+            }
+            let Some(path) = m.path.as_deref() else {
+                return MarketplaceHealth::Dangling;
+            };
+            if Path::new(path) != expected {
+                return MarketplaceHealth::Dangling;
+            }
+            if !Path::new(path).join(".claude-plugin").join("marketplace.json").exists() {
+                return MarketplaceHealth::Dangling;
+            }
+            MarketplaceHealth::Healthy
+        }
     }
 }
 
-fn structural_ok(entry: &PluginEntry, marketplace: Option<&MarketplaceEntry>, source: &Source) -> bool {
+fn structural_ok(entry: &PluginEntry, marketplace: Option<&MarketplaceEntry>, source: &Source, expected: &Path) -> bool {
     let files_ok = entry.install_path.as_ref().is_none_or(|p| Path::new(p).exists());
-    let marketplace_ok = matches!(marketplace_health(marketplace, source), MarketplaceHealth::Healthy);
-    files_ok && marketplace_ok
+    let marketplace_ok = matches!(marketplace_health(marketplace, source, expected), MarketplaceHealth::Healthy);
+    let errors_ok = entry.errors.as_ref().is_none_or(Vec::is_empty);
+    files_ok && marketplace_ok && errors_ok
 }
 
 fn verify_present(cli: &ClaudeCli, scope: &Scope, plugin: &Plugin) -> Result<()> {

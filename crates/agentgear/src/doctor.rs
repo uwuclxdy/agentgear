@@ -13,7 +13,9 @@ use serde_json::Value;
 // `claude` backend calls; the shared `doctor` fan-out and the report types stay
 // ungated so every other backend still reaches them.
 #[cfg(feature = "claude")]
-use crate::agents::claude::{MarketplaceHealth, find_marketplace, marketplace_health};
+use crate::agents::AgentBackend;
+#[cfg(feature = "claude")]
+use crate::agents::claude::{ClaudeBackend, MarketplaceHealth, find_marketplace, marketplace_health};
 #[cfg(feature = "claude")]
 use crate::cli::{CLAUDE_FLOOR, ClaudeCli, MIN_CLAUDE_VERSION, parse_version};
 use crate::components::AGENTGEAR_CLIENT_TOKEN;
@@ -286,8 +288,10 @@ fn check_registered(cli: &ClaudeCli, plugin: &Plugin, checks: &mut Vec<DoctorChe
     }
 }
 
-/// The plugin entry survives a removed or path-moved marketplace: CC keeps serving
-/// its cache copy, so this is a Warn, not a Fail. Only the next `update` is at risk.
+/// A marketplace CC cannot load registers 0 hooks and 0 MCP for every plugin it
+/// carries (probed 2.1.241), so a dangling one — moved, manifest-deleted, or
+/// registered at a source diverged from the materialized pointer — is a Fail, not a
+/// Warn: the plugin is dead until a heal re-points it.
 #[cfg(feature = "claude")]
 fn check_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: &Source) -> DoctorCheck {
     let name = "marketplace registered";
@@ -295,21 +299,29 @@ fn check_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: &Source) -> Docto
         Ok(m) => m,
         Err(e) => return DoctorCheck { name, status: CheckStatus::Warn(format!("could not read `marketplace list --json`: {e}")) },
     };
-    match marketplace_health(marketplace.as_ref(), source) {
+    let expected = crate::current_pointer(plugin.name, ClaudeBackend.id());
+    let expected = match expected {
+        Ok(path) => path,
+        Err(e) => return DoctorCheck { name, status: CheckStatus::Warn(format!("could not resolve the materialized pointer path: {e}")) },
+    };
+    match marketplace_health(marketplace.as_ref(), source, &expected) {
         MarketplaceHealth::Healthy => DoctorCheck { name, status: CheckStatus::Ok(format!("`{}` registered", plugin.marketplace)) },
         MarketplaceHealth::Absent => DoctorCheck {
             name,
-            status: CheckStatus::Warn(format!(
-                "marketplace `{}` is not registered; the plugin still runs from its cache copy, but the next `update` cannot re-fetch it",
-                plugin.marketplace
-            )),
+            status: CheckStatus::Fail {
+                problem: format!("marketplace `{}` is not registered; the plugin's hooks and MCP are not loaded", plugin.marketplace),
+                fix: "run the host binary's `setup` (or `install`) subcommand".into(),
+            },
         },
         MarketplaceHealth::Dangling => DoctorCheck {
             name,
-            status: CheckStatus::Warn(format!(
-                "marketplace `{}` source path no longer resolves; the plugin still runs from its cache copy, but the next `update` re-materializes it",
-                plugin.marketplace
-            )),
+            status: CheckStatus::Fail {
+                problem: format!(
+                    "marketplace `{}` source is broken or registered elsewhere than the materialized tree; the plugin's hooks and MCP are not loaded",
+                    plugin.marketplace
+                ),
+                fix: "run the host binary's `setup` (or `install`) subcommand".into(),
+            },
         },
     }
 }

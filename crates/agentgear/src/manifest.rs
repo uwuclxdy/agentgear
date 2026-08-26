@@ -6,6 +6,9 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "claude")]
+use crate::host::Scope;
+
 /// A shipped `plugin.json`, read from the embedded tree at materialize time to
 /// source the generated marketplace's `description` + `owner`. Name/version are
 /// read elsewhere (the derive cross-checks name; build.rs enforces version), so
@@ -78,6 +81,18 @@ pub(crate) struct PluginEntry {
     /// is registered but its files are gone (a "broken" install).
     #[serde(default)]
     pub install_path: Option<String>,
+    /// Load-time failures CC computed for this entry, e.g. a marketplace that no
+    /// longer loads (`["Marketplace <mkt> failed to load: cache-miss"]`). CC
+    /// registers 0 hooks and 0 MCP for such an entry while `installPath` still
+    /// resolves, so a non-empty list is the one signal that a registration whose
+    /// files exist is nonetheless dead (probed 2.1.241; the field is NOT persisted
+    /// in `installed_plugins.json`, it is computed per `plugin list` invocation).
+    #[serde(default)]
+    pub errors: Option<Vec<String>>,
+    /// `"user"` or `"project"`. Lookup filters on it so a user-scope op never
+    /// reads a project entry first (design §self_heal, the scope-blind caveat).
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 #[cfg(feature = "claude")]
@@ -94,6 +109,15 @@ impl PluginEntry {
     pub fn matches(&self, name: &str, marketplace: &str) -> bool {
         self.plugin_name() == name && self.marketplace() == Some(marketplace)
     }
+
+    /// True when this entry sits at `scope`. A missing `scope` field (tolerant
+    /// serde, older CC) matches either, so a lookup never treats it as absent.
+    pub fn at_scope(&self, scope: &Scope) -> bool {
+        match self.scope.as_deref() {
+            None => true,
+            Some(s) => s == scope.as_cli(),
+        }
+    }
 }
 
 /// One entry of `claude plugin marketplace list --json`.
@@ -106,6 +130,12 @@ pub(crate) struct MarketplaceEntry {
     /// (moved/deleted) marketplace path.
     #[serde(default)]
     pub path: Option<String>,
+    /// The entry's own source kind: `"directory"` or `"github"` (probed 2.1.241).
+    /// Lets reconcile spot a github-registered entry under a local desired source
+    /// — the migration case where `marketplace add <dir>` must re-point it — since
+    /// such an entry carries no `path` to diverge on.
+    #[serde(default)]
+    pub source: Option<String>,
     /// The pinned git ref of a `source: "github"` entry (`known_marketplaces.json`
     /// stores it first-class; absent for a bare/non-github entry). Lets reconcile
     /// spot a drifted pin and re-point it, since `marketplace update` never moves a

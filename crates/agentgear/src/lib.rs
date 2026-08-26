@@ -133,7 +133,9 @@ pub use agents::{AGENT_IDS, AgentBackend, BackendState, backend_for};
 pub use components::{AGENTGEAR_CLIENT_TOKEN, HookBinding, MarkdownDoc, McpKind, McpServer, PluginComponents, SkillDir};
 pub use doctor::{CheckStatus, DoctorCheck, DoctorReport};
 pub use error::{Error, Result};
-pub use host::{AgentReport, AgentResult, AgentStatus, Capabilities, Desired, Outcome, Plugin, PluginHost, Scope, SkipReason, Source};
+pub use host::{
+    AgentReport, AgentResult, AgentStatus, Capabilities, Desired, Outcome, Plugin, PluginHost, Scope, SkipReason, Source, current_pointer,
+};
 pub use statusline::StatusLineDecl;
 
 #[cfg(feature = "derive")]

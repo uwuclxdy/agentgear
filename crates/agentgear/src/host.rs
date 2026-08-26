@@ -497,8 +497,21 @@ pub trait PluginHost {
 /// Per-crate data root: `${XDG_DATA_HOME:-~/.local/share}/<plugin-name>/`, holding
 /// `versions/`, the `current` pointer, and `markers/`.
 pub(crate) fn data_root(plugin: &Plugin) -> Result<PathBuf> {
+    data_root_for(plugin.name)
+}
+
+/// [`data_root`] for a host that only holds the plugin name.
+pub(crate) fn data_root_for(plugin_name: &str) -> Result<PathBuf> {
     let base = dirs::data_dir().ok_or_else(|| crate::error::Error::Tree("no data directory (XDG_DATA_HOME and HOME both unset)".into()))?;
-    Ok(base.join(plugin.name))
+    Ok(base.join(plugin_name))
+}
+
+/// The `current@<client>` pointer path [`crate::materialize`] publishes for
+/// `plugin_name`, resolved like [`data_root`] but without materializing anything.
+/// A host reads its registered marketplace source and compares it against this to
+/// spot a divergent registration with a plain filesystem read, never a CLI spawn.
+pub fn current_pointer(plugin_name: &str, client: &str) -> Result<PathBuf> {
+    Ok(data_root_for(plugin_name)?.join(format!("current@{client}")))
 }
 
 #[cfg(test)]

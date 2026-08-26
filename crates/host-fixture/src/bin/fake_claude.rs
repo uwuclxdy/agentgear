@@ -56,7 +56,7 @@ fn main() -> ExitCode {
 fn plugin(argv: &[&str]) -> ExitCode {
     match argv {
         ["list", ..] => {
-            println!("{}", render(&State::load().plugins));
+            println!("{}", render(&listed_plugins(State::load())));
             ExitCode::SUCCESS
         }
         ["marketplace", rest @ ..] => marketplace(rest),
@@ -71,6 +71,29 @@ fn plugin(argv: &[&str]) -> ExitCode {
     }
 }
 
+/// The `plugin list --json` view: every installed plugin plus the `errors` CC
+/// computes at list time for one whose marketplace no longer loads. The real
+/// failure mode this models (probed 2.1.241): a directory-source marketplace whose
+/// `.claude-plugin/marketplace.json` vanished registers the plugin entry — files
+/// intact — with `["Marketplace <mkt> failed to load: cache-miss"]`, and CC serves
+/// 0 hooks and 0 MCP from it.
+fn listed_plugins(state: State) -> Vec<Value> {
+    let mut plugins = state.plugins.clone();
+    for plugin in &mut plugins {
+        let Some(marketplace) = plugin["id"].as_str().and_then(|id| id.split_once('@').map(|(_, m)| m.to_string())) else {
+            continue;
+        };
+        let Some(entry) = state.marketplaces.iter().find(|m| m["name"] == json!(marketplace)) else {
+            continue;
+        };
+        let broken = entry["path"].as_str().is_some_and(|path| !Path::new(path).join(".claude-plugin").join("marketplace.json").exists());
+        if broken {
+            plugin["errors"] = json!([format!("Marketplace {marketplace} failed to load: cache-miss")]);
+        }
+    }
+    plugins
+}
+
 fn marketplace(argv: &[&str]) -> ExitCode {
     match argv {
         ["list", ..] => {
@@ -82,8 +105,25 @@ fn marketplace(argv: &[&str]) -> ExitCode {
             state.marketplaces.retain(|m| m["name"] != entry["name"]);
             state.marketplaces.push(entry);
         }),
-        // A no-op for a local marketplace: the source dir IS the live copy.
-        ["update", ..] => ExitCode::SUCCESS,
+        // A no-op for a healthy local marketplace: the source dir IS the live copy.
+        // A dir whose manifest vanished fails like the real CLI's EISDIR refresh
+        // failure (probed 2.1.241), so a heal that picks `update` over a re-pointing
+        // `add` reds instead of converging.
+        ["update", name, ..] => {
+            let state = State::load();
+            let broken = state.marketplaces.iter().any(|m| {
+                m["name"] == json!(name)
+                    && m["path"].as_str().is_some_and(|path| !Path::new(path).join(".claude-plugin").join("marketplace.json").exists())
+            });
+            if broken {
+                eprintln!(
+                    "Failed to update marketplace(s): Failed to refresh marketplace '{name}': EISDIR: illegal operation on a directory, read"
+                );
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
         ["remove", name, ..] => mutate(|state| state.marketplaces.retain(|m| m["name"] != json!(name))),
         other => usage(other),
     }
@@ -103,7 +143,9 @@ fn install(id: &str) -> ExitCode {
         return ExitCode::FAILURE;
     }
     if !state.plugins.iter().any(|p| p["id"] == json!(id)) {
-        state.plugins.push(json!({"id": id, "enabled": true}));
+        // The real CLI's user-scope entries carry `"scope": "user"`; the backend's
+        // scoped lookup reads it, so the double models it.
+        state.plugins.push(json!({"id": id, "enabled": true, "scope": "user"}));
     }
     state.save();
     ExitCode::SUCCESS

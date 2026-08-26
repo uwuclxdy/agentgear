@@ -814,3 +814,145 @@ fn claude_statusline_uninstall_deletes_the_slot_with_nothing_stashed() {
     );
     assert_eq!(env.settings(), SEED_SETTINGS_NO_STATUS_LINE, "uninstall did not restore settings.json byte-for-byte");
 }
+
+/// The migration break every old registration dies of: the registered marketplace
+/// source is a dir whose `.claude-plugin/marketplace.json` vanished (a checkout
+/// after the committed manifest was deleted, a refreshed github clone), while the
+/// plugin entry — files intact — carries CC's load-failure `errors`. A probe that
+/// read only files and version called that Healthy, stamped the marker, and never
+/// repaired it. This pins the whole heal: classify `NeedsRepair` off the errors,
+/// re-point the registration via `marketplace add <materialized pointer>` (the
+/// fake fails `update` on the broken source exactly like the real CLI's EISDIR),
+/// reinstall from the healthy tree, and no-op on the next pass.
+#[test]
+fn claude_broken_marketplace_heal_repoints_and_repairs() {
+    let env = Env::new("broken-marketplace");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    // Point the registration at a stale dir whose manifest is gone, standing in
+    // for the pre-deletion checkout path; the materialized tree stays intact.
+    let stale = env.root.join("stale-checkout");
+    fs::create_dir_all(stale.join(".claude-plugin")).unwrap();
+    fs::write(stale.join(".claude-plugin").join("plugin.json"), "{}").unwrap();
+    let state_path = env.cfg.join(FAKE_CLAUDE_STATE_FILENAME);
+    let mut state: serde_json::Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    for marketplace in state["marketplaces"].as_array_mut().unwrap() {
+        marketplace["path"] = serde_json::json!(stale.to_string_lossy().as_ref());
+    }
+    fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal errored on a broken marketplace: {out}");
+    assert_eq!(out, "Repaired", "a marketplace whose manifest vanished must repair, got {out}");
+
+    // The registration was re-pointed at the materialized pointer, not left on
+    // the stale dir a `marketplace update` would have failed against.
+    let state: serde_json::Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    let path = state["marketplaces"][0]["path"].as_str().expect("marketplace path");
+    let expected = env.data.join("ez-fixture-plugin").join("current@claude");
+    assert_eq!(path, expected.to_string_lossy().as_ref(), "the repair must re-point the registration at the materialized tree");
+
+    // Converged: the next heal spends its one read and changes nothing.
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "a healed registration must no-op, got {out}");
+}
+
+/// The errors-only half of the same heal: the marketplace is healthy and the
+/// files resolve, but CC reports a load failure on the plugin entry (seeded into
+/// the double's registry, standing in for any CC-side load error the double does
+/// not model). probe must classify that `NeedsRepair`, and `structural_ok` must
+/// fold the same errors in — without it the reconcile reads the entry healthy and
+/// no-ops forever while the probe keeps reporting the break. The repair path
+/// reinstalls the entry, which drops the seeded errors, so the next heal is a
+/// no-op.
+#[test]
+fn claude_errors_only_plugin_entry_heals_and_converges() {
+    let env = Env::new("errors-only");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    let state_path = env.cfg.join(FAKE_CLAUDE_STATE_FILENAME);
+    let mut state: serde_json::Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    for plugin in state["plugins"].as_array_mut().unwrap() {
+        plugin["errors"] = serde_json::json!(["Marketplace ez-fixture-plugin failed to load: cache-miss"]);
+    }
+    fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal errored on an errors-only entry: {out}");
+    assert_eq!(out, "Repaired", "a load-failed entry behind a healthy marketplace must repair, got {out}");
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "the reinstalled entry must no-op, got {out}");
+}
+
+/// The still-working half of the migration: the registration points at a
+/// directory that still LOADS — its manifest is present — but is not the
+/// materialized pointer (the old checkout dir before anyone pulled the deletion).
+/// No errors ride the plugin entry, so only `structural_ok`'s divergence check
+/// can see the break; without it the heal adopts/NoOps and the registration
+/// never converges. This is the case the clauth start pre-flight gate keys on.
+#[test]
+fn claude_divergent_but_loading_marketplace_heals_and_repoints() {
+    let env = Env::new("divergent-loading");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    // A stale dir with a VALID manifest: the marketplace loads, so CC computes no
+    // errors for it — the divergence is silent everywhere but the pointer check.
+    let stale = env.root.join("old-checkout");
+    fs::create_dir_all(stale.join(".claude-plugin")).unwrap();
+    fs::write(stale.join(".claude-plugin").join("marketplace.json"), "{}").unwrap();
+    fs::write(stale.join(".claude-plugin").join("plugin.json"), "{}").unwrap();
+    let state_path = env.cfg.join(FAKE_CLAUDE_STATE_FILENAME);
+    let mut state: serde_json::Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    for marketplace in state["marketplaces"].as_array_mut().unwrap() {
+        marketplace["path"] = serde_json::json!(stale.to_string_lossy().as_ref());
+    }
+    fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal errored on a divergent-but-loading marketplace: {out}");
+    assert_eq!(out, "Repaired", "a registration elsewhere than the pointer must converge, got {out}");
+
+    let state: serde_json::Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    let path = state["marketplaces"][0]["path"].as_str().expect("marketplace path");
+    let expected = env.data.join("ez-fixture-plugin").join("current@claude");
+    assert_eq!(path, expected.to_string_lossy().as_ref(), "the repair must re-point the loading registration at the materialized tree");
+}
+
+/// The scope filter's discriminating case, the standing failure it was built
+/// from: a dead PROJECT-scope entry listed FIRST while the user-scope entry is
+/// healthy. A scope-blind probe reads the project entry, classifies
+/// `NeedsRepair`, and the user-scope repair then churns against the entry it can
+/// never fix. The filtered probe reads the user entry and no-ops. Seeded by hand
+/// because the double is scope-blind by design — every entry IT installs is
+/// user-scope, so only a hand-written registry entry can pose the other scope.
+#[test]
+fn claude_heal_ignores_a_dead_project_entry_at_user_scope() {
+    let env = Env::new("project-entry-first");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    let state_path = env.cfg.join(FAKE_CLAUDE_STATE_FILENAME);
+    let mut state: serde_json::Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    let dead_project = serde_json::json!({
+        "id": "ez-fixture-plugin@ez-fixture-plugin",
+        "enabled": true,
+        "scope": "project",
+        "installPath": "/gone/runtime/plugins/cache",
+        "errors": ["Marketplace ez-fixture-plugin failed to load: cache-miss"]
+    });
+    let plugins = state["plugins"].as_array_mut().unwrap();
+    plugins.insert(0, dead_project);
+    fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal errored with a dead project entry present: {out}");
+    assert_eq!(out, "NoOp", "a dead project entry must not drive the user-scope heal, got {out}");
+}

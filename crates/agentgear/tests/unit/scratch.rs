@@ -32,7 +32,7 @@ fn scratch_path_carries_this_process_id() {
 /// each binds it as a read-only "a directory that exists" fixture and asserts on
 /// it, so neither can collide with anything. The count is part of the entry — a
 /// blessed file that grows a *second* use reds rather than inheriting the pass.
-const READ_ONLY_TEMP_DIR_FIXTURES: [(&str, usize); 2] = [("claude.rs", 1), ("vscode_copilot.rs", 1)];
+const READ_ONLY_TEMP_DIR_FIXTURES: [(&str, usize); 1] = [("vscode_copilot.rs", 1)];
 
 /// The failure mode this fix has is a *new* unit file naming its own path under
 /// the temp dir, which the single-helper pin above cannot see. Banning the
