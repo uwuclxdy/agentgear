@@ -61,7 +61,11 @@ if [ ! -f "$PLUGIN_SKILL" ]; then echo "FAIL: plugin skill SKILL.md missing"; ex
 if ! grep -q 'x-agentgear' "$PLUGIN_SKILL"; then echo "FAIL: plugin skill ownership tag missing"; exit 1; fi
 
 # Native second opinion (best-effort; the auth-free config parse above is authoritative).
+# devin 3000.6.2 rewrites config.json on `mcp list` (drops every mcpServers entry,
+# adds version: 1), so snapshot the file around the native call: the file asserts
+# below run on what agentgear wrote, never on the CLI's rewrite. OBSERVED 2026-08-26.
 if command -v devin >/dev/null 2>&1; then
+  cp "$CONFIG" "$CONFIG.pre-native"
   if out=$(devin mcp list 2>&1); then
     if echo "$out" | grep -q 'ez-fixture'; then
       echo "native devin mcp list confirmed ez-fixture"
@@ -71,6 +75,7 @@ if command -v devin >/dev/null 2>&1; then
   else
     echo "note: devin mcp list unavailable (likely needs auth); relied on config-file assert"
   fi
+  mv "$CONFIG.pre-native" "$CONFIG"
 else
   echo "note: devin CLI not installed; relied on config-file assert"
 fi
