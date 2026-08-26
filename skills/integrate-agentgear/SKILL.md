@@ -1,11 +1,7 @@
 ---
 name: integrate-agentgear
-description: >-
-  Add agentgear to a Rust binary that ships a Claude Code plugin, or migrate a hand-rolled
-  install / self-heal / per-harness config-merge engine onto agentgear's derive. Use when a
-  binary should install its own CC plugin (replacing manual `/plugin marketplace add` +
-  `/plugin install`), when a plugin needs to reach non-CC harnesses without hand-writing a
-  translator per harness, or when deciding whether a given plugin is even a fit.
+description: "This skill should be used when adding agentgear to a Rust binary that ships a Claude Code plugin, or migrating a hand-rolled install, self-heal, or per-harness config-merge engine onto its derive."
+when_to_use: "Use when a binary should install its own CC plugin, when a plugin needs to reach non-CC harnesses without hand-writing a translator per harness, or when deciding whether a given plugin is a fit."
 ---
 
 # integrate-agentgear
