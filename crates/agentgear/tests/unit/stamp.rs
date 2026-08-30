@@ -22,6 +22,7 @@ fn marker(source_mode: &str, source_path: Option<&str>) -> Marker {
         statusline_original: None,
         statusline_command: None,
         tree_hash: None,
+        reinstalling: false,
     }
 }
 
@@ -76,6 +77,30 @@ fn marker_without_tree_hash_still_deserializes_and_writes_no_key() {
 
     let rendered = serde_json::to_string(&marker).expect("marker must serialize");
     assert!(!rendered.contains("tree_hash"), "an absent record must not emit the key: {rendered}");
+}
+
+#[test]
+fn marker_without_reinstalling_loads_as_settled_and_writes_no_key() {
+    // A marker from before the field, and the steady state after it: no reinstall is in
+    // flight. Loading one as `true` would make self_heal repair a plugin the user
+    // uninstalled by hand, which is the one thing the whole state table exists to stop.
+    let json = r#"{
+        "binary_version": "0.1.0",
+        "plugin_version": "0.1.0",
+        "source_mode": "embedded",
+        "scope": "user",
+        "agent": "claude"
+    }"#;
+    let marker: Marker = serde_json::from_str(json).expect("an old marker without reinstalling must still load");
+    assert!(!marker.reinstalling);
+
+    let rendered = serde_json::to_string(&marker).expect("marker must serialize");
+    assert!(!rendered.contains("reinstalling"), "a settled marker must not emit the key: {rendered}");
+
+    let mut in_flight = marker.clone();
+    in_flight.reinstalling = true;
+    let rendered = serde_json::to_string(&in_flight).expect("marker must serialize");
+    assert!(rendered.contains("\"reinstalling\":true"), "an in-flight reinstall must survive to disk: {rendered}");
 }
 
 #[test]

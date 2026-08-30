@@ -75,8 +75,16 @@ impl Env {
     }
 
     fn fixture(&self, args: &[&str]) -> (bool, String) {
+        self.fixture_env(args, &[])
+    }
+
+    /// The same run with extra environment, for the legs that inject a CLI failure.
+    fn fixture_env(&self, args: &[&str], extra: &[(&str, &str)]) -> (bool, String) {
         let mut cmd = Command::new(BIN);
         cmd.args(args);
+        for (key, value) in extra {
+            cmd.env(key, value);
+        }
         // `HOME` + `XDG_CONFIG_HOME` under the temp root keep every non-CC backend's
         // config-dir probe false; the curated `PATH` keeps their `which` probe false.
         cmd.env("CLAUDE_CONFIG_DIR", &self.cfg)
@@ -113,6 +121,11 @@ impl Env {
             .collect();
         names.sort();
         names
+    }
+
+    /// The plugin ids `fake_claude`'s registry currently holds.
+    fn registry(&self) -> String {
+        fs::read_to_string(self.cfg.join("fake-claude-state.json")).unwrap_or_default()
     }
 
     /// Every `claude` invocation so far, one per line.
@@ -247,5 +260,90 @@ fn an_unchanged_tree_reinstalls_nothing_on_the_next_pass() {
         count_calls(&calls, "plugin install"),
         count_calls(&baseline, "plugin install"),
         "an unchanged tree must not reinstall:\n{calls:#?}"
+    );
+}
+
+#[test]
+fn a_reinstall_whose_install_half_fails_is_repaired_rather_than_forgotten() {
+    // The reinstall is two CLI calls, and everything between them is a window where the
+    // plugin is gone while our marker still stands. self_heal reads exactly that shape
+    // as "the user uninstalled it" and forgets it for good, so without the in-flight
+    // record a failed `plugin install` — or a SessionStart hook killed mid-pair —
+    // permanently uninstalls the host's plugin and every later session reports NoOp.
+    let env = Env::new("interrupted");
+
+    let (ok, out) = env.setup();
+    assert!(ok, "first setup failed: {out}");
+
+    let original = fs::read_to_string(env.source_command()).unwrap();
+    fs::write(env.source_command(), format!("{original}\n{EDIT_MARKER}\n")).unwrap();
+
+    // The refresh runs its uninstall, then cannot install.
+    let (ok, out) = env.fixture_env(&["self-heal"], &[("FAKE_CLAUDE_FAIL_INSTALL", "1")]);
+    assert!(!ok, "the injected install failure must surface, got a success: {out}");
+    assert!(!env.registry().contains("ez-fixture-plugin@"), "the uninstall half must have landed for this test to mean anything");
+
+    // The next session must put it back, not read our own half-done work as a choice
+    // the user made.
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "the heal after the interrupted reinstall failed: {out}");
+    assert_ne!(out, "Cleared", "self-heal forgot a plugin that only WE had uninstalled");
+    assert!(env.registry().contains("ez-fixture-plugin@"), "the plugin was never reinstalled:\n{}", env.registry());
+    assert!(env.staged_command().contains(EDIT_MARKER), "the repair landed the old tree");
+
+    // And it settles: no reinstall on the pass after that.
+    let after = env.calls();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "the settling heal failed: {out}");
+    assert_eq!(out, "NoOp", "a repaired install must converge to a no-op");
+    assert_eq!(count_calls(&env.calls(), "plugin uninstall"), count_calls(&after, "plugin uninstall"));
+}
+
+#[test]
+fn a_path_source_that_vanished_stays_a_no_op_instead_of_failing_every_session() {
+    // Reading the source tree to hash it puts a new failure on the healthy path: a
+    // `--path` checkout that moved or was reaped. There is no drift to detect without
+    // the tree, which is not the same as drift, and a session-start heal that reds
+    // forever on a converged install is worse than the staleness it was added to catch.
+    let env = Env::new("gone");
+
+    let (ok, out) = env.setup();
+    assert!(ok, "first setup failed: {out}");
+
+    fs::remove_dir_all(&env.src).unwrap();
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal must survive a source tree that went away: {out}");
+    assert_eq!(out, "NoOp", "a converged install whose source vanished has nothing to repair, got {out}");
+}
+
+#[test]
+fn a_re_enable_still_lands_a_same_version_tree_edit() {
+    // The re-enable arm used to return before the tree was compared, so `setup` on a
+    // disabled install reported `Repaired` for a pass that left the box on its old
+    // bytes — a success report that is not one, and the task's own verify step fails
+    // in that state.
+    let env = Env::new("disabled");
+
+    let (ok, out) = env.setup();
+    assert!(ok, "first setup failed: {out}");
+
+    let original = fs::read_to_string(env.source_command()).unwrap();
+    fs::write(env.source_command(), format!("{original}\n{EDIT_MARKER}\n")).unwrap();
+    let disable = Command::new(Path::new(BIN).parent().unwrap().join("fake_claude"))
+        .args(["plugin", "disable", "ez-fixture-plugin@ez-fixture-plugin"])
+        .env("CLAUDE_CONFIG_DIR", &env.cfg)
+        .env("HOME", &env.root)
+        .status()
+        .unwrap();
+    assert!(disable.success(), "seeding the disabled state failed");
+
+    let (ok, out) = env.setup();
+    assert!(ok, "setup on a disabled install failed: {out}");
+    assert_eq!(out, "Repaired", "a re-enable is a repair");
+    assert!(
+        env.staged_command().contains(EDIT_MARKER),
+        "setup reported a repair while leaving the box on its old tree:\n{}",
+        env.staged_command()
     );
 }

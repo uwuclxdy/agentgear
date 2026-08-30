@@ -73,6 +73,17 @@ pub(crate) struct Marker {
     /// the second converges once and records what it handed over.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree_hash: Option<String>,
+    /// Set while a backend is between the two halves of a reinstall (the only
+    /// sequence that re-copies a tree into a harness at an unchanged version), and
+    /// cleared by the pass that completes one.
+    ///
+    /// It is what separates "the user uninstalled this" from "we uninstalled it and
+    /// never got it back": both leave a marker beside an absent plugin, and self_heal
+    /// forgets the first on sight. A `plugin install` that fails, or a SessionStart
+    /// hook killed between the calls, would otherwise end as a permanent uninstall
+    /// that every later session reads as the user's own choice.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reinstalling: bool,
 }
 
 fn source_mode(source: &Source) -> &'static str {
@@ -126,6 +137,7 @@ fn base_marker(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str) -> 
         statusline_original: None,
         statusline_command: None,
         tree_hash: None,
+        reinstalling: false,
     }
 }
 
@@ -148,6 +160,8 @@ pub(crate) fn write(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str
     // rename reads our own value as foreign again. The tree hash is the same shape: the
     // reconcile that converged the harness records it, and dropping it here would make
     // every pass re-converge a tree the harness already holds.
+    // `reinstalling` is deliberately NOT carried: this runs only after a backend's whole
+    // reconcile succeeded, which is exactly the state that ends one.
     let previous = read(plugin, scope, agent)?;
     marker.statusline_original = previous.as_ref().and_then(|m| m.statusline_original.clone());
     marker.statusline_command = previous.as_ref().and_then(|m| m.statusline_command.clone());
@@ -178,12 +192,26 @@ pub(crate) fn record_statusline_command(plugin: &Plugin, scope: &Scope, source: 
 }
 }
 
-/// Record the materialized tree hash this agent's harness now holds, after the CLI
-/// call that handed the tree over returned. Recording it before that would claim a
-/// convergence a failed install never made, and the next pass would skip the repair.
+/// Mark this agent as being between the two halves of a reinstall, BEFORE the uninstall
+/// runs. Its own write has to land first: what it defends against is the process never
+/// reaching the second half.
 #[cfg(any(feature = "claude", feature = "copilot-cli"))]
-pub(crate) fn record_tree_hash(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str, tree_hash: &str) -> Result<()> {
-    amend(plugin, scope, source, agent, |marker| marker.tree_hash = Some(tree_hash.to_string()))
+pub(crate) fn begin_reinstall(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str) -> Result<()> {
+    amend(plugin, scope, source, agent, |marker| marker.reinstalling = true)
+}
+
+/// Record what this agent's harness now holds, after the CLI call that handed the tree
+/// over returned: the tree hash where there is a local tree, and in every case the end
+/// of a reinstall. Recording either before that would claim a convergence a failed
+/// install never made, and the next pass would skip the repair.
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
+pub(crate) fn record_converged(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str, tree_hash: Option<&str>) -> Result<()> {
+    amend(plugin, scope, source, agent, |marker| {
+        if let Some(hash) = tree_hash {
+            marker.tree_hash = Some(hash.to_string());
+        }
+        marker.reinstalling = false;
+    })
 }
 
 crate::agents::cfg_statusline_backends! {

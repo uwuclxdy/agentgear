@@ -102,8 +102,15 @@ impl AgentBackend for CopilotCliBackend {
         // version-comparable embedded/path install; `plugin list` has no
         // install-path/enabled column, so there is no `Disabled` / files-gone state.
         let cli = CopilotCli::locate()?;
-        let tree_current = tree_is_current(plugin, scope, staged_tree_hash(plugin, source)?.as_deref())?;
-        let registry = classify(source, find_plugin(&cli, plugin)?.as_ref(), plugin.version, tree_current);
+        let entry = find_plugin(&cli, plugin)?;
+        // Absent settles it before the tree is read: a plugin this harness never had is
+        // nothing to compare a tree against, and hashing one here would spend a session
+        // start on a harness with nothing of ours in it.
+        if entry.is_none() {
+            return Ok(BackendState::Absent);
+        }
+        let tree_current = tree_is_current(plugin, scope, staged_tree_hash(plugin, source).as_deref())?;
+        let registry = classify(source, entry.as_ref(), plugin.version, tree_current);
         if matches!(registry, BackendState::Absent) {
             return Ok(BackendState::Absent);
         }
@@ -200,10 +207,10 @@ fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcom
     let id = plugin.id();
 
     // The tree this pass would stage, hashed before anything is written: copilot copies
-    // the tree into `~/.copilot/installed-plugins/` at install time and never re-reads
-    // it, so an edited tree at an unchanged version reaches copilot only through a
-    // reinstall.
-    let staged = staged_tree_hash(plugin, &desired.source)?;
+    // it into `~/.copilot/installed-plugins/<mkt>/<plugin>/` at install time and re-reads
+    // THAT COPY every session, never the staged tree it was made from, so an edit at an
+    // unchanged version reaches copilot only when the copy is rewritten.
+    let staged = staged_tree_hash(plugin, &desired.source);
     let tree_current = tree_is_current(plugin, scope, staged.as_deref())?;
 
     // The registry half first, exactly as claude splits it: `PresentAction::Frozen`
@@ -241,6 +248,11 @@ fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcom
                 // unchanged version has nothing to compare and is not proven to re-copy.
                 cli.ensure_min_version()?;
                 ensure_marketplace(&cli, plugin, &desired.source)?;
+                // Marked before the uninstall, never after: a failed `plugin install` or
+                // a SessionStart hook killed between the two calls otherwise leaves a
+                // marker beside an absent plugin, which self_heal reads as the user's own
+                // uninstall and forgets for good.
+                stamp::begin_reinstall(plugin, scope, &desired.source, CopilotCliBackend.id())?;
                 plugin_uninstall(&cli, &id)?;
                 plugin_install(&cli, &id)?;
                 verify_present(&cli, plugin)?;
@@ -266,7 +278,7 @@ fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcom
 /// so a re-materialize needs no re-add: the registered marketplace resolves through the
 /// pointer to whatever was staged last. Handing that tree to the plugin registry is a
 /// separate step (`PresentAction::Update`/`Refresh`), since copilot's install copy is
-/// written once and never re-read.
+/// written once and re-read from there on, never refreshed from the staged tree.
 ///
 /// Ceiling: an install predating client-scoping sits on a plain `current` this code
 /// no longer writes, and copilot exposes no marketplace update/remove to re-point it,
@@ -345,14 +357,21 @@ fn present_action(source: &Source, installed: Option<&str>, embedded: &str, tree
     }
 }
 
-/// The hash of the tree this reconcile would stage for copilot, or `None` for a github
-/// source — that one has no local tree, and copilot tracks the repo's default branch.
-fn staged_tree_hash(plugin: &Plugin, source: &Source) -> Result<Option<String>> {
+/// The hash of the tree this reconcile would stage for copilot.
+///
+/// `None` covers both "there is no local tree" (github, where copilot tracks the repo's
+/// default branch) and "the local tree cannot be read right now" — a `--path` checkout
+/// that moved, a reaped worktree, a zero-embed binary. Both mean no drift is DETECTABLE,
+/// never that the tree drifted: a healthy install whose source went away used to
+/// converge to a silent no-op, and turning that into a hard failure would red every
+/// session-start heal from then on. A source that must be read to converge still fails
+/// loudly the moment `ensure_marketplace` materializes from it.
+fn staged_tree_hash(plugin: &Plugin, source: &Source) -> Option<String> {
     let client = CopilotCliBackend.id();
     match source {
-        Source::Embedded => content_hash(TreeSource::Blob(plugin.blob()), client).map(Some),
-        Source::Path(p) => content_hash(TreeSource::Dir(p), client).map(Some),
-        Source::GitHub { .. } => Ok(None),
+        Source::Embedded => content_hash(TreeSource::Blob(plugin.blob()), client).ok(),
+        Source::Path(p) => content_hash(TreeSource::Dir(p), client).ok(),
+        Source::GitHub { .. } => None,
     }
 }
 
@@ -369,14 +388,12 @@ fn tree_is_current(plugin: &Plugin, scope: &Scope, staged: Option<&str>) -> Resu
     Ok(marker.and_then(|m| m.tree_hash).is_some_and(|recorded| recorded == staged))
 }
 
-/// Record the tree copilot now holds, after the call that handed it over succeeded. A
-/// github source records nothing: it has no local tree, and overwriting an earlier
-/// local record would hide the drift of a host switching back.
+/// Record the tree copilot now holds, after the call that handed it over succeeded, and
+/// end any reinstall this pass began. A github source records no hash — it has no local
+/// tree, and overwriting an earlier local record would hide the drift of a host
+/// switching back — but it still ends the reinstall.
 fn record_staged(plugin: &Plugin, desired: &Desired, scope: &Scope, staged: Option<&str>) -> Result<()> {
-    match staged {
-        Some(hash) => stamp::record_tree_hash(plugin, scope, &desired.source, CopilotCliBackend.id(), hash),
-        None => Ok(()),
-    }
+    stamp::record_converged(plugin, scope, &desired.source, CopilotCliBackend.id(), staged)
 }
 
 /// Classify presence + version into the self_heal state. github can't pin a ref, so

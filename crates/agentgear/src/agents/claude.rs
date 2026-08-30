@@ -100,7 +100,7 @@ impl AgentBackend for ClaudeBackend {
                 // install holds a newer binary's tree, which never matches our hash, so
                 // folding it in would spawn a reconcile every session for that no-op to
                 // throw away.
-                && (newer || tree_is_current(plugin, scope, staged_tree_hash(plugin, source)?.as_deref())?);
+                && (newer || tree_is_current(plugin, scope, staged_tree_hash(plugin, source).as_deref())?);
             if healthy { BackendState::Healthy } else { BackendState::NeedsRepair }
         } else {
             registry
@@ -240,7 +240,7 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
     // The tree this pass would stage, hashed before anything is written: CC copies the
     // tree into its own cache at install time and keys that cache on the plugin VERSION,
     // so an edited tree at an unchanged version reaches CC only through a reinstall.
-    let staged = staged_tree_hash(plugin, &desired.source)?;
+    let staged = staged_tree_hash(plugin, &desired.source);
 
     let Some(entry) = entry else {
         // Absent: full install.
@@ -252,6 +252,10 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
         return Ok(RegistryOutcome::Converged(Outcome::Installed));
     };
 
+    // Re-enabling does not return: a disabled entry can also be stale or holding an
+    // edited tree, and reporting `Repaired` off the enable alone would call a pass
+    // converged that left the box on the bytes it already had.
+    let mut re_enabled = false;
     if entry.enabled == Some(false) {
         // An explicit install/update honors the user's intent and re-enables (the
         // design says install flips enable state). self_heal/adopt never does.
@@ -260,7 +264,7 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
         }
         cli.ensure_min_version()?;
         plugin_enable(&cli, &id, scope)?;
-        return Ok(RegistryOutcome::Converged(Outcome::Repaired));
+        re_enabled = true;
     }
 
     let installed = entry.version.clone();
@@ -281,8 +285,9 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
 
     if structural_ok && !stale && tree_is_current(plugin, scope, staged.as_deref())? {
         // Healthy, monotonic-satisfied (installed == embedded), and serving the tree
-        // this binary ships.
-        return Ok(RegistryOutcome::Converged(Outcome::NoOp));
+        // this binary ships. A re-enable above is still a change, so it reports one.
+        let outcome = if re_enabled { Outcome::Repaired } else { Outcome::NoOp };
+        return Ok(RegistryOutcome::Converged(outcome));
     }
 
     cli.ensure_min_version()?;
@@ -298,6 +303,11 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
         // tree this binary no longer ships at a version that will never bump: clean
         // reinstall, the one sequence that re-copies a same-version tree into CC's
         // own cache (design § marketplace ground truth).
+        // Marked before the uninstall, never after: a failed `plugin install` or a
+        // SessionStart hook killed between the two calls otherwise leaves a marker
+        // beside an absent plugin, which self_heal reads as the user's own uninstall
+        // and forgets for good.
+        stamp::begin_reinstall(plugin, scope, &desired.source, ClaudeBackend.id())?;
         let _ = plugin_uninstall(&cli, &id, scope);
         plugin_install(&cli, &id, scope)?;
         verify_present(&cli, scope, plugin)?;
@@ -306,14 +316,21 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
     }
 }
 
-/// The hash of the tree this reconcile would stage for CC, or `None` for a github
-/// source — that one has no local tree, and CC tracks the pinned ref itself.
-fn staged_tree_hash(plugin: &Plugin, source: &Source) -> Result<Option<String>> {
+/// The hash of the tree this reconcile would stage for CC.
+///
+/// `None` covers both "there is no local tree" (github, which CC tracks by ref) and
+/// "the local tree cannot be read right now" — a `--path` checkout that moved, a
+/// reaped worktree, a zero-embed binary. Both mean no drift is DETECTABLE, never that
+/// the tree drifted: a healthy install whose source went away used to converge to a
+/// silent no-op, and turning that into a hard failure would red every session-start
+/// heal from then on. A source that must be read to converge still fails loudly the
+/// moment `ensure_marketplace` materializes from it.
+fn staged_tree_hash(plugin: &Plugin, source: &Source) -> Option<String> {
     let client = ClaudeBackend.id();
     match source {
-        Source::Embedded => content_hash(TreeSource::Blob(plugin.blob()), client).map(Some),
-        Source::Path(p) => content_hash(TreeSource::Dir(p), client).map(Some),
-        Source::GitHub { .. } => Ok(None),
+        Source::Embedded => content_hash(TreeSource::Blob(plugin.blob()), client).ok(),
+        Source::Path(p) => content_hash(TreeSource::Dir(p), client).ok(),
+        Source::GitHub { .. } => None,
     }
 }
 
@@ -330,14 +347,12 @@ fn tree_is_current(plugin: &Plugin, scope: &Scope, staged: Option<&str>) -> Resu
     Ok(marker.and_then(|m| m.tree_hash).is_some_and(|recorded| recorded == staged))
 }
 
-/// Record the tree CC now holds, after the call that handed it over succeeded. A
-/// github source records nothing: it has no local tree, and overwriting an earlier
-/// local record would hide the drift of a host switching back.
+/// Record the tree CC now holds, after the call that handed it over succeeded, and end
+/// any reinstall this pass began. A github source records no hash — it has no local
+/// tree, and overwriting an earlier local record would hide the drift of a host
+/// switching back — but it still ends the reinstall.
 fn record_staged(plugin: &Plugin, desired: &Desired, scope: &Scope, staged: Option<&str>) -> Result<()> {
-    match staged {
-        Some(hash) => stamp::record_tree_hash(plugin, scope, &desired.source, ClaudeBackend.id(), hash),
-        None => Ok(()),
-    }
+    stamp::record_converged(plugin, scope, &desired.source, ClaudeBackend.id(), staged)
 }
 
 /// Embedded/path: (re)materialize so `current@claude` is fresh, then add-if-absent /

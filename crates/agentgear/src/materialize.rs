@@ -135,9 +135,15 @@ const VERSION_DIR_HASH_LEN: usize = 16;
 /// crash-only leak the `.tmp.<rand>` dirs are.
 ///
 /// Scoped hard: only `<version>@<client>` (what pre-content-keying binaries wrote) and
-/// `<version>-<16 hex>@<client>`. A pre-release version is a prefix of nothing here —
-/// `0.1.0` never matches `0.1.0-rc.1-<hash>@<client>`, whose remainder is not 16 hex
-/// chars — and another version's dirs are left alone, so a rollback still finds its tree.
+/// `<version>-<16 hex>@<client>`. Another version's dirs are left alone, so a rollback
+/// still finds its tree: `0.1.0` does not match `0.1.0-rc.1-<hash>@<client>`, whose
+/// remainder is longer than one hash.
+///
+/// One collision survives that bound and is accepted: a version whose pre-release
+/// identifier is itself 16 hex chars (`0.1.0-abcdef0123456789`) writes a LEGACY dir a
+/// `0.1.0` prune cannot tell from its own superseded variant. Nothing in the name can
+/// separate the two. Deleting it costs a coexisting older binary a dangling pointer that
+/// its next heal re-points, and the input needs a hand-written 16-hex pre-release.
 #[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn prune_superseded(versions: &Path, version: &str, client_id: &str, keep: &str) {
     let suffix = format!("@{client_id}");

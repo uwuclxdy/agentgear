@@ -11,6 +11,7 @@
 //! | absent | Absent | no-op |
 //! | absent | Healthy | adopt: reconcile + write marker (no-op maps to `Adopted`) |
 //! | absent | Disabled/NeedsRepair | reconcile + write marker (its own outcome) |
+//! | present| Absent, marker mid-reinstall | reconcile + write marker (our own uninstall never finished) |
 //! | present| Absent | clear marker, no-op (never resurrect) |
 //! | present| Disabled | no-op (never re-enable) |
 //! | present| Healthy | no-op |
@@ -73,7 +74,8 @@ fn heal_status(plugin: &Plugin, source: &Source, scope: &Scope, id: &'static str
     if matches!(resolved_source, Source::GitHub { .. }) && !backend.capabilities().plugins {
         return AgentStatus::Skipped(SkipReason::SourceUnsupported);
     }
-    match heal_agent(&*backend, plugin, resolved_source, scope, marker.is_some(), id == "claude") {
+    let interrupted = marker.as_ref().is_some_and(|m| m.reinstalling);
+    match heal_agent(&*backend, plugin, resolved_source, scope, marker.is_some(), interrupted, id == "claude") {
         Ok(outcome) => AgentStatus::Converged(outcome),
         Err(e) => AgentStatus::Failed(e.to_string()),
     }
@@ -85,7 +87,8 @@ fn heal_status(plugin: &Plugin, source: &Source, scope: &Scope, id: &'static str
 /// `is_claude` gates the CC-only restart flag; convergence delegates to the
 /// backend's `reconcile`.
 fn heal_agent(
-    backend: &dyn AgentBackend, plugin: &Plugin, resolved_source: Source, scope: &Scope, has_marker: bool, is_claude: bool,
+    backend: &dyn AgentBackend, plugin: &Plugin, resolved_source: Source, scope: &Scope, has_marker: bool, interrupted: bool,
+    is_claude: bool,
 ) -> Result<Outcome> {
     // Probe against the SAME source `reconcile` (below) will render from, so a
     // `--path` install whose tree differs from the embedded blob does not read as
@@ -119,6 +122,19 @@ fn heal_agent(
                 let _ = restart::clear(plugin);
             }
             let outcome = backend.reconcile(plugin, &desired, scope)?;
+            stamp::write(plugin, scope, &desired.source, backend.id())?;
+            Ok(outcome)
+        }
+
+        // A reinstall this crate began and never finished: the plugin is absent because
+        // WE removed it, so the clean-uninstall arm below would read our own interrupted
+        // write as the user's choice and forget it for good. Repair instead, and let a
+        // repair that fails again stay loud rather than settling into a no-op.
+        (true, BackendState::Absent) if interrupted => {
+            let outcome = backend.reconcile(plugin, &desired, scope)?;
+            if is_claude && outcome != Outcome::NoOp {
+                let _ = restart::set(plugin);
+            }
             stamp::write(plugin, scope, &desired.source, backend.id())?;
             Ok(outcome)
         }

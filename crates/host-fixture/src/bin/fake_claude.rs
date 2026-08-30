@@ -18,7 +18,9 @@
 //!
 //! Every invocation is also appended to `<config-dir>/fake-claude-calls.log`, one
 //! line per call, for the tests whose subject is which calls ran rather than what the
-//! registry ended up holding.
+//! registry ended up holding. `FAKE_CLAUDE_FAIL_INSTALL` in the environment makes
+//! `plugin install` fail, which is the only way a test reaches a lifecycle that
+//! uninstalled and never got the plugin back.
 //!
 //! State lives in `<config-dir>/fake-claude-state.json`, where `<config-dir>` is
 //! `CLAUDE_CONFIG_DIR` (else `$HOME/.claude`). An empty `CLAUDE_CONFIG_DIR` resolves
@@ -44,6 +46,10 @@ const VERSION_LINE: &str = "2.1.196 (Claude Code)";
 
 /// The state file's name, joined onto whatever `resolve_config_dir` returns.
 const STATE_FILENAME: &str = "fake-claude-state.json";
+
+/// Set in a child's env to make `plugin install` fail, for the tests whose subject is
+/// what a half-completed reinstall leaves behind.
+const FAIL_INSTALL_VAR: &str = "FAKE_CLAUDE_FAIL_INSTALL";
 
 /// One line per invocation, beside the state file. The registry alone cannot answer
 /// "did the backend reinstall?" — an uninstall + install of the same id leaves exactly
@@ -145,6 +151,13 @@ fn marketplace(argv: &[&str]) -> ExitCode {
 /// registered — the one ordering constraint the backend's `ensure_marketplace` step
 /// exists to satisfy, so the double must not let a regression there pass.
 fn install(id: &str) -> ExitCode {
+    // The one injectable failure: a lifecycle whose install half fails is otherwise
+    // unreachable from a test, and it is the half that leaves the registry empty
+    // after the backend's own uninstall has already run.
+    if std::env::var_os(FAIL_INSTALL_VAR).is_some() {
+        eprintln!("fake-claude: refusing to install `{id}` ({FAIL_INSTALL_VAR} is set)");
+        return ExitCode::FAILURE;
+    }
     let Some((_, wanted)) = id.split_once('@') else {
         eprintln!("fake-claude: `{id}` is not <plugin>@<marketplace>");
         return ExitCode::FAILURE;
