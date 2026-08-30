@@ -83,7 +83,7 @@ Five fields agentgear reads itself. The rest of the manifest is passed to Claude
 agentgear: plugin.json version `0.1.0` != CARGO_PKG_VERSION `0.2.0`; bump Cargo.toml and plugin.json together (CC caches on version, so a mismatch ships a silent no-op)
 ```
 
-Claude Code keys its plugin cache on that version. Shipping changed tree content under a version already installed does nothing, and the CLI reports "already at latest" either way, so the guard is the only thing that catches it. Bump both files in the same commit.
+Claude Code keys its plugin cache on that version, and its own `plugin update` reports "already at latest" for changed tree content under a version already installed. agentgear reinstalls in that case, so the content still lands; the version remains the pin for the release tag, a GitHub `ref`, and the never-downgrade comparison, which is what the guard protects. Bump both files in the same commit.
 
 ## What is parsed from where
 

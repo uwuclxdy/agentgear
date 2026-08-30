@@ -22,12 +22,12 @@ The plugin tree ships as a compressed `.tar.br` blob baked into the binary (a pu
 
 ```text
 ~/.local/share/<name>/
-  versions/<version>@claude/        full tree + generated .claude-plugin/marketplace.json, ${AGENTGEAR_CLIENT} substituted for "claude"
-  current@claude -> versions/<version>@claude     symlink (unix) / junction (windows)
-  markers/<hash>                    per-(plugin, scope, project) stamp
+  versions/<version>-<hash>@claude/   full tree + generated .claude-plugin/marketplace.json, ${AGENTGEAR_CLIENT} substituted for "claude"
+  current@claude -> versions/<version>-<hash>@claude     symlink (unix) / junction (windows)
+  markers/<hash>                      per-(plugin, scope, project) stamp
 ```
 
-The tree is written to a temp sibling and fsynced, then renamed onto the versioned target, which is created once so a rename never lands on a non-empty directory. `current@claude` is flipped by renaming a fresh pointer over it. A crash mid-materialize leaves the previous `current@claude` intact. An existing version dir is reused without re-decompressing. `marketplace add` points at `current@claude`, which Claude Code copies into its own cache keyed by version. The client scoping keeps Claude Code and copilot-cli from colliding on one shared dir, since both copy the tree verbatim and each needs its own `${AGENTGEAR_CLIENT}` substitution.
+The tree is written to a temp sibling and fsynced, then renamed onto the target, which is created once so a rename never lands on a non-empty directory. `current@claude` is flipped by renaming a fresh pointer over it. A crash mid-materialize leaves the previous `current@claude` intact. The directory name carries a hash of the tree's own bytes, so an unchanged tree is reused as-is and a tree edited at an unchanged plugin version still lands in its own directory and gets the pointer; the version's superseded directories are then pruned, and other versions are kept. `marketplace add` points at `current@claude`, which Claude Code copies into its own cache keyed by version. A same-version tree change is therefore handed back to the CLI as an uninstall + install, the only sequence that replaces that copy. The client scoping keeps Claude Code and copilot-cli from colliding on one shared dir, since both copy the tree verbatim and each needs its own `${AGENTGEAR_CLIENT}` substitution.
 
 ## Self-heal state table
 
@@ -40,8 +40,8 @@ The hook ships inside the plugin, so `self_heal` only ever runs on an install th
 | absent | present, broken or disabled | adopt: repair a break (a disable stays disabled), write the marker |
 | present | absent (clean uninstall) | clear the marker, no-op (do not resurrect) |
 | present | disabled | no-op (never re-enable) |
-| present | broken or stale | repair or update |
-| present | healthy and current | no-op |
+| present | broken, stale, or serving a tree the binary no longer ships | repair or update |
+| present | healthy, current, and serving the binary's own tree | no-op |
 
 Two invariants sit on top:
 
@@ -52,7 +52,7 @@ Two invariants sit on top:
 
 An out-of-band `setup update` re-materializes the plugin into Claude Code's cache and bumps the version, but the running session loaded the old plugin at session start. Claude Code does not hot-reload plugin hooks, so the session stays stale until the user runs `/reload-plugins` or restarts. A presence-only flag at `<data_root>/restart-pending` bridges that gap so the model can relay it.
 
-`update()` and `self_heal()`'s repair branch set the flag when the reconcile changed something (a same-version re-run sets nothing); `install()` never sets it. Every other `self_heal` branch that touches Claude Code clears it: healthy, adopt, and the marker-clear after a clean uninstall all mean the running session is not stale. The flag is advisory: a write or clear failure is swallowed, so it can never fail a lifecycle op that otherwise succeeded. A host `UserPromptSubmit` hook reads it through `PluginHost::restart_pending()` (the notice, or `None`) and prints the notice as plain stdout; the `SessionStart → self_heal` hook clears it. Ship the `UserPromptSubmit` hook from your first release, since it fires from whatever version the running session has loaded.
+`update()` and `self_heal()`'s repair branch set the flag when the reconcile changed something, a same-version run whose plugin tree changed included; `install()` never sets it. Every other `self_heal` branch that touches Claude Code clears it: healthy, adopt, and the marker-clear after a clean uninstall all mean the running session is not stale. The flag is advisory: a write or clear failure is swallowed, so it can never fail a lifecycle op that otherwise succeeded. A host `UserPromptSubmit` hook reads it through `PluginHost::restart_pending()` (the notice, or `None`) and prints the notice as plain stdout; the `SessionStart → self_heal` hook clears it. Ship the `UserPromptSubmit` hook from your first release, since it fires from whatever version the running session has loaded.
 
 ## Concurrency
 
@@ -60,4 +60,4 @@ Every consumer of this crate shares one `flock` at a well-known path, held aroun
 
 ## Versioning
 
-Claude Code caches installed plugins keyed on the `plugin.json` version, so pushing a change without a bump is a silent no-op for installed users. The version lives only in `plugin.json`, equal to `CARGO_PKG_VERSION`, enforced by the `build.rs` guard. The crate never writes a version into the generated marketplace entry.
+Claude Code caches installed plugins keyed on the `plugin.json` version and never re-copies a tree under a version it already holds. agentgear covers that itself: a tree whose bytes changed is re-staged and handed back to the CLI as an uninstall + install, so a no-bump change still reaches installed users. The version stays a pin for everything else (the release tag, a GitHub `ref`, the never-downgrade comparison), lives only in `plugin.json`, equals `CARGO_PKG_VERSION`, and is enforced by the `build.rs` guard. The crate never writes a version into the generated marketplace entry.

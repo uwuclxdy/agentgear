@@ -38,7 +38,8 @@ $ mytool doctor
 - **Self-heal that respects the user.** A SessionStart hook repairs a broken install without overriding a deliberate choice: it never resurrects an uninstall, re-enables a disable, or downgrades a newer install.
 - **Tells the model when to reload.** After an out-of-band `setup update`, a `UserPromptSubmit` hook surfaces a restart-pending flag so the model tells the user to run `/reload-plugins`; the next `self_heal` clears it once the new version is loaded.
 - **Atomic materialize.** The plugin tree ships as a compressed blob (a pure-Rust brotli archive, roughly a quarter of the raw text size). It decompresses into a content-keyed versioned directory with an atomic pointer flip, so a crash mid-install leaves the previous state intact.
-- **Compile-time version guard.** A `build.rs` helper fails the build when `plugin.json` and `CARGO_PKG_VERSION` disagree, because Claude Code caches on the plugin version and a no-bump change is a silent no-op.
+- **A changed tree lands even without a version bump.** Claude Code and copilot both key their plugin cache on the version and never re-copy under one they already hold. The directory a tree stages into is keyed on the tree's own bytes, and each backend compares that against what it last handed its harness, so an edited plugin reaches a box on its next session instead of waiting for a release.
+- **Compile-time version guard.** A `build.rs` helper fails the build when `plugin.json` and `CARGO_PKG_VERSION` disagree, keeping the version usable as a pin for the release tag, a GitHub `ref`, and the never-downgrade comparison.
 
 ## How it works
 
