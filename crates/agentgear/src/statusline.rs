@@ -1,25 +1,18 @@
-//! The host-owned status-line surface: the [`StatusLineDecl`] a host declares
-//! through `#[plugin(statusline_fn = ...)]`, plus the runtime helpers its own
-//! status-line subcommand calls.
+//! The runtime helpers a host's own status-line print subcommand composes with.
 //!
-//! agentgear never synthesizes a shell script. A backend writes the declared
-//! command into the harness's own single status-line slot, and the host binary
-//! that command names does the rendering — so the compose step (host rows first,
-//! then whatever the user already had) happens inside the host, which is what
-//! [`user_original`] and [`compose`] are for.
+//! agentgear no longer writes any harness's status-line slot: the automatic wiring
+//! (the host declaration, the per-harness slot renderers, the stash-and-restore) is
+//! retired. What remains is the render half — the host prints its own rows, then the
+//! rows of whatever status line the user already had ([`user_original`] +
+//! [`compose`]). A user who wants the host's line in their harness wires the print
+//! subcommand into the harness config manually, and their own pre-existing line runs
+//! natively beside it through that config — nothing is displaced, so nothing is
+//! stashed anymore.
 //!
-//! # Two hosts on one machine
-//!
-//! The slot is strictly single-value and last-writer-wins. Two agentgear hosts
-//! that both declare a status line therefore stack: B installs over A and stashes
-//! A's command as "the user's original", so uninstalling A and then B restores A's
-//! command rather than the user's true original. Accepted and unguarded — a guard
-//! would need a cross-host registry agentgear deliberately does not own.
-//!
-//! The spawn-depth sentinel that bounds a self-re-entering stash (see
-//! [`is_own_command`]) costs this case its DEEPEST row: B runs A, A's own stash is the
-//! user's true original, and that one is refused a level down. Same position as above —
-//! the worst case here is a missing row.
+//! The user's original row [`user_original`] returns comes from a legacy stamp
+//! marker: only pre-retirement installs stashed one. Every marker written today
+//! carries no stash, so the compose step contributes nothing on a fresh install and
+//! the host's own rows render alone.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -49,26 +42,12 @@ const MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
 /// set. Only presence is read; the value carries nothing beyond being non-empty.
 const NESTED_RENDER_VAR: &str = "AGENTGEAR_STATUSLINE_NESTED";
 
-/// A host-declared status line: one shell command whose stdout is the rendered
-/// bar (line-oriented — each line is one row), plus the harness's optional padding
-/// knob.
+/// One status-line command this crate (or a legacy stamp marker) knows about: the
+/// shell command whose stdout is the rendered bar (line-oriented — each line is one
+/// row), plus the harness's optional padding knob.
 ///
 /// Deliberately open (no `#[non_exhaustive]`): a host constructs one directly, and
 /// `..Default::default()` keeps working as fields are added.
-///
-/// # Examples
-///
-/// ```
-/// use agentgear::StatusLineDecl;
-///
-/// // `${AGENTGEAR_CLIENT}` expands to each backend's own client id on write.
-/// let decl = StatusLineDecl::new("mytool statusline --client ${AGENTGEAR_CLIENT}").with_padding(0);
-/// assert_eq!(decl.command, "mytool statusline --client ${AGENTGEAR_CLIENT}");
-/// assert_eq!(decl.padding, Some(0));
-///
-/// let bare = StatusLineDecl::new("mytool statusline");
-/// assert_eq!(bare.padding, None);
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StatusLineDecl {
     /// The shell command the harness runs. It receives the session JSON on stdin
@@ -80,17 +59,6 @@ pub struct StatusLineDecl {
 }
 
 impl StatusLineDecl {
-    /// A declaration running `command`, with no padding override.
-    pub fn new(command: impl Into<String>) -> Self {
-        Self { command: command.into(), padding: None }
-    }
-
-    /// Set the harness padding.
-    pub fn with_padding(mut self, padding: u8) -> Self {
-        self.padding = Some(padding);
-        self
-    }
-
     /// Read a declaration back out of a stashed raw value. `None` when the value
     /// carries no string `command` — the stash is kept verbatim in whatever shape
     /// the harness used, so a shape we cannot run is simply not run.
@@ -101,23 +69,21 @@ impl StatusLineDecl {
     }
 }
 
-/// The status line this machine's user had before `client`'s backend wrote the
-/// host's own, or `None` when the slot was empty (or nothing is installed).
+/// The status line this machine's user had before this crate's retired automatic
+/// wiring displaced it, or `None` when nothing was stashed (or nothing is
+/// installed). Only markers written by pre-retirement binaries carry a stash.
 ///
 /// Scope resolution is project-then-user: with `cwd` set, the marker for that
 /// project scope is consulted first and the user-scope marker is the fallback, so a
 /// project install shadows the user one exactly as the harness's own precedence
-/// does. `client` is the backend id the host was invoked for — a plugin's
-/// `${AGENTGEAR_CLIENT}` token expands to it, so a host reads it straight off its
-/// own `--client` argument.
+/// does. `client` is the backend id the host was invoked for — a host reads it
+/// straight off its own `--client` argument.
 ///
-/// A stash naming the command the host declares RIGHT NOW reads as `None`, so the
-/// common poisoned stash does not re-enter this binary from inside itself. A stash
-/// naming a command the host declared in an *earlier* release is not covered here and is
-/// still returned: this reader answers what the marker HOLDS, and a host may ask for
+/// A stashed command that would re-enter the host binary from inside itself is not
+/// filtered here: this reader answers what the marker HOLDS, and a host may ask for
 /// reasons that never spawn anything, so a depth guard here would make it lie. The
-/// re-entry that opens is bounded at the spawn boundary instead, written out on this
-/// module's `is_own_command`.
+/// re-entry is bounded at the spawn boundary instead ([`NESTED_RENDER_VAR`] in
+/// [`run_with_timeout`]).
 ///
 /// Ceiling on the project lookup: `cwd` is matched against the project path the
 /// install was scoped to, EXACTLY. A session started in a subdirectory of that root
@@ -194,47 +160,7 @@ fn lookup_scopes(cwd: Option<&Path>) -> Vec<Scope> {
 }
 
 fn stashed(plugin: &Plugin, scope: &Scope, client: &str) -> Result<Option<StatusLineDecl>> {
-    let ours = own_command(plugin, client);
-    Ok(crate::stamp::read(plugin, scope, client)?
-        .and_then(|m| m.statusline_original)
-        .as_ref()
-        .and_then(StatusLineDecl::from_value)
-        .filter(|decl| !is_own_command(decl, ours.as_deref())))
-}
-
-/// The command string a backend writes for `client`, `${AGENTGEAR_CLIENT}` expanded.
-fn own_command(plugin: &Plugin, client: &str) -> Option<String> {
-    plugin.statusline.as_ref().map(|decl| crate::components::expand_client(&decl.command, client))
-}
-
-/// Whether a stashed declaration names the host's OWN command.
-///
-/// Running one would re-enter the very binary the harness invoked, which reads the
-/// same stash and spawns again — unbounded, and re-entered on every turn the harness
-/// re-renders. A stash can only carry our command through a marker written by a
-/// binary whose ownership test was wrong, or by another process; either way the
-/// recovery is to drop the row, never to run it.
-///
-/// CEILING — this compares against the command declared NOW, so a stash carrying a
-/// command the host declared in an EARLIER release is still executed. Whenever that
-/// rename was additive (a flag added to the same subcommand, an argument reordered) the
-/// old string dispatches straight back into this binary's own status-line entrypoint,
-/// which calls `compose` -> [`user_original`] -> this same stash. No wider string compare
-/// closes it: a stash is verbatim harness JSON and carries no record of who wrote it, so
-/// nothing derivable from the current declaration spans an arbitrary rename.
-///
-/// [`NESTED_RENDER_VAR`] bounds it instead, read at the spawn boundary in
-/// [`run_with_timeout`]. The re-entered level renders the host's own rows and spawns
-/// nothing, so depth is capped at 1: the bar carries one duplicate row instead of a
-/// process chain that no level cancels (each owns a fresh [`USER_COMMAND_TIMEOUT`] and
-/// [`reap`] kills only its direct child). The duplicate row is the accepted outcome.
-///
-/// Reachable, not theoretical: an install stamped before `Marker::statusline_command`
-/// existed carries no ownership record, so the first renamed release reads its own
-/// value as foreign and stashes it — producing exactly the stash this guard then fails
-/// to recognise.
-fn is_own_command(stashed: &StatusLineDecl, ours: Option<&str>) -> bool {
-    ours == Some(stashed.command.as_str())
+    Ok(crate::stamp::read(plugin, scope, client)?.and_then(|m| m.statusline_original).as_ref().and_then(StatusLineDecl::from_value))
 }
 
 /// The session's working directory: Claude Code sends a top-level `cwd`, with

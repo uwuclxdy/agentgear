@@ -287,14 +287,6 @@ pub struct Capabilities {
     /// Host-authored always-loaded guidance written to the harness's native
     /// context channel (a dedicated instructions file + any registration).
     pub instructions: bool,
-    /// Manages the harness's status-line slot ([`PluginHost::statusline`]). Not
-    /// implied by `plugins`: the slot lives in the harness's own settings file, not
-    /// in a plugin tree, so a plugin-native backend still has to write it.
-    ///
-    /// Descriptive, like every other flag here: the fan-out does not read it. Each
-    /// backend decides for itself off `Plugin::statusline`, so this is what a host
-    /// reports in its own setup UI, not a gate.
-    pub statusline: bool,
     /// The scope ids this backend supports (e.g. `["user", "project"]`).
     pub scopes: &'static [&'static str],
 }
@@ -314,10 +306,6 @@ pub struct Plugin {
     /// Host-authored always-loaded guidance ([`PluginHost::instructions`]); each
     /// non-CC backend writes it to its native context channel. `None` writes nothing.
     pub instructions: Option<String>,
-    /// The status line the host owns ([`PluginHost::statusline`]); a backend with
-    /// [`Capabilities::statusline`] writes it into the harness's own single
-    /// status-line slot. `None` leaves every harness's slot alone.
-    pub statusline: Option<crate::statusline::StatusLineDecl>,
     /// The plugin tree baked in as a compressed `.tar.br` (empty when the derive's
     /// `embed` attr is off). Decompressed by `materialize` for [`Source::Embedded`].
     pub(crate) blob: &'static [u8],
@@ -331,7 +319,6 @@ impl std::fmt::Debug for Plugin {
             .field("version", &self.version)
             .field("agents", &self.agents)
             .field("instructions", &self.instructions)
-            .field("statusline", &self.statusline)
             .finish_non_exhaustive()
     }
 }
@@ -383,18 +370,6 @@ pub trait PluginHost {
         None
     }
 
-    /// The status line this host owns. A backend that declares
-    /// [`Capabilities::statusline`] writes it into its harness's single status-line
-    /// slot; the rest ignore it. `None` (the default) leaves every harness's slot
-    /// alone. A deriving host supplies it with `#[plugin(statusline_fn = <path>)]`,
-    /// the same override seam as [`instructions`](PluginHost::instructions).
-    ///
-    /// The declared command may carry `${AGENTGEAR_CLIENT}`; each backend expands it
-    /// to its own client id, so one declaration serves every harness.
-    fn statusline() -> Option<crate::statusline::StatusLineDecl> {
-        None
-    }
-
     /// The resolved [`Plugin`] descriptor built from this host's consts, passed to
     /// the backends. Rarely overridden.
     fn descriptor() -> Plugin {
@@ -404,7 +379,6 @@ pub trait PluginHost {
             version: Self::VERSION,
             agents: Self::AGENTS,
             instructions: Self::instructions(),
-            statusline: Self::statusline(),
             blob: Self::embedded_blob(),
         }
     }

@@ -88,7 +88,7 @@ plumbing it replaces. Delete in this order, verifying after each:
 | a hand-rolled tree materialize / diff-copy | agentgear's `materialize` (tree hashing, atomic versioned-dir flip) |
 | manual `SessionStart` self-heal logic | point the existing hook at `self_heal()` |
 | a hand-maintained CC-version floor check | agentgear gates on `claude --version` before any mutating call |
-| a hand-written `statusLine` writer in `~/.claude/settings.json` (refuse/force flags on a foreign value) | `#[plugin(statusline_fn = <path>)]`; agentgear writes the slot, stashes the user's value, restores it on uninstall |
+| a hand-written `statusLine` writer in `~/.claude/settings.json` (refuse/force flags on a foreign value) | delete it; agentgear writes no status-line slot anymore — a host ships a `statusline` print subcommand and the user wires it manually |
 
 nyactx is the worked example: adopting the derive deleted ~1,100 net lines (20 per-client
 descriptor files plus a parse-and-merge engine plus its tests), replaced by ~160 lines of
@@ -130,11 +130,10 @@ a surface reaches it.
 Check these against the target plugin before promising a full migration. Each is an open item in
 `docs/todo.md`; some in depth in `docs/fox-nyactx-integration.md`.
 
-- **statusLine is wired on every harness known to carry a slot; any other settings key is not.** On
-  CC this is no longer a gap but a migration step: declare the line with `statusline_fn` and delete
-  the hand-rolled `settings.json` writer (see the table above). One declaration reaches five
-  harnesses: `claude`, `copilot-cli` (user scope only), `qwen-code`, `antigravity-cli` (user scope
-  only), `droid`. Any *other* settings key outside the plugin tree is unmodeled: the components IR
+- **statusLine is no longer written by agentgear at all; any settings key is unmodeled.** The
+  automatic slot wiring (declaration, five slot backends, stash-and-restore) is retired: a host
+  ships a `statusline` print subcommand and the user wires it manually. Any settings key outside
+  the plugin tree is unmodeled: the components IR
   carries five surfaces (mcp servers, hooks, commands, agents, skills) and nothing else reaches a
   harness's own settings file.
 - **codex `notify` hooks / opencode hooks.** agentgear's codex backend writes `hooks.json`, which

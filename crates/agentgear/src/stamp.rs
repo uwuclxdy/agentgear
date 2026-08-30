@@ -34,34 +34,15 @@ pub(crate) struct Marker {
     /// toward `DEFAULT_SOURCE` on repair until a `setup --path` re-run refreshes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
-    /// The harness's own status-line value from before we overwrote it, kept as
-    /// raw JSON so any harness's shape round-trips losslessly. Absent when the slot
-    /// was empty at install time — `remove` then deletes the key outright instead of
-    /// restoring anything. Written by [`stash_statusline`] and carried forward by
-    /// every later [`write`]: the marker is rebuilt from scratch on each
-    /// install/update/self_heal, so without that carry an `update` between install
-    /// and uninstall would erase the user's original.
+    /// The harness's own status-line value from before this crate wrote the host's
+    /// one, kept as raw JSON so any harness's shape round-trips losslessly. Never
+    /// written anymore — the automatic slot wiring is retired — but markers written
+    /// by pre-retirement binaries still carry it, and [`statusline::user_original`]
+    /// still reads it so a host's print subcommand keeps composing the user's row.
+    /// Carried forward by every later [`write`] for the same reason: the marker is
+    /// rebuilt from scratch on each install/update/self_heal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub statusline_original: Option<serde_json::Value>,
-    /// The command string this agent's backend last wrote into the harness's slot,
-    /// `${AGENTGEAR_CLIENT}` already expanded. Ownership of the slot is otherwise
-    /// decided against the command the host declares *now*, so a release that renames
-    /// its own status-line subcommand would read its own previous value as foreign and
-    /// stash it over the user's real original. This is the record that keeps that
-    /// value ours across the rename.
-    ///
-    /// Absent for any install predating the field, which puts ownership back on the
-    /// current-command compare alone — the pre-existing behavior, rename hazard
-    /// included. Carried forward by every later [`write`] for the same reason
-    /// [`Self::statusline_original`] is: the marker is rebuilt from scratch on each
-    /// install/update/self_heal, and `reconcile` records this before that rebuild.
-    ///
-    /// Written by [`record_statusline_command`], and only once the settings write it
-    /// describes has actually landed — a refused write (an unparseable settings file)
-    /// must leave the previous record standing, because that one is still true of
-    /// what is in the slot.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub statusline_command: Option<String>,
     /// The materialized tree hash (`materialize::content_hash`) this agent's harness
     /// was last handed, written only once the CLI call that handed it over succeeded.
     /// A plugin-native backend copies the tree into its own cache keyed on the plugin
@@ -135,7 +116,6 @@ fn base_marker(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str) -> 
             Source::Embedded | Source::GitHub { .. } => None,
         },
         statusline_original: None,
-        statusline_command: None,
         tree_hash: None,
         reinstalling: false,
     }
@@ -152,44 +132,18 @@ fn write_marker(path: &std::path::Path, marker: &Marker) -> Result<()> {
 pub(crate) fn write(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str) -> Result<()> {
     let path = marker_path(plugin, scope, agent)?;
     let mut marker = base_marker(plugin, scope, source, agent);
-    // Every install/update/self_heal rebuilds the marker, so the fields a reconcile
-    // records have to be carried across explicitly. Without the stash carry the user's
-    // pre-existing status line is lost on the first re-write and uninstall has nothing
-    // to restore; without the command carry the record `reconcile` just wrote is erased
-    // by the `write` that follows it in the very same pass, and the next release's
-    // rename reads our own value as foreign again. The tree hash is the same shape: the
+    // Every install/update/self_heal rebuilds the marker, so fields recorded by a
+    // reconcile have to be carried across explicitly. The tree hash is that shape: the
     // reconcile that converged the harness records it, and dropping it here would make
-    // every pass re-converge a tree the harness already holds.
-    // `reinstalling` is deliberately NOT carried: this runs only after a backend's whole
-    // reconcile succeeded, which is exactly the state that ends one.
+    // every pass re-converge a tree the harness already holds. A legacy
+    // `statusline_original` stash rides along too, or the first rebuild would erase the
+    // only copy of a pre-retirement user's row that `statusline::user_original` still
+    // composes with. `reinstalling` is deliberately NOT carried: this runs only after
+    // a backend's whole reconcile succeeded, which is exactly the state that ends one.
     let previous = read(plugin, scope, agent)?;
     marker.statusline_original = previous.as_ref().and_then(|m| m.statusline_original.clone());
-    marker.statusline_command = previous.as_ref().and_then(|m| m.statusline_command.clone());
     marker.tree_hash = previous.and_then(|m| m.tree_hash);
     write_marker(&path, &marker)
-}
-
-crate::agents::cfg_statusline_backends! {
-/// Record `original` as the status-line value that was in the harness's settings
-/// before this agent's backend wrote the host's own.
-///
-/// Unconditional: whatever it is handed replaces any earlier stash, so NOT calling it
-/// is the only thing that preserves one. That is why `reconcile` settles ownership
-/// before it gets here and skips it entirely for an empty slot or a value already ours
-/// — an empty slot must not erase what the user had before we ever wrote (self_heal
-/// re-adding a line they deleted), and a value of ours is not theirs to record.
-pub(crate) fn stash_statusline(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str, original: serde_json::Value) -> Result<()> {
-    amend(plugin, scope, source, agent, |marker| marker.statusline_original = Some(original))
-}
-}
-
-crate::agents::cfg_statusline_backends! {
-/// Record `command` as the command string this agent's backend just wrote into the
-/// harness's status-line slot, so a later release that renames its own status-line
-/// subcommand still recognises the value as ours.
-pub(crate) fn record_statusline_command(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str, command: &str) -> Result<()> {
-    amend(plugin, scope, source, agent, |marker| marker.statusline_command = Some(command.to_string()))
-}
 }
 
 /// Mark this agent as being between the two halves of a reinstall, BEFORE the uninstall
@@ -214,16 +168,15 @@ pub(crate) fn record_converged(plugin: &Plugin, scope: &Scope, source: &Source, 
     })
 }
 
-crate::agents::cfg_statusline_backends! {
 /// Read-modify-write one field of this agent's marker, creating it when the reconcile
 /// that is amending it has not been stamped yet (the fan-out stamps only after a
 /// backend's whole reconcile succeeds).
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn amend(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str, edit: impl FnOnce(&mut Marker)) -> Result<()> {
     let path = marker_path(plugin, scope, agent)?;
     let mut marker = read(plugin, scope, agent)?.unwrap_or_else(|| base_marker(plugin, scope, source, agent));
     edit(&mut marker);
     write_marker(&path, &marker)
-}
 }
 
 pub(crate) fn clear(plugin: &Plugin, scope: &Scope, agent: &str) -> Result<()> {

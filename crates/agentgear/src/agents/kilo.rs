@@ -59,7 +59,6 @@ impl AgentBackend for KiloBackend {
             agents: true,
             skills: true,
             instructions: false,
-            statusline: false,
             scopes: &["user", "project"],
         }
     }

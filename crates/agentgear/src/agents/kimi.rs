@@ -62,7 +62,6 @@ impl AgentBackend for KimiBackend {
             agents: false,
             skills: true,
             instructions: false,
-            statusline: false,
             scopes: &["user"],
         }
     }

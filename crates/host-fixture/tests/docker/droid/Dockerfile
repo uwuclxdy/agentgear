@@ -14,15 +14,11 @@ RUN cargo build -p host-fixture --release
 
 # Stage 2: real droid CLI + the fixture binary; assert the lifecycle end-to-end.
 FROM debian:bookworm-slim
-# jq is here for the statusLine asserts only: this base has no json parser at all
-# (bookworm-slim ships perl-base but not JSON::PP), and a slot value must be parsed,
-# never grepped. Smallest real parser available — jq's closure downloads 0.4 MB (1.1 MB
-# on disk) against python3-minimal at 2.9 MB and perl-modules at 2.7 MB.
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl jq \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-# pin = the droid CLI version the exact statusLine JSON shape below was asserted against;
-# bump it alongside docs/harness/droid.md and re-check that assert. The vendor installer
+# pin = the droid CLI version this leg's asserts were last checked against; bump it
+# alongside docs/harness/droid.md. The vendor installer
 # (https://app.factory.ai/cli) hardcodes its own version and honours no env or argument
 # override, so there is nothing to pin THROUGH it: this fetches the versioned artifact the
 # script would have fetched, from the same URL, with the same sha256 sibling. Unpinned, an
@@ -83,16 +79,14 @@ export HOME=/tmp/droid-home
 BASE="$HOME/.factory"
 MCP="$BASE/mcp.json"
 HOOKS="$BASE/hooks.json"
-# The status-line slot lives in droid's own settings file, beside (not inside) the
-# mcp.json every other surface here writes.
+# droid's own settings file, beside (not inside) the mcp.json every other surface here
+# writes. Nothing this backend writes lives in it anymore (the automatic status-line
+# wiring is retired), so the whole file must survive every lifecycle op byte-identical.
 SETTINGS="$BASE/settings.json"
 COMMAND="$BASE/commands/ez-fixture-plugin-hello.md"
 DROID="$BASE/droids/ez-fixture-plugin-ez-helper.md"
 SKILL_DIR="$BASE/skills/ez-skill"
 SKILL="$SKILL_DIR/SKILL.md"
-# Passed as argv, not env, so `host_fixture` never inherits a variable this harness
-# invented. `${AGENTGEAR_CLIENT}` in the host declaration expands to the backend id.
-STATUSLINE_CMD="host_fixture statusline --client droid"
 mkdir -p "$BASE"
 
 # Seed a foreign mcp server + an unrelated key that must survive install/uninstall,
@@ -101,14 +95,15 @@ cat > "$MCP" <<'JSON'
 { "telemetry": false, "mcpServers": { "theirs": { "command": "their-server", "args": [] } } }
 JSON
 
-# A key droid owns in its own settings file, seeded by hand: nothing auth-free makes
-# the CLI write this file (checked by md5 across `droid --version` in this image), so
-# there is no copilot-style two-writer coexistence to prove here. What it does prove is
-# that our whole-file rewrite (confedit::json_edit) merges beside a foreign key instead
-# of replacing the file.
+# A key droid owns in its own settings file plus a user status line, seeded by hand:
+# nothing auth-free makes the CLI write this file (checked by md5 across `droid
+# --version` in this image), so there is no copilot-style two-writer coexistence to
+# prove here. The seeded statusLine is the retired-slot contract: setup and uninstall
+# must both leave the whole file byte-identical.
 cat > "$SETTINGS" <<'JSON'
-{ "theirSetting": "keep me" }
+{ "theirSetting": "keep me", "statusLine": { "type": "command", "command": "their-line", "padding": 2 } }
 JSON
+cp "$SETTINGS" /tmp/settings-seed
 
 host_fixture setup --agent droid
 
@@ -123,38 +118,20 @@ if ! grep -q 'name: ez-fixture-plugin-ez-helper' "$DROID"; then echo "FAIL: cust
 if [ ! -f "$SKILL" ]; then echo "FAIL: translated skill SKILL.md missing"; exit 1; fi
 if ! grep -q 'x-agentgear' "$SKILL"; then echo "FAIL: skill ownership tag missing"; exit 1; fi
 
-# Run the real CLI BEFORE the slot assert, so the assert covers a droid that starts
-# writing settings.json as well as our own write. Auth-free and file-inert today (rc 0,
-# and a seeded settings.json comes back md5-identical), which is exactly the property
-# that would silently stop holding. Hard failure rather than best-effort: the build pins
-# this binary and already made it print its version, so a failure here is the CLI breaking
-# under the leg's own HOME, which is a result worth reding on.
+# Run the real CLI before the byte-identity assert, so the assert covers a droid that
+# starts writing settings.json as well as our own write. Auth-free and file-inert today
+# (rc 0, and a seeded settings.json comes back md5-identical), which is exactly the
+# property that would silently stop holding. Hard failure rather than best-effort: the
+# build pins this binary and already made it print its version, so a failure here is the
+# CLI breaking under the leg's own HOME, which is a result worth reding on.
 if ! out=$(droid --version 2>&1); then
   echo "FAIL: droid --version errored under the leg HOME: $out"; exit 1
 fi
 echo "droid --version ok: $out"
 
-# FILE assert, not native — droid gates model-facing work on FACTORY_API_KEY and
-# nothing auth-free renders a status line, so this proves only that the slot landed in
-# the right shape at the right path, not that droid displays it. Parsed rather than
-# grepped: a value at the wrong nesting depth passes any substring check, and the
-# `ez-fixture` greps above are blind to this key anyway (our command string says
-# `host_fixture`).
-#
-# maxRows is asserted like type/command: `compose` structurally emits two rows whenever
-# the user already had a status line, and droid is read to cap at 1 by default, so an
-# unset cap would clip off exactly the row that design exists to preserve. 3 is the
-# ceiling of its zod schema. Both of those come from the schema and the renderer clamp,
-# never from an observed render, so what this pins is the value agentgear writes, not a
-# proven display outcome (`droid.rs` STATUSLINE_MAX_ROWS carries the same caveat).
-jq -e --arg cmd "$STATUSLINE_CMD" '
-  (.statusLine | type) == "object"
-  and .statusLine.type == "command"
-  and .statusLine.command == $cmd
-  and .statusLine.padding == 0
-  and .statusLine.maxRows == 3
-  and .theirSetting == "keep me"
-' "$SETTINGS" >/dev/null || { echo "FAIL: statusLine after setup is wrong"; cat "$SETTINGS"; exit 1; }
+# Retired-slot contract: the seeded settings file, user statusLine included, must be
+# byte-identical after setup — nothing this backend writes lives in it anymore.
+cmp -s "$SETTINGS" /tmp/settings-seed || { echo "FAIL: settings.json changed across setup"; diff /tmp/settings-seed "$SETTINGS"; exit 1; }
 
 # No native second opinion on the config itself: `droid` gates on FACTORY_API_KEY for
 # model-facing work and documents no auth-free `mcp list`, so the file asserts above are
@@ -168,11 +145,8 @@ if [ -f "$COMMAND" ]; then echo "FAIL: command file survived uninstall"; exit 1;
 if [ -f "$DROID" ];   then echo "FAIL: custom droid file survived uninstall"; exit 1; fi
 if [ -d "$SKILL_DIR" ]; then echo "FAIL: skill dir survived uninstall"; exit 1; fi
 
-# Nothing was stashed (the container never had a pre-existing status line), so `remove`
-# deletes the key outright. `has` rather than a null check: a key left sitting at null
-# is a value droid would still read, not a removal.
-jq -e '(has("statusLine") | not) and .theirSetting == "keep me"' "$SETTINGS" >/dev/null \
-    || { echo "FAIL: statusLine after uninstall is wrong"; cat "$SETTINGS"; exit 1; }
+# Same byte-identity across uninstall.
+cmp -s "$SETTINGS" /tmp/settings-seed || { echo "FAIL: settings.json changed across uninstall"; diff /tmp/settings-seed "$SETTINGS"; exit 1; }
 
 echo "droid docker leg: OK"
 TEST

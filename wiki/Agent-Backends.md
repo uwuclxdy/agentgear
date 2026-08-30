@@ -19,11 +19,10 @@ pub enum BackendState { Absent, Healthy, Disabled, NeedsRepair }
 pub trait AgentBackend {
     fn id(&self) -> &'static str;
     fn detect(&self) -> bool;                                 // is this agent installed?
-    fn capabilities(&self) -> Capabilities;                   // plugins / mcp / hooks / statusline / scopes
+    fn capabilities(&self) -> Capabilities;                   // plugins / mcp / hooks / scopes
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState>;  // self_heal's input
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome>;
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome>;
-    fn forget(&self, plugin: &Plugin, scope: &Scope) -> Result<()> { Ok(()) }  // defaulted, see below
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport;
 }
 ```
@@ -43,13 +42,6 @@ backend defines what "converged" means:
 instead of dropping features silently. The trait is unsealed: an external crate can write an
 `AgentBackend` for an agent this crate does not ship.
 
-`forget` is the teardown counterpart to `remove`, and defaults to doing nothing — which is right
-for any backend whose writes are all config-merge, since `remove` already takes those back.
-Implement it when a backend writes into a file the **user** owns and the tool does not carry, the
-way all five [status line](Capability-Status-Line) backends write their slot. Such a write
-outlives the tool's registry and the tool binary itself, so uninstall calls `forget` on every path
-(an undetected tool included) before clearing agentgear's marker, and a failure keeps that marker
-rather than dropping the only copy of what the write displaced.
 
 ## Install models
 
@@ -59,10 +51,9 @@ Two shapes:
   (`claude plugin` / `copilot plugin`): materialize the embedded tree, add or update the
   marketplace source, install or update the plugin, read the result back through the CLI's own
   list command. Full mcp, hooks, commands, agents, and skills, since the tool copies the whole
-  tree itself, so there is no per-surface translation. Each has exactly one write outside that
-  model: a host-declared [status line](Capability-Status-Line) goes into the `statusLine` key of
-  the user's own `settings.json` (Claude Code's config dir, or `~/.copilot`), since no plugin tree
-  carries one. copilot-cli is user-scope only (no
+  tree itself, so there is no per-surface translation and no write outside that model (the one
+  former exception — a host-declared [status line](Capability-Status-Line) in the user's own
+  `settings.json` — is retired; users wire a line manually). copilot-cli is user-scope only (no
   `--scope` on the `copilot` CLI) and can't pin a GitHub ref (`owner/repo@ref` is misparsed; only
   the bare repo registers, tracking copilot's default branch). Claude Code details:
   [How It Works](How-It-Works).
@@ -94,7 +85,7 @@ reshapes one backend: nothing overrides how a backend renders (a different MCP c
 codex) or drops a surface for one backend (skipping hooks on cursor). Each backend writes what
 its target tool supports, gated by detection and the `${CLAUDE_PLUGIN_ROOT}` portability filter.
 
-`instructions_fn` and `statusline_fn` are the only method overrides the derive exposes, because it
+`instructions_fn` is the only method override the derive exposes, because it
 emits the sole `impl PluginHost`. For anything past the attributes, write `impl PluginHost` by hand. Every trait
 item is public: supply the five consts (`NAME`, `MARKETPLACE`, `VERSION`, `DEFAULT_SOURCE`,
 `AGENTS`) and `embedded_blob()`, and the lifecycle methods (`install`, `update`, `self_heal`,
@@ -127,7 +118,7 @@ in-crate backend by naming its id in the derive's `agents = [...]` list.
 The trait is unsealed: every method, `probe`, `reconcile`, `remove`, `report` included,
 is implementable from outside the crate, not only the read-only ones a thin wrapper could reach.
 `Capabilities` is a plain struct, so a field added to it is a breaking change for an external impl
-that constructs one — `statusline` is the first, and pre-1.0 the crate spends that rather than
+that constructs one — the retired `statusline` field was the first, and pre-1.0 the crate spent that rather than
 reshaping the struct.
 An external backend maps its own failures to `Error::Backend { agent, detail }` instead of
 borrowing an in-crate variant's meaning, builds `report()` from the now-`pub`

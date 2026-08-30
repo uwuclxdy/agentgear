@@ -5,17 +5,7 @@
 //! adapters give the contract real evidence, so external + in-crate backends both
 //! implement it. `probe` is the classification self_heal keys its marker table on.
 
-// `OsString`/`PathBuf`/`Error` are used only by the config-dir resolver below and its
-// tests, both gated to the two backends it was proven on: an unconditional import
-// here reds `unused_imports` under every OTHER single-feature build (`-D warnings`).
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
-use std::ffi::OsString;
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
-use std::path::PathBuf;
-
 use crate::doctor::DoctorReport;
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
-use crate::error::Error;
 use crate::error::Result;
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
@@ -110,43 +100,10 @@ macro_rules! cfg_config_backends {
 
 // Shared config-writing helpers, compiled only when a non-CC backend needs them.
 // `allow(dead_code)`: not every enabled backend uses every helper, so a single-
-// feature build leaves parts of the shared surface unreferenced.
-// `confedit` is the one shared helper the two PLUGIN-NATIVE backends need too: a
-// host-owned status-line slot lives in the user's own settings file (CC's
-// `settings.json`, copilot's `$COPILOT_HOME/settings.json`), so each of those
-// backends read-modify-writes exactly one config file on top of its CLI
-// orchestration. The real gate is therefore "the config-backend set PLUS the
-// plugin-native slot backends" — split into two declarations because the shared macro
-// carries only the non-CC set, and pulling those two into the macro would drag the
-// other four helpers into every default build. Widen BOTH arms when a third
-// plugin-native backend gains a slot: a backend that writes a config file and lands
-// in neither set loses `confedit` entirely and reds with `E0432` that no
-// `--all-features` gate leg can see. A backend that writes none (`pi`) belongs in
-// neither set and compiles clean without it.
-/// Reject an empty config-dir env override (`CLAUDE_CONFIG_DIR`, `COPILOT_HOME`)
-/// instead of silently falling back to the default: both CLIs join their config
-/// paths onto the value literally, so an empty override resolves to the current
-/// directory rather than behaving as unset. Shared by `claude::cc_config_dir` and
-/// `copilot_cli::copilot_home`, the two backends this was proven on.
-///
-/// Pure so the unset/empty/set decision is unit-testable without mutating process
-/// env (`std::env::set_var` is `unsafe` and racy across threads in edition 2024);
-/// [`config_dir_override`] below does the actual lookup.
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
-pub(crate) fn non_empty_config_dir(var: &'static str, value: Option<OsString>) -> Result<Option<PathBuf>> {
-    match value {
-        None => Ok(None),
-        Some(v) if v.is_empty() => Err(Error::EmptyConfigDirOverride { var }),
-        Some(v) => Ok(Some(PathBuf::from(v))),
-    }
-}
-
-/// [`non_empty_config_dir`] wired to the real `var` lookup.
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
-pub(crate) fn config_dir_override(var: &'static str) -> Result<Option<PathBuf>> {
-    non_empty_config_dir(var, std::env::var_os(var))
-}
-
+// feature build leaves parts of the shared surface unreferenced. A backend that
+// writes a config file and lands in neither set loses `confedit` entirely and reds
+// with `E0432` that no `--all-features` gate leg can see. A backend that writes
+// none (`pi`) belongs in neither set and compiles clean without it.
 #[cfg(any(feature = "claude", feature = "copilot-cli"))]
 #[allow(dead_code)]
 pub(crate) mod confedit;
@@ -154,23 +111,6 @@ cfg_config_backends! {
     #[cfg(not(any(feature = "claude", feature = "copilot-cli")))]
     #[allow(dead_code)]
     pub(crate) mod confedit;
-}
-/// Every feature whose backend writes a host-owned status-line slot
-/// (`Capabilities::statusline`) — plugin-native and config-merge alike, which is why
-/// this is its own set rather than either family's. One place to extend per backend.
-macro_rules! cfg_statusline_backends {
-    ($item:item) => {
-        #[cfg(any(feature = "claude", feature = "qwen-code", feature = "antigravity-cli", feature = "droid", feature = "copilot-cli"))]
-        $item
-    };
-}
-pub(crate) use cfg_statusline_backends;
-
-cfg_statusline_backends! {
-    // `allow(dead_code)`: the shape axes are per-harness, so any single-backend build
-    // leaves the ones it does not use unreferenced (same idiom as `mcpjson` above).
-    #[allow(dead_code)]
-    pub(crate) mod statuslinejson;
 }
 cfg_config_backends! {
     #[allow(dead_code)]
@@ -235,35 +175,6 @@ pub trait AgentBackend {
     /// drive their own CLI for removal and ignore it. Does not touch the stamp
     /// marker; the caller owns that.
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome>;
-    /// Undo any write this backend made OUTSIDE the harness's own registry or plugin
-    /// tree, before the stamp marker is cleared.
-    ///
-    /// Implement this whenever a backend writes into a file the USER owns and the
-    /// harness does not carry — CC's `statusLine` slot in `settings.json` is the first,
-    /// and every further status-line backend is the same shape. Such a write breaks the
-    /// premise the teardown paths were built on: *an absent or already-removed tool has
-    /// nothing of ours left behind.* It does not, because the user's settings file
-    /// outlives the tool's registry, its plugin tree, and the tool binary itself. Every
-    /// short-circuit on the way to `stamp::clear` — an undetected harness, an
-    /// unsupported scope or source, a plugin the user removed by hand — therefore
-    /// strands our value in their file and drops the marker that is the only copy of
-    /// what we displaced.
-    ///
-    /// Both teardown paths (`install::uninstall_agent`, `selfheal`'s
-    /// plugin-already-gone row) call this on every branch that reaches the marker
-    /// clear, including the skips, and propagate its error so a failed restore keeps
-    /// the marker rather than clearing the last copy of the user's data. Neither rests
-    /// on any backend's current `Capabilities` or `detect()` answer. The one branch
-    /// that skips it is a failed `remove`, which returns before the clear, so the
-    /// marker survives there too.
-    ///
-    /// The default does nothing, which stays right for every config-merge backend:
-    /// their writes ARE the plugin's translation, so tearing those down is `remove`'s
-    /// job, and the plugin-already-gone row must keep only forgetting a marker (never
-    /// resurrect, never delete on the user's behalf).
-    fn forget(&self, _plugin: &Plugin, _scope: &Scope) -> Result<()> {
-        Ok(())
-    }
     /// This agent's slice of `doctor`: one check per surface it manages.
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport;
 }
@@ -383,41 +294,5 @@ pub fn backend_for(id: &str) -> Option<Box<dyn AgentBackend>> {
         #[cfg(feature = "augment")]
         "augment" => Some(Box::new(augment::AugmentBackend)),
         _ => None,
-    }
-}
-
-#[cfg(all(test, any(feature = "claude", feature = "copilot-cli")))]
-mod config_dir_tests {
-    use super::non_empty_config_dir;
-    use crate::error::Error;
-
-    #[test]
-    fn unset_resolves_to_none() {
-        assert!(matches!(non_empty_config_dir("TEST_VAR", None), Ok(None)));
-    }
-
-    #[test]
-    fn non_empty_resolves_to_the_path() {
-        let resolved = non_empty_config_dir("TEST_VAR", Some("/some/dir".into())).unwrap();
-        assert_eq!(resolved, Some(std::path::PathBuf::from("/some/dir")));
-    }
-
-    #[test]
-    fn empty_is_rejected_naming_the_variable() {
-        let err = non_empty_config_dir("TEST_VAR", Some("".into())).unwrap_err();
-        assert!(matches!(err, Error::EmptyConfigDirOverride { var: "TEST_VAR" }), "wrong variant: {err:?}");
-    }
-
-    // Non-UTF8 values are a real `var_os` result (an env var set via raw bytes), so the
-    // resolver must not assume valid UTF-8 anywhere on the non-empty path.
-    #[cfg(unix)]
-    #[test]
-    fn non_utf8_value_still_resolves() {
-        use std::ffi::OsString;
-        use std::os::unix::ffi::OsStringExt;
-
-        let raw = OsString::from_vec(vec![0x66, 0x6f, 0xff, 0x6f]); // "fo\xFFo"
-        let resolved = non_empty_config_dir("TEST_VAR", Some(raw.clone())).unwrap();
-        assert_eq!(resolved, Some(std::path::PathBuf::from(raw)));
     }
 }

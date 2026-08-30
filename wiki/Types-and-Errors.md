@@ -77,7 +77,6 @@ the tool it targets, not runtime detection.
 | `agents` | `bool` | can host agent (subagent) definitions |
 | `skills` | `bool` | can host skill directories |
 | `instructions` | `bool` | can receive host-authored always-loaded guidance through its own native context channel (a dedicated file plus any registration); `false` for a plugin-native backend, which delivers guidance through its own channel instead |
-| `statusline` | `bool` | manages the tool's status-line slot from `PluginHost::statusline`. Not implied by `plugins`: the slot lives in the tool's own settings file, outside any plugin tree, so a plugin-native backend still writes it (both do: `claude`, `copilot-cli`; the other three `true` today are `qwen-code`, `antigravity-cli`, `droid`) |
 | `scopes` | `&'static [&'static str]` | which of `"user"`/`"project"` this backend can target |
 
 `setup` reads this to report a partial fit ("this agent hosts MCP servers, not hooks") instead of
@@ -155,7 +154,6 @@ Every fallible call in the crate returns `Result<T, Error>` (`type Result<T> = s
 | `ClaudeTooOld { found, floor }` | `claude` is below the required version floor |
 | `CopilotNotFound` | `copilot` is not on PATH |
 | `CopilotTooOld { found }` | `copilot` is below 1.0.71, the plugin-management floor |
-| `EmptyConfigDirOverride { var }` | `CLAUDE_CONFIG_DIR` or `COPILOT_HOME` is set to the empty string; both CLIs read that as the current directory, so no write target is correct. Raised before any CLI call, so the install fails with the tool's registry untouched. Only reachable for a host that declares a status line, the one surface whose path agentgear resolves itself |
 | `Cli { bin, args, code, stderr }` | a CLI invocation exited nonzero |
 | `Json { what, source }` | a JSON parse failed |
 | `Io { context, source }` | a filesystem operation failed |

@@ -140,21 +140,10 @@ fn heal_agent(
         }
 
         (true, BackendState::Absent) => {
-            // Clean uninstall under our marker: forget it, do not reinstall. Anything
-            // the backend wrote outside the harness's registry goes back FIRST — the
-            // marker clear below drops the statusLine stash with it, and after that
-            // there is nothing left to restore the user's own value from. Propagated,
-            // not best-effort: a failed restore must keep the marker so the next
-            // session retries, rather than clearing the only copy of their value.
-            // Accepted consequence: the failure is sticky. A settings.json the user
-            // corrupts and never fixes fails `forget` on every session start, so this
-            // agent reports `Failed` forever with no self-clearing path. Making the
-            // call best-effort would clear that report AND their only stashed value —
-            // the exact loss this line exists to prevent, so it stays propagated.
+            // Clean uninstall under our marker: forget it, do not reinstall.
             if is_claude {
                 let _ = restart::clear(plugin);
             }
-            backend.forget(plugin, scope)?;
             stamp::clear(plugin, scope, backend.id())?;
             Ok(Outcome::Cleared)
         }

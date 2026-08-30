@@ -2,12 +2,12 @@
 //! the hermetic Claude-backend tests.
 //!
 //! The real CLI is the transaction boundary the claude backend orchestrates, so
-//! every backend behavior that is NOT the registry — the `statusLine` slot, the
-//! stamp-marker stash, doctor's local checks — was previously reachable only from
-//! the `--ignored` e2e leg, which needs a real `claude` and an auth'd machine. This
-//! binary models just enough of the registry (`plugin list`/`install`/`uninstall`/
-//! `enable`/`disable`, `marketplace list`/`add`/`update`/`remove`, `--version`,
-//! `validate`) for those tests to run in the normal `cargo test` job.
+//! every backend behavior that is NOT the registry — doctor's local checks, the
+//! tree-hash staleness gate — was previously reachable only from the `--ignored`
+//! e2e leg, which needs a real `claude` and an auth'd machine. This binary models
+//! just enough of the registry (`plugin list`/`install`/`uninstall`/`enable`/
+//! `disable`, `marketplace list`/`add`/`update`/`remove`, `--version`, `validate`)
+//! for those tests to run in the normal `cargo test` job.
 //!
 //! It is a DOUBLE, never a spec: `docs/design.md`'s ground-truth CLI schemas and the
 //! `--ignored` e2e leg against the real binary stay the authority on CC's behavior.

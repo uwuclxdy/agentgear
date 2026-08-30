@@ -212,15 +212,7 @@ fn agentgear_client_token_expands_to_this_backend_id() {
     )
     .unwrap();
 
-    let plugin = Plugin {
-        name: "ez-cid",
-        marketplace: "ez-mkt",
-        version: "0.1.0",
-        agents: &["kimi"],
-        instructions: None,
-        statusline: None,
-        blob: &[],
-    };
+    let plugin = Plugin { name: "ez-cid", marketplace: "ez-mkt", version: "0.1.0", agents: &["kimi"], instructions: None, blob: &[] };
     let project = crate::scratch::path("ez-cidtok-dst");
     let scope = Scope::Project { path: project.clone() };
     let source = Source::Path(src.clone());

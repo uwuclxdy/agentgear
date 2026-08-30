@@ -13,11 +13,8 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-
-use serde_json::{Value, json};
+use std::process::Command;
 
 const BIN: &str = env!("CARGO_BIN_EXE_host_fixture");
 
@@ -37,8 +34,9 @@ struct Env {
     mcp: PathBuf,
     hooks: PathBuf,
     /// `~/.gemini/antigravity-cli/settings.json` — the CLI's OWN settings profile,
-    /// which is where the host-owned status-line slot lives. Deliberately NOT the
-    /// `~/.gemini/config/` customization root the two files above use.
+    /// which is where agy's statusLine slot lives. Deliberately NOT the
+    /// `~/.gemini/config/` customization root the two files above use; nothing this
+    /// backend writes should ever touch it.
     settings: PathBuf,
     /// `~/.gemini/antigravity-cli/hooks.json` — the retired user-scope hooks path
     /// this backend wrote to until 2026-07-17 (gotcha 1). `agy` never scanned it;
@@ -107,37 +105,6 @@ impl Env {
     fn hooks(&self) -> String {
         fs::read_to_string(&self.hooks).unwrap()
     }
-
-    /// Run the fixture with `stdin` piped in — the status-line entrypoint's real
-    /// calling convention. This one call gets the inherited `PATH` appended, because
-    /// composing runs the user's own status command through the platform shell and the
-    /// curated `PATH` carries no `sh`/`cmd`. Safe to widen here and nowhere else: the
-    /// status-line entrypoint never detects or writes a backend.
-    fn fixture_stdin(&self, args: &[&str], stdin: &str) -> (bool, String) {
-        let mut cmd = Command::new(BIN);
-        cmd.args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        self.apply(&mut cmd);
-        cmd.env("PATH", with_inherited_path(&self.path));
-        let mut child = cmd.spawn().unwrap();
-        child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
-        let out = child.wait_with_output().unwrap();
-        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim_end_matches(['\n', '\r']).to_string())
-    }
-
-    /// The antigravity-cli agent's stamp marker, if one exists. Its presence is what
-    /// says this backend considers the plugin installed.
-    fn marker(&self) -> Option<Value> {
-        let markers = self.data.join("ez-fixture-plugin").join("markers");
-        let entries: Vec<_> = fs::read_dir(&markers).map(|d| d.flatten().collect()).unwrap_or_default();
-        entries.into_iter().find_map(|entry| {
-            let marker: Value = serde_json::from_slice(&fs::read(entry.path()).unwrap_or_default()).ok()?;
-            (marker.get("agent").and_then(Value::as_str) == Some("antigravity-cli")).then_some(marker)
-        })
-    }
-
-    fn stashed_original(&self) -> Value {
-        self.marker().and_then(|m| m.get("statusline_original").cloned()).unwrap_or(Value::Null)
-    }
 }
 
 impl Drop for Env {
@@ -150,14 +117,6 @@ impl Drop for Env {
 /// so the fan-out stays a pure antigravity-cli exercise regardless of the dev box.
 fn fixture_dir() -> OsString {
     Path::new(BIN).parent().map(|d| d.as_os_str().to_os_string()).unwrap_or_default()
-}
-
-/// `curated` first (so no dev-box binary can shadow the fixture), then whatever the
-/// test process inherited.
-fn with_inherited_path(curated: &OsString) -> OsString {
-    let inherited = std::env::var_os("PATH").unwrap_or_default();
-    let dirs: Vec<PathBuf> = std::env::split_paths(curated).chain(std::env::split_paths(&inherited)).collect();
-    std::env::join_paths(&dirs).unwrap_or_else(|_| curated.clone())
 }
 
 #[test]
@@ -299,17 +258,13 @@ fn self_heal_preserves_a_disabled_hook_subtree_but_explicit_setup_reenables() {
 
 // --- statusLine ---------------------------------------------------------------
 //
-// The slot lives in the CLI's OWN `~/.gemini/antigravity-cli/settings.json`, is
-// root-level, and is USER SCOPE ONLY. `agy` 1.1.6 persists `type`/`command`/
-// `enabled`/`padding` there and drops every other key on its next rewrite.
+// The automatic slot wiring is retired: no backend writes a harness's single
+// `statusLine` slot anymore. The CLI's own `~/.gemini/antigravity-cli/settings.json`
+// holds whatever the user put there, and every lifecycle op must leave it alone.
 
-/// The user's own settings before we touch anything: an unrelated key, plus a status
-/// line of theirs carrying the `enabled` toggle. `enabled` is the field the backend
-/// preserves off the live value rather than rendering, so it must survive our install
-/// AND come back byte-for-byte on uninstall.
-///
-/// `echo their-bar-row` is runnable under both `sh -c` and `cmd /C`, so the compose
-/// assertion exercises the real subprocess path on every platform.
+/// The user's own settings: an unrelated key plus a status line of theirs. The
+/// whole FILE must survive setup/self-heal/uninstall byte-identical, since nothing
+/// this backend writes lives in it.
 const SEED_SETTINGS: &str = r#"{
   "editorMode": "vim",
   "statusLine": {
@@ -321,191 +276,34 @@ const SEED_SETTINGS: &str = r#"{
 }
 "#;
 
-const SESSION_JSON: &str = r#"{"session_id":"abc"}"#;
-
-/// What the fixture host declares, with `${AGENTGEAR_CLIENT}` expanded for this backend.
-const OUR_COMMAND: &str = "host_fixture statusline --client antigravity-cli";
-
-/// What the backend writes over a slot that HELD `enabled: true`: our own
-/// `type`/`command`/`padding`, plus their `enabled` carried through untouched. The
-/// carry is why this is not simply the rendered value.
-fn our_status_line() -> Value {
-    json!({"type": "command", "command": OUR_COMMAND, "padding": 0, "enabled": true})
-}
-
-/// The same write over a slot that carried no `enabled`: none is synthesized.
-fn our_status_line_without_enabled() -> Value {
-    json!({"type": "command", "command": OUR_COMMAND, "padding": 0})
-}
-
-fn seed_status_line() -> Value {
-    parse(SEED_SETTINGS).get("statusLine").cloned().unwrap()
-}
-
-fn parse(text: &str) -> Value {
-    serde_json::from_str(text).unwrap()
-}
-
-fn status_line_at(settings: &Path) -> Value {
-    parse(&fs::read_to_string(settings).unwrap()).get("statusLine").cloned().unwrap_or(Value::Null)
-}
-
-/// Serialized, not compared as a `Value`: `serde_json`'s `preserve_order` maps compare
-/// equal regardless of key order, so only the rendered text proves a restore put the
-/// user's object back exactly as they wrote it.
-fn status_line_text(settings: &Path) -> String {
-    serde_json::to_string(&status_line_at(settings)).unwrap()
-}
-
-fn set_status_line_at(settings: &Path, value: Value) {
-    let mut parsed = parse(&fs::read_to_string(settings).unwrap());
-    parsed["statusLine"] = value;
-    fs::write(settings, serde_json::to_vec_pretty(&parsed).unwrap()).unwrap();
-}
-
-fn remove_status_line_at(settings: &Path) {
-    let mut parsed = parse(&fs::read_to_string(settings).unwrap());
-    parsed.as_object_mut().unwrap().remove("statusLine");
-    fs::write(settings, serde_json::to_vec_pretty(&parsed).unwrap()).unwrap();
-}
-
-/// Seed the CLI's own settings profile with the user's status line.
 fn seed_settings(env: &Env) {
     fs::write(&env.settings, SEED_SETTINGS).unwrap();
 }
 
 #[test]
-fn antigravity_cli_statusline_full_lifecycle() {
-    let env = Env::new("statusline-lifecycle");
+fn setup_leaves_an_existing_user_statusline_untouched() {
+    let env = Env::new("statusline-untouched");
     seed_settings(&env);
-    let seeded_text = status_line_text(&env.settings);
+    let before = fs::read_to_string(&env.settings).unwrap();
 
     let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
     assert!(ok && out == "Installed", "setup failed: {out}");
+    assert_eq!(fs::read_to_string(&env.settings).unwrap(), before, "setup rewrote the settings file holding the user's statusLine");
 
-    // Ours owns the slot, `${AGENTGEAR_CLIENT}` expanded to THIS backend, and the
-    // user's `enabled` toggle is not carried into our own value.
-    assert_eq!(status_line_at(&env.settings), our_status_line(), "our statusLine did not land");
-    assert_eq!(env.stashed_original(), seed_status_line(), "install did not stash the user's original");
-    let s = fs::read_to_string(&env.settings).unwrap();
-    assert!(s.contains("editorMode"), "the user's unrelated key was clobbered:\n{s}");
-
-    // Compose runs the displaced command and stacks its rows under ours.
-    let (ok, out) = env.fixture_stdin(&["statusline", "--client", "antigravity-cli"], SESSION_JSON);
-    assert!(ok, "statusline subcommand failed: {out}");
-    assert_eq!(out, "ez-fixture row\ntheir-bar-row", "compose did not stack our row over the user's");
-
-    // Fresh install self-heals to a true NoOp: probe reads back what reconcile wrote.
     let (ok, out) = env.fixture(&["self-heal"]);
     assert!(ok && out == "NoOp", "self-heal after a fresh install should no-op, got {out}");
-
-    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
-    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(fs::read_to_string(&env.settings).unwrap(), before, "self-heal touched the settings file holding the user's statusLine");
 
     let (ok, out) = env.fixture(&["uninstall"]);
     assert!(ok && out == "Removed", "uninstall failed: {out}");
-    assert_eq!(status_line_text(&env.settings), seeded_text, "uninstall did not restore the user's statusLine byte-for-byte");
-
-    // Never resurrect. A foreign line is not evidence our plugin is installed; count it
-    // as presence and self_heal's adopt row reinstalls the whole translation over a
-    // plugin the user deliberately removed.
-    let (ok, out) = env.fixture(&["self-heal"]);
-    assert!(ok, "self-heal errored after uninstall: {out}");
-    assert_eq!(out, "NoOp", "a foreign status line resurrected an uninstalled plugin, got {out}");
-    assert_eq!(status_line_text(&env.settings), seeded_text, "self-heal retook the slot after uninstall");
-    assert!(env.marker().is_none(), "self-heal adopted a plugin that is not installed");
+    assert_eq!(fs::read_to_string(&env.settings).unwrap(), before, "uninstall rewrote the settings file holding the user's statusLine");
 }
 
-#[test]
-fn antigravity_cli_statusline_stash_survives_a_declaration_change() {
-    // Ownership decided by whole-value equality would read our OWN previous rendering
-    // as "the user's original" the moment a release changes what we render, destroying
-    // their value and poisoning the stash with our own command — which `compose` would
-    // then run from inside itself, every turn. Only observable across a version change.
-    let env = Env::new("statusline-version-change");
-    seed_settings(&env);
-    let seeded_text = status_line_text(&env.settings);
-
-    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
-    assert!(ok && out == "Installed", "setup failed: {out}");
-
-    // What host version N left in the slot: our command, a padding this version no
-    // longer renders, and the user's `enabled` still carried through (which is what a
-    // prior version of this backend would also have written).
-    set_status_line_at(&env.settings, json!({"type": "command", "command": OUR_COMMAND, "padding": 1, "enabled": true}));
-
-    let (ok, out) = env.fixture(&["self-heal"]);
-    assert!(ok, "self-heal errored on our own drifted rendering: {out}");
-    assert_eq!(out, "Installed", "our own drifted rendering is drift to repair, got {out}");
-    assert_eq!(status_line_at(&env.settings), our_status_line(), "self-heal did not converge our own rendering");
-
-    // Asserted before the stash: the anti-recursion positive control. Break ownership
-    // and the stash holds OUR command, so this call re-enters the binary.
-    let (ok, out) = env.fixture_stdin(&["statusline", "--client", "antigravity-cli"], SESSION_JSON);
-    assert!(ok, "statusline subcommand failed: {out}");
-    assert_eq!(out, "ez-fixture row\ntheir-bar-row", "compose lost the user's row");
-    assert_eq!(env.stashed_original(), seed_status_line(), "our own earlier rendering was stashed as the user's original");
-
-    // The stash must survive an `update` between install and uninstall too.
-    let (ok, out) = env.fixture(&["update"]);
-    assert!(ok, "update failed: {out}");
-
-    let (ok, out) = env.fixture(&["uninstall"]);
-    assert!(ok && out == "Removed", "uninstall failed: {out}");
-    assert_eq!(status_line_text(&env.settings), seeded_text, "the stash did not survive the version change plus update");
-}
-
-#[test]
-fn antigravity_cli_statusline_deleted_line_is_readded_without_losing_the_stash() {
-    let env = Env::new("statusline-drift");
-    seed_settings(&env);
-    let seeded_text = status_line_text(&env.settings);
-
-    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
-    assert!(ok && out == "Installed", "setup failed: {out}");
-
-    remove_status_line_at(&env.settings);
-    let (ok, out) = env.fixture(&["self-heal"]);
-    assert!(ok, "self-heal errored on a deleted statusLine: {out}");
-    assert_eq!(out, "Installed", "a missing statusLine behind healthy surfaces is drift, got {out}");
-    // Re-added WITH the carried `enabled`: the live slot is gone, so the carry falls
-    // back to the stash, the last record of the user's own switch. Re-adding bare would
-    // reset exactly the preference the carry exists to protect.
-    assert_eq!(status_line_at(&env.settings), our_status_line(), "self-heal did not re-add our statusLine");
-    assert_eq!(env.stashed_original(), seed_status_line(), "the repair pass overwrote the user's stashed original");
-
-    let (ok, out) = env.fixture(&["uninstall"]);
-    assert!(ok && out == "Removed", "uninstall failed: {out}");
-    assert_eq!(status_line_text(&env.settings), seeded_text, "uninstall did not restore the user's statusLine");
-}
-
-#[test]
-fn antigravity_cli_statusline_is_user_scope_only() {
-    // The 1.1.6 binary neither read nor rewrote a project-scope settings.json while
-    // normalizing the user-scope one, so a project slot write would be inert config
-    // dropped in someone's repo. The scope gate is what keeps us out of it — and the
-    // project teardown path still reaches `forget`, which must no-op rather than
-    // resolve a user-scope path and undo a DIFFERENT scope's install.
-    let env = Env::new("statusline-project-scope");
-    seed_settings(&env);
-    let seeded_text = status_line_text(&env.settings);
-    let project = env.root.join("project");
-    fs::create_dir_all(&project).unwrap();
-    let project_str = project.display().to_string();
-
-    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli", "--project", &project_str]);
-    assert!(ok, "project-scope setup failed: {out}");
-    assert!(!project.join(".gemini").exists(), "a project-scope install wrote the CLI's own settings tree");
-    assert_eq!(status_line_text(&env.settings), seeded_text, "a project-scope install wrote the USER's status line");
-
-    let (ok, out) = env.fixture(&["uninstall", "--project", &project_str]);
-    assert!(ok, "project-scope uninstall failed: {out}");
-    assert_eq!(status_line_text(&env.settings), seeded_text, "a project-scope teardown undid the user-scope slot");
-}
-
+/// A teardown that owns nothing in a user's file must not write to it at all —
+/// the same byte-identity the statusLine slot now gets for free, since nothing
+/// this backend writes lives in that file anymore.
 #[test]
 fn antigravity_cli_teardown_with_nothing_installed_writes_nothing() {
-    // A teardown that owns nothing in a user's file must not write to it at all.
     let env = Env::new("statusline-empty-teardown");
     seed_settings(&env);
     let before = fs::read_to_string(&env.settings).unwrap();
@@ -514,158 +312,4 @@ fn antigravity_cli_teardown_with_nothing_installed_writes_nothing() {
     assert!(ok, "uninstall errored with nothing installed: {out}");
     assert_eq!(out, "NoOp", "a teardown with nothing of ours to undo must report no change, got {out}");
     assert_eq!(fs::read_to_string(&env.settings).unwrap(), before, "teardown wrote into a settings file it had nothing to undo in");
-}
-
-#[test]
-fn antigravity_cli_statusline_carries_a_disabled_toggle_through_install() {
-    // `enabled` persists the user's own `/statusline off`. A whole-value slot write
-    // drops it, and an absent `enabled` almost certainly reads as ON (the vendor's
-    // documented example omits the key), so dropping their `false` switches their
-    // status line back on — now rendering OURS. Carrying it is what makes taking the
-    // slot over preserve a preference we do not model.
-    let env = Env::new("statusline-carry-disabled");
-    fs::write(
-        &env.settings,
-        r#"{
-  "statusLine": {
-    "type": "command",
-    "command": "echo their-bar-row",
-    "enabled": false,
-    "padding": 2
-  }
-}
-"#,
-    )
-    .unwrap();
-    let seeded_text = status_line_text(&env.settings);
-
-    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
-    assert!(ok && out == "Installed", "setup failed: {out}");
-
-    let live = status_line_at(&env.settings);
-    assert_eq!(live["command"], json!(OUR_COMMAND), "our command did not take the slot");
-    assert_eq!(live["enabled"], json!(false), "the user's disabled toggle was dropped by our write: {live}");
-
-    // doctor compares whole-value too, so it needs the same carry: without it a
-    // perfectly converged slot of ours reports as "another status line owns" it. And
-    // since their switch is OFF, ours is installed, converged, and rendering nothing —
-    // silent everywhere else, so doctor is the only place that can say why.
-    let (_, report) = env.fixture(&["doctor"]);
-    assert!(report.contains("owns the statusLine slot"), "doctor did not recognise our own carried value as ours:\n{report}");
-    assert!(report.contains("[warn] status line installed"), "a carried off-switch must downgrade the check to a warn:\n{report}");
-    assert!(report.contains("/statusline on"), "the warning must name the remedy:\n{report}");
-
-    // The drift loop this could cause: carry on write but not in the convergence
-    // comparison and every self-heal rewrites the slot forever.
-    let (ok, out) = env.fixture(&["self-heal"]);
-    assert!(ok && out == "NoOp", "a carried field must read as converged, not as drift; got {out}");
-    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
-    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
-
-    let (ok, out) = env.fixture(&["uninstall"]);
-    assert!(ok && out == "Removed", "uninstall failed: {out}");
-    assert_eq!(status_line_text(&env.settings), seeded_text, "uninstall did not restore the user's whole value");
-}
-
-#[test]
-fn antigravity_cli_statusline_synthesizes_no_toggle_when_the_user_had_none() {
-    // The other direction: we never invent an `enabled`. A slot that had none keeps
-    // none, so the harness's own default applies exactly as it did before us.
-    let env = Env::new("statusline-carry-absent");
-    fs::write(
-        &env.settings,
-        r#"{
-  "statusLine": {
-    "type": "command",
-    "command": "echo their-bar-row"
-  }
-}
-"#,
-    )
-    .unwrap();
-    let seeded_text = status_line_text(&env.settings);
-
-    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
-    assert!(ok && out == "Installed", "setup failed: {out}");
-    assert_eq!(status_line_at(&env.settings), our_status_line_without_enabled(), "an `enabled` was synthesized from nothing");
-
-    let (ok, out) = env.fixture(&["self-heal"]);
-    assert!(ok && out == "NoOp", "self-heal after a fresh install should no-op, got {out}");
-
-    let (ok, out) = env.fixture(&["uninstall"]);
-    assert!(ok && out == "Removed", "uninstall failed: {out}");
-    assert_eq!(status_line_text(&env.settings), seeded_text, "uninstall did not restore the user's whole value");
-}
-
-#[test]
-fn antigravity_cli_statusline_readds_a_deleted_line_with_the_carried_toggle() {
-    // Same loss as dropping the carry on install, reached through self_heal instead:
-    // the user deletes our line, the live slot is gone, and a carry that reads only the
-    // live value has nothing to read. Re-adding `{type, command, padding}` bare would
-    // reset their `enabled:false` — and since an absent `enabled` almost certainly
-    // reads as ON, that switches their status line back on showing OUR line, which is
-    // the exact outcome this backend's rustdoc rules against.
-    let env = Env::new("statusline-readd-carry");
-    fs::write(
-        &env.settings,
-        r#"{
-  "statusLine": {
-    "type": "command",
-    "command": "echo their-bar-row",
-    "enabled": false,
-    "padding": 2
-  }
-}
-"#,
-    )
-    .unwrap();
-    let seeded_text = status_line_text(&env.settings);
-
-    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
-    assert!(ok && out == "Installed", "setup failed: {out}");
-    assert_eq!(status_line_at(&env.settings)["enabled"], json!(false), "install did not carry the toggle");
-
-    remove_status_line_at(&env.settings);
-    let (ok, out) = env.fixture(&["self-heal"]);
-    assert!(ok, "self-heal errored on a deleted statusLine: {out}");
-    assert_eq!(out, "Installed", "a missing statusLine behind healthy surfaces is drift, got {out}");
-    let live = status_line_at(&env.settings);
-    assert_eq!(live["command"], json!(OUR_COMMAND), "self-heal did not re-add our command");
-    assert_eq!(live["enabled"], json!(false), "self-heal re-added our line without the user's switch: {live}");
-
-    // Still converged afterwards: the fallback must not write a value the convergence
-    // comparison then reads as drift.
-    let (ok, out) = env.fixture(&["self-heal"]);
-    assert!(ok && out == "NoOp", "the re-added value must read as converged, got {out}");
-
-    let (ok, out) = env.fixture(&["uninstall"]);
-    assert!(ok && out == "Removed", "uninstall failed: {out}");
-    assert_eq!(status_line_text(&env.settings), seeded_text, "uninstall did not restore the user's whole value");
-}
-
-#[test]
-fn antigravity_cli_statusline_warns_only_when_the_carried_switch_is_off() {
-    // The negative half of the doctor warn: a carried `enabled:true` is a working
-    // install and must stay `[ ok ]`, or the warning is noise every user sees.
-    let env = Env::new("statusline-warn-negative");
-    fs::write(
-        &env.settings,
-        r#"{
-  "statusLine": {
-    "type": "command",
-    "command": "echo their-bar-row",
-    "enabled": true
-  }
-}
-"#,
-    )
-    .unwrap();
-
-    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
-    assert!(ok && out == "Installed", "setup failed: {out}");
-    assert_eq!(status_line_at(&env.settings)["enabled"], json!(true), "install did not carry the toggle");
-
-    let (_, report) = env.fixture(&["doctor"]);
-    assert!(report.contains("[ ok ] status line installed"), "a carried `true` must stay an Ok check:\n{report}");
-    assert!(!report.contains("/statusline on"), "the off-switch remedy must not fire for an enabled slot:\n{report}");
 }

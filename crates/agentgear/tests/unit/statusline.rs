@@ -1,13 +1,12 @@
-//! statusline unit tests: reading a stashed value back, session-cwd extraction, and
-//! the user-command runner's stdin/trim/empty contract. What a declaration RENDERS
-//! into a harness slot belongs to the shared slot renderer now
-//! (`tests/unit/statuslinejson.rs`). The disk-touching half (marker stash, settings
-//! write) routes through `data_root`/`dirs::data_dir`, so it is covered by the
-//! host-fixture hermetic tests instead.
+//! statusline unit tests: reading a legacy stashed value back, session-cwd
+//! extraction, and the user-command runner's stdin/trim/empty contract — the
+//! print-subcommand surface. The disk-touching half (marker stash) routes through
+//! `data_root`/`dirs::data_dir`, so it is covered by the host-fixture hermetic
+//! tests instead.
 
 use serde_json::{Value, json};
 
-use super::{StatusLineDecl, is_own_command, lookup_scopes, session_cwd};
+use super::{StatusLineDecl, lookup_scopes, session_cwd};
 use crate::host::Scope;
 
 #[test]
@@ -16,7 +15,7 @@ fn from_value_reads_the_slot_object_shape() {
     // what a HARNESS has on disk, so it must not move when our rendering does.
     let back = StatusLineDecl::from_value(&json!({"type": "command", "command": "their-bar --fancy", "padding": 1}))
         .expect("a slot object must read back");
-    assert_eq!(back, StatusLineDecl::new("their-bar --fancy").with_padding(1));
+    assert_eq!(back, StatusLineDecl { command: "their-bar --fancy".to_string(), padding: Some(1) });
 }
 
 #[test]
@@ -73,26 +72,6 @@ fn lookup_scopes_without_a_cwd_is_user_only() {
     let scopes = lookup_scopes(None);
     assert_eq!(scopes.len(), 1, "no cwd means no project scope to consult: {scopes:?}");
     assert!(matches!(scopes[0], Scope::User));
-}
-
-#[test]
-fn a_stash_naming_our_own_command_is_refused() {
-    // The anti-recursion guard. A marker that stashed our own command (written by a
-    // binary whose ownership test was wrong, or by another process) would otherwise
-    // make compose spawn the very binary it runs inside, on every rendered turn.
-    let ours = "mytool statusline --client claude";
-    assert!(is_own_command(&StatusLineDecl::new(ours), Some(ours)));
-    // Padding is irrelevant: the command is what gets spawned.
-    assert!(is_own_command(&StatusLineDecl::new(ours).with_padding(4), Some(ours)));
-}
-
-#[test]
-fn a_stash_naming_a_different_command_is_kept() {
-    let ours = "mytool statusline --client claude";
-    assert!(!is_own_command(&StatusLineDecl::new("their-bar"), Some(ours)));
-    // A host that declares no status line has nothing to recurse into.
-    assert!(!is_own_command(&StatusLineDecl::new("their-bar"), None));
-    assert!(!is_own_command(&StatusLineDecl::new(ours), None));
 }
 
 // The runner spawns the platform shell; the assertions below use POSIX commands.

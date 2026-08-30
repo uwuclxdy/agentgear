@@ -13,11 +13,8 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-
-use serde_json::{Value, json};
+use std::process::Command;
 
 const BIN: &str = env!("CARGO_BIN_EXE_host_fixture");
 
@@ -102,59 +99,8 @@ impl Env {
         fs::read_to_string(self.factory.join("hooks.json")).unwrap()
     }
 
-    /// The same run with `HOME` pointed at a directory that has no `~/.factory`, so
-    /// droid reads as uninstalled. XDG stays put, so the stamp marker still resolves —
-    /// this models the user removing droid, not the sandbox moving.
-    fn fixture_without_droid(&self, args: &[&str]) -> (bool, String) {
-        let elsewhere = self.root.join("no-droid-here");
-        fs::create_dir_all(&elsewhere).unwrap();
-        let mut cmd = Command::new(BIN);
-        cmd.args(args);
-        self.apply(&mut cmd);
-        cmd.env("HOME", &elsewhere);
-        let out = cmd.output().unwrap();
-        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
-    }
-
-    /// Run the fixture with `stdin` piped in — the status-line entrypoint's real calling
-    /// convention. Gets the inherited `PATH` appended because composing runs the user's
-    /// own command through the platform shell; safe here and nowhere else, since the
-    /// status-line entrypoint never detects or writes a backend.
-    fn fixture_stdin(&self, args: &[&str], stdin: &str) -> (bool, String) {
-        let mut cmd = Command::new(BIN);
-        cmd.args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        self.apply(&mut cmd);
-        cmd.env("PATH", with_inherited_path(&self.path));
-        let mut child = cmd.spawn().unwrap();
-        child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
-        let out = child.wait_with_output().unwrap();
-        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim_end_matches(['\n', '\r']).to_string())
-    }
-
     fn settings(&self) -> PathBuf {
         self.factory.join("settings.json")
-    }
-
-    fn project(&self) -> PathBuf {
-        self.root.join("project")
-    }
-
-    fn project_settings(&self) -> PathBuf {
-        self.project().join(".factory").join("settings.json")
-    }
-
-    /// The droid agent's stamp marker, if one exists.
-    fn marker(&self) -> Option<Value> {
-        let markers = self.data.join("ez-fixture-plugin").join("markers");
-        let entries: Vec<_> = fs::read_dir(&markers).map(|d| d.flatten().collect()).unwrap_or_default();
-        entries.into_iter().find_map(|entry| {
-            let marker: Value = serde_json::from_slice(&fs::read(entry.path()).unwrap_or_default()).ok()?;
-            (marker.get("agent").and_then(Value::as_str) == Some("droid")).then_some(marker)
-        })
-    }
-
-    fn stashed_original(&self) -> Value {
-        self.marker().and_then(|m| m.get("statusline_original").cloned()).unwrap_or(Value::Null)
     }
 }
 
@@ -166,12 +112,6 @@ impl Drop for Env {
 
 /// PATH with only the fixture binary's directory: no `droid`, no sibling agent CLIs, so
 /// the fan-out stays a pure droid exercise regardless of the dev box.
-fn with_inherited_path(curated: &OsString) -> OsString {
-    let inherited = std::env::var_os("PATH").unwrap_or_default();
-    let dirs: Vec<PathBuf> = std::env::split_paths(curated).chain(std::env::split_paths(&inherited)).collect();
-    std::env::join_paths(&dirs).unwrap_or_else(|_| curated.clone())
-}
-
 fn fixture_dir() -> OsString {
     Path::new(BIN).parent().map(|d| d.as_os_str().to_os_string()).unwrap_or_default()
 }
@@ -276,226 +216,36 @@ fn droid_full_lifecycle() {
     assert!(env.mcp().contains("ez-fixture"), "re-install did not re-add our server");
 }
 
-// --- statusLine ---------------------------------------------------------------
-//
-// Root-level `statusLine` in `<base>/settings.json`, both scopes. droid's schema is
-// `{type?: "command", command, padding?, maxRows?: 1..=3}`; `type` is optional AND
-// accepted, so this reuses the shared CC-shaped renderer.
-
-/// The user's own settings before we touch anything: an unrelated key plus a status
-/// line of theirs. `echo their-bar-row` runs under both `sh -c` and `cmd /C`.
+/// The user's own settings: an unrelated key plus a real status line of theirs. The
+/// automatic slot wiring is retired, so this whole file must survive every
+/// lifecycle op byte-identical — nothing this backend writes lives in it anymore.
 const SEED_SETTINGS: &str = r#"{
-  "telemetry": false,
+  "telemetry": "their-choice",
   "statusLine": {
+    "type": "command",
     "command": "echo their-bar-row",
-    "padding": 2,
-    "maxRows": 2
+    "padding": 2
   }
 }
 "#;
 
-const SESSION_JSON: &str = r#"{"session_id":"abc"}"#;
-
-const OUR_COMMAND: &str = "host_fixture statusline --client droid";
-
-/// What the backend must write: CC's body plus droid's own row cap. `maxRows: 3`
-/// because `compose` emits two rows whenever the user had a line of their own, and
-/// droid's default cap of 1 would clip theirs off.
-fn our_status_line() -> Value {
-    json!({"type": "command", "command": OUR_COMMAND, "padding": 0, "maxRows": 3})
-}
-
-fn seed_status_line() -> Value {
-    parse(SEED_SETTINGS).get("statusLine").cloned().unwrap()
-}
-
-fn parse(text: &str) -> Value {
-    serde_json::from_str(text).unwrap()
-}
-
-fn status_line_at(settings: &Path) -> Value {
-    parse(&fs::read_to_string(settings).unwrap()).get("statusLine").cloned().unwrap_or(Value::Null)
-}
-
-/// Serialized, not `Value`-compared: `preserve_order` maps compare equal regardless of
-/// key order, so only the rendered text proves a byte-exact restore.
-fn status_line_text(settings: &Path) -> String {
-    serde_json::to_string(&status_line_at(settings)).unwrap()
-}
-
-fn set_status_line_at(settings: &Path, value: Value) {
-    let mut parsed = parse(&fs::read_to_string(settings).unwrap());
-    parsed["statusLine"] = value;
-    fs::write(settings, serde_json::to_vec_pretty(&parsed).unwrap()).unwrap();
-}
-
-fn remove_status_line_at(settings: &Path) {
-    let mut parsed = parse(&fs::read_to_string(settings).unwrap());
-    parsed.as_object_mut().unwrap().remove("statusLine");
-    fs::write(settings, serde_json::to_vec_pretty(&parsed).unwrap()).unwrap();
-}
-
 #[test]
-fn droid_statusline_full_lifecycle() {
-    let env = Env::new("statusline-lifecycle");
+fn droid_setup_leaves_an_existing_user_statusline_untouched() {
+    let env = Env::new("untouched");
     fs::write(env.settings(), SEED_SETTINGS).unwrap();
-    let settings = env.settings();
-    let seeded_text = status_line_text(&settings);
+    let before = fs::read_to_string(env.settings()).unwrap();
 
     let (ok, out) = env.fixture(&["setup", "--agent", "droid"]);
     assert!(ok && out == "Installed", "setup failed: {out}");
-
-    assert_eq!(status_line_at(&settings), our_status_line(), "our statusLine did not land");
-    assert_eq!(env.stashed_original(), seed_status_line(), "install did not stash the user's original");
-    assert!(fs::read_to_string(&settings).unwrap().contains("telemetry"), "the user's unrelated key was clobbered");
-
-    // Two rows, which is exactly why `maxRows` is written at all.
-    let (ok, out) = env.fixture_stdin(&["statusline", "--client", "droid"], SESSION_JSON);
-    assert!(ok, "statusline subcommand failed: {out}");
-    assert_eq!(out, "ez-fixture row\ntheir-bar-row", "compose did not stack our row over the user's");
+    assert_eq!(fs::read_to_string(env.settings()).unwrap(), before, "setup rewrote the settings file holding the user's statusLine");
 
     let (ok, out) = env.fixture(&["self-heal"]);
     assert!(ok && out == "NoOp", "self-heal after a fresh install should no-op, got {out}");
-
-    let (ok, out) = env.fixture(&["setup", "--agent", "droid"]);
-    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(fs::read_to_string(env.settings()).unwrap(), before, "self-heal touched the settings file holding the user's statusLine");
 
     let (ok, out) = env.fixture(&["uninstall"]);
     assert!(ok && out == "Removed", "uninstall failed: {out}");
-    assert_eq!(status_line_text(&settings), seeded_text, "uninstall did not restore the user's statusLine byte-for-byte");
-
-    // Never resurrect: a foreign line is not evidence our plugin is installed.
-    let (ok, out) = env.fixture(&["self-heal"]);
-    assert!(ok, "self-heal errored after uninstall: {out}");
-    assert_eq!(out, "NoOp", "a foreign status line resurrected an uninstalled plugin, got {out}");
-    assert_eq!(status_line_text(&settings), seeded_text, "self-heal retook the slot after uninstall");
-    assert!(env.marker().is_none(), "self-heal adopted a plugin that is not installed");
-}
-
-#[test]
-fn droid_statusline_stash_survives_a_declaration_change() {
-    // Ownership by whole-value equality would read our OWN previous rendering as the
-    // user's original the moment a release changes what we render — destroying their
-    // value and poisoning the stash with our own command, which `compose` then runs from
-    // inside itself. Only observable across a version change.
-    let env = Env::new("statusline-version-change");
-    fs::write(env.settings(), SEED_SETTINGS).unwrap();
-    let settings = env.settings();
-    let seeded_text = status_line_text(&settings);
-
-    let (ok, out) = env.fixture(&["setup", "--agent", "droid"]);
-    assert!(ok && out == "Installed", "setup failed: {out}");
-
-    // What host version N left: our command, a body this version no longer renders.
-    set_status_line_at(&settings, json!({"type": "command", "command": OUR_COMMAND, "padding": 1, "maxRows": 1}));
-
-    let (ok, out) = env.fixture(&["self-heal"]);
-    assert!(ok, "self-heal errored on our own drifted rendering: {out}");
-    assert_eq!(out, "Installed", "our own drifted rendering is drift to repair, got {out}");
-    assert_eq!(status_line_at(&settings), our_status_line(), "self-heal did not converge our own rendering");
-
-    let (ok, out) = env.fixture_stdin(&["statusline", "--client", "droid"], SESSION_JSON);
-    assert!(ok, "statusline subcommand failed: {out}");
-    assert_eq!(out, "ez-fixture row\ntheir-bar-row", "compose lost the user's row");
-    assert_eq!(env.stashed_original(), seed_status_line(), "our own earlier rendering was stashed as the user's original");
-
-    let (ok, out) = env.fixture(&["update"]);
-    assert!(ok, "update failed: {out}");
-
-    let (ok, out) = env.fixture(&["uninstall"]);
-    assert!(ok && out == "Removed", "uninstall failed: {out}");
-    assert_eq!(status_line_text(&settings), seeded_text, "the stash did not survive the version change plus update");
-}
-
-#[test]
-fn droid_statusline_deleted_line_is_readded_without_losing_the_stash() {
-    let env = Env::new("statusline-drift");
-    fs::write(env.settings(), SEED_SETTINGS).unwrap();
-    let settings = env.settings();
-    let seeded_text = status_line_text(&settings);
-
-    let (ok, out) = env.fixture(&["setup", "--agent", "droid"]);
-    assert!(ok && out == "Installed", "setup failed: {out}");
-
-    remove_status_line_at(&settings);
-    let (ok, out) = env.fixture(&["self-heal"]);
-    assert!(ok, "self-heal errored on a deleted statusLine: {out}");
-    assert_eq!(out, "Installed", "a missing statusLine behind healthy surfaces is drift, got {out}");
-    assert_eq!(status_line_at(&settings), our_status_line(), "self-heal did not re-add our statusLine");
-    assert_eq!(env.stashed_original(), seed_status_line(), "the repair pass overwrote the user's stashed original");
-
-    let (ok, out) = env.fixture(&["uninstall"]);
-    assert!(ok && out == "Removed", "uninstall failed: {out}");
-    assert_eq!(status_line_text(&settings), seeded_text, "uninstall did not restore the user's statusLine");
-}
-
-#[test]
-fn droid_statusline_teardown_restores_when_the_harness_is_gone() {
-    // `uninstall`'s skip rows never call `remove`, so a user who removed droid before
-    // running our uninstall would keep our command in their settings while the marker
-    // holding their original is cleared out from under it. Driven at project scope,
-    // whose config base stays resolvable with no `~/.factory` left to detect.
-    let env = Env::new("statusline-harness-gone");
-    let settings = env.project_settings();
-    fs::create_dir_all(settings.parent().unwrap()).unwrap();
-    fs::write(&settings, SEED_SETTINGS).unwrap();
-    let seeded_text = status_line_text(&settings);
-    let project = env.project().display().to_string();
-
-    let (ok, out) = env.fixture(&["setup", "--agent", "droid", "--project", &project]);
-    assert!(ok && out == "Installed", "project-scope setup failed: {out}");
-    assert_eq!(status_line_at(&settings), our_status_line(), "our statusLine did not land at project scope");
-    assert_eq!(env.stashed_original(), seed_status_line(), "install did not stash the user's original");
-
-    let (ok, out) = env.fixture_without_droid(&["uninstall", "--project", &project]);
-    assert!(ok, "uninstall errored with the harness gone: {out}");
-    assert_eq!(out, "NoOp", "every agent should skip with nothing detected, got {out}");
-    assert_eq!(status_line_text(&settings), seeded_text, "a skipped uninstall stranded our command and dropped the stash");
-    assert!(env.marker().is_none(), "the marker should be cleared once the value is back");
-}
-
-#[test]
-fn droid_statusline_doctor_names_us_as_the_slot_owner() {
-    // Doctor's slot slice renders from three arguments this backend threads into the
-    // shared check — its own client id, the settings path, and the key path — and none
-    // of them were pinned here. Swapping the id to another backend's, or the file to a
-    // neighbouring name, left every other test in this file green while doctor told a
-    // user with a working install that someone else owns the slot.
-    //
-    // The id is the sharp one: it expands `${AGENTGEAR_CLIENT}` into the command doctor
-    // compares the live value against, so a wrong id differs from ours by that one
-    // substring and drops the check from its Ok arm to "another status line owns …".
-    let env = Env::new("statusline-doctor");
-    fs::write(env.settings(), SEED_SETTINGS).unwrap();
-
-    let (ok, out) = env.fixture(&["setup", "--agent", "droid"]);
-    assert!(ok && out == "Installed", "setup failed: {out}");
-    assert_eq!(status_line_at(&env.settings()), our_status_line(), "our statusLine did not land");
-
-    let (_, report) = env.fixture(&["doctor"]);
-    assert!(report.contains("[ ok ] status line installed"), "doctor did not report the slot as installed:\n{report}");
-    // The slot name in the message is the key path doctor was handed, joined — so this
-    // pins the path's shape too: a wrongly-nested slot prints `general.statusLine`.
-    assert!(report.contains("`ez-fixture-plugin` owns the statusLine slot"), "doctor did not recognise our own value as ours:\n{report}");
-    // Doctor rows carry no agent id, and claude/copilot-cli/antigravity-cli all render a
-    // byte-identical `statusLine` detail — so every other assertion here would read a
-    // sibling backend's row as droid's if one were ever detected in this env. None is
-    // today; this makes that a requirement of the test rather than of the sandbox, and
-    // it comes first so a sibling appearing reports THAT rather than a bogus wrong-file
-    // diagnosis. qwen-code needs no equivalent: `ui.statusLine` is unique among the five.
-    assert_eq!(report.matches("status line installed").count(), 1, "a sibling backend's slot row is in this report:\n{report}");
-    assert!(!report.contains("another status line owns"), "doctor read our own healthy install as a foreign line:\n{report}");
-    assert!(!report.contains("no `statusLine` in"), "doctor looked for the slot in the wrong file:\n{report}");
-
-    // The Ok arm names no file, so the path droid's doctor actually reads is only
-    // observable once the check leaves it. A foreign owner is the cheapest way there,
-    // and the resulting message is the one thing in this report only droid can emit.
-    set_status_line_at(&env.settings(), json!({"type": "command", "command": "echo someone-else", "padding": 0}));
-    let (_, report) = env.fixture(&["doctor"]);
-    assert!(
-        report.contains(&format!("another status line owns `statusLine` in {}", env.settings().display())),
-        "doctor did not name droid's own settings file as the slot's home:\n{report}"
-    );
+    assert_eq!(fs::read_to_string(env.settings()).unwrap(), before, "uninstall rewrote the settings file holding the user's statusLine");
 }
 
 #[test]

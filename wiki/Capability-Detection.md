@@ -40,7 +40,9 @@ project config roots, and the environment override each backend honors.
 Where a backend honors a config-dir env var, a test (or a real host) can redirect it to a temp
 directory — this is how the hermetic tests point a backend at a scratch `HOME`. The column above lists
 the precedence chain each backend follows. agentgear honors the tool's own primary config-dir
-override for every backend that has one. A few tools expose additional env vars agentgear does not
+override for every config-merge backend that has one; the two plugin-native backends (claude,
+copilot-cli) resolve no config dir of their own anymore — the one surface that used to was the
+retired status-line slot. A few tools expose additional env vars agentgear does not
 read — kilo's `KILO_CONFIG` / `KILO_CONFIG_DIR`, opencode's `OPENCODE_CONFIG_DIR` / `OPENCODE_CONFIG`,
 omp's `PI_CODING_AGENT_DIR`, and crush's higher-precedence `$XDG_DATA_HOME/crush/crush.json`
 (`CRUSH_GLOBAL_DATA`) — a known limitation if a user sets one. HOME-based backends (gemini, cursor,
@@ -48,15 +50,11 @@ droid, augment) take no override.
 
 An override set to the **empty string** is a special case worth knowing, because the tools disagree
 about it. `claude` and `copilot` both read an empty value as the config dir itself, resolving
-`settings.json` against the current working directory, so agentgear refuses that input: setting
-`CLAUDE_CONFIG_DIR=` or `COPILOT_HOME=` fails that agent's install with an error naming the variable,
-rather than writing to `~/.claude` or `~/.copilot` where the tool would never look. The refusal lands
-before any `claude`/`copilot` call, so a rejected install leaves the tool's own plugin registry
-untouched, and `doctor` reports the same condition as a failing check. It only applies to a host that
-declares a status line, since that is the one surface agentgear resolves the config dir for itself;
-a host without one installs normally, because the CLI resolves its own paths. Other backends still
-read an empty override as unset and fall back to their default root; what their tools do with an
-empty value has not been probed.
+`settings.json` against the current working directory. agentgear once refused that input — the
+guard lived on the retired status-line slot's config-dir resolver, and it is gone with that wiring;
+nothing in agentgear resolves either override anymore, so the input is simply never read and the
+CLIs resolve their own paths. Other backends still read an empty override as unset and fall back to
+their default root; what their tools do with an empty value has not been probed.
 
 ## See also
 

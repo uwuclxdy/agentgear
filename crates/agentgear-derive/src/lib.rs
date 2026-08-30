@@ -24,8 +24,8 @@ use known_agents::{KNOWN_AGENTS, feature_const_ident};
 /// At expansion the macro reads the shipped `plugin.json` (it must exist, be valid
 /// JSON, and its `name` must equal the `name` key), bakes the plugin tree in via
 /// `include_bytes!` of the `build.rs` blob, emits the `impl PluginHost` (the consts,
-/// `embedded_blob`, and the optional `instructions`/`statusline` overrides; the
-/// lifecycle methods are trait defaults), and plants const-eval guards: one fires if the host forgot
+/// `embedded_blob`, and the optional `instructions` override; the lifecycle methods
+/// are trait defaults), and plants const-eval guards: one fires if the host forgot
 /// its `build.rs`, one more per listed agent whose cargo feature is off.
 ///
 /// The host also writes the one-line build script the guard checks for:
@@ -47,7 +47,6 @@ use known_agents::{KNOWN_AGENTS, feature_const_ident};
 /// | `agents` | no | `["claude"]` | backend ids to fan out to; each must be a known id with its cargo feature on |
 /// | `embed` | no | `true` | `false` bakes an empty blob for a github/path-source host |
 /// | `instructions_fn` | no | none | path to a `fn() -> Option<String>` feeding `PluginHost::instructions` |
-/// | `statusline_fn` | no | none | path to a `fn() -> Option<StatusLineDecl>` feeding `PluginHost::statusline` |
 ///
 /// # Compile-time errors
 ///
@@ -86,9 +85,6 @@ struct Attrs {
     /// sole impl block). Spliced verbatim like `version`; `None` inherits the trait
     /// default (`None`, no instructions surface).
     instructions_fn: Option<TokenStream2>,
-    /// A path to a `fn() -> Option<StatusLineDecl>` the emitted impl calls from
-    /// `PluginHost::statusline`, wired exactly like `instructions_fn` above.
-    statusline_fn: Option<TokenStream2>,
     span: proc_macro2::Span,
 }
 
@@ -110,17 +106,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let instructions_method = match &attrs.instructions_fn {
         Some(path) => quote! {
             fn instructions() -> ::core::option::Option<::std::string::String> {
-                #path()
-            }
-        },
-        None => quote! {},
-    };
-
-    // Same seam for the status line: emitted only when the host set `statusline_fn`,
-    // else the trait default (`None`, no status-line surface on any backend).
-    let statusline_method = match &attrs.statusline_fn {
-        Some(path) => quote! {
-            fn statusline() -> ::core::option::Option<::agentgear::StatusLineDecl> {
                 #path()
             }
         },
@@ -169,8 +154,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
 
             #instructions_method
-
-            #statusline_method
         }
 
         // Fires only if the host forgot its build.rs, which would also lose the
@@ -199,7 +182,6 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
     let mut agents: Option<Vec<String>> = None;
     let mut embed: Option<bool> = None;
     let mut instructions_fn: Option<TokenStream2> = None;
-    let mut statusline_fn: Option<TokenStream2> = None;
 
     let attr = input
         .attrs
@@ -242,12 +224,6 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
                 let value = &pair.value;
                 instructions_fn = Some(quote! { #value });
             }
-            "statusline_fn" => {
-                // A fn path (e.g. `bar::decl`), spliced through verbatim and called
-                // from the emitted `statusline()`.
-                let value = &pair.value;
-                statusline_fn = Some(quote! { #value });
-            }
             other => return Err(syn::Error::new_spanned(&pair.path, format!("unknown `plugin` key `{other}`"))),
         }
     }
@@ -263,7 +239,7 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
     }
     let embed = embed.unwrap_or(true);
 
-    Ok(Attrs { name, marketplace, version, tree, default_source, github_repo, agents, embed, instructions_fn, statusline_fn, span })
+    Ok(Attrs { name, marketplace, version, tree, default_source, github_repo, agents, embed, instructions_fn, span })
 }
 
 fn default_source_tokens(attrs: &Attrs) -> syn::Result<TokenStream2> {

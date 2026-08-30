@@ -43,7 +43,6 @@ impl AgentBackend for PiBackend {
             agents: false,
             skills: false,
             instructions: false,
-            statusline: false,
             scopes: &["user"],
         }
     }

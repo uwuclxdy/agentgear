@@ -37,20 +37,6 @@ pub enum Error {
         found: String,
     },
 
-    /// A config-dir env override (`CLAUDE_CONFIG_DIR`, `COPILOT_HOME`) was set to the
-    /// empty string. The CLI it targets resolves that literally, joining its config
-    /// paths onto the empty string instead of falling back to its default, so this is
-    /// rejected outright rather than silently treated as unset.
-    #[error(
-        "`{var}` is set to an empty string; unset it or point it at a real directory. \
-         An empty override resolves against the current directory, so the write would \
-         land where the CLI never reads it."
-    )]
-    EmptyConfigDirOverride {
-        /// The environment variable that was set to the empty string.
-        var: &'static str,
-    },
-
     /// A CLI call exited non-zero.
     #[error("`{bin} {args}` failed with exit {code}:\n{stderr}")]
     #[non_exhaustive]

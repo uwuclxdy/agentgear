@@ -71,7 +71,6 @@ impl AgentBackend for OpenclawBackend {
             agents: false,
             skills: true,
             instructions: false,
-            statusline: false,
             scopes: &["user"],
         }
     }

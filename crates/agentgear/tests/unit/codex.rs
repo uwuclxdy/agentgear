@@ -128,15 +128,8 @@ fn probe_renders_from_the_resolved_source_not_the_embedded_blob() {
     std::fs::write(src.join("agents").join("helper.md"), "---\nname: helper\ndescription: helps\n---\n\nbody\n").unwrap();
 
     // Zero-embed: `blob` is empty, so `Source::Embedded` errors at materialize.
-    let plugin = Plugin {
-        name: "ez-probe-src",
-        marketplace: "ez-mkt",
-        version: "0.1.0",
-        agents: &["codex"],
-        instructions: None,
-        statusline: None,
-        blob: &[],
-    };
+    let plugin =
+        Plugin { name: "ez-probe-src", marketplace: "ez-mkt", version: "0.1.0", agents: &["codex"], instructions: None, blob: &[] };
     let project = crate::scratch::path("ez-codex-probe-dst");
     let scope = Scope::Project { path: project.clone() };
     let source = Source::Path(src.clone());
@@ -210,15 +203,7 @@ fn agentgear_client_token_expands_to_this_backend_id() {
     )
     .unwrap();
 
-    let plugin = Plugin {
-        name: "ez-cid",
-        marketplace: "ez-mkt",
-        version: "0.1.0",
-        agents: &["codex"],
-        instructions: None,
-        statusline: None,
-        blob: &[],
-    };
+    let plugin = Plugin { name: "ez-cid", marketplace: "ez-mkt", version: "0.1.0", agents: &["codex"], instructions: None, blob: &[] };
     let project = crate::scratch::path("ez-cidtok-dst");
     let scope = Scope::Project { path: project.clone() };
     let source = Source::Path(src.clone());

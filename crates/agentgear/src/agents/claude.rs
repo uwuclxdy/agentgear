@@ -1,32 +1,17 @@
 //! The Claude Code backend: converge the `claude plugin` registry to a desired
 //! state via marketplace-ensure + install/update, read back through `list --json`.
 //! It orchestrates the supported CLI; it never forges CC's on-disk state.
-//!
-//! One exception to "no config file": CC's `statusLine` slot lives in the user's
-//! own `settings.json`, not in a plugin tree, so a host that declares a status line
-//! gets it written here through the shared [`super::statuslinejson`] lifecycle. That
-//! module owns the whole slot contract (stash-before-write, restore-on-remove,
-//! command-string ownership); this backend supplies only CC's settings path, key
-//! path, and value shape.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use super::statuslinejson::{self, SlotShape};
 use super::{AgentBackend, BackendState};
 use crate::cli::{ClaudeCli, version_lt};
-use crate::doctor::{DoctorCheck, DoctorReport};
+use crate::doctor::DoctorReport;
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 use crate::manifest::{MarketplaceEntry, PluginEntry};
 use crate::materialize::{TreeSource, content_hash, materialize};
 use crate::stamp;
-
-/// CC's settings key path for the status-line slot: one top-level key holding a
-/// single object (`{"type":"command","command":…}`), never an array.
-const STATUSLINE_SLOT: &[&str] = &["statusLine"];
-
-/// CC's own slot body, which qwen-code then copied verbatim.
-const STATUSLINE_SHAPE: SlotShape = SlotShape::typed_command();
 
 pub(crate) struct ClaudeBackend;
 
@@ -43,8 +28,7 @@ impl AgentBackend for ClaudeBackend {
         // Plugin-native: the `claude plugin` install copies the whole CC tree, so
         // every surface is served natively. `instructions` stays false: it is the
         // non-CC context-file surface, and CC receives host guidance via the MCP
-        // `instructions` channel instead. `statusline` is true and NOT implied by
-        // `plugins`: the slot lives in the user's settings.json, outside any tree.
+        // `instructions` channel instead.
         Capabilities {
             plugins: true,
             mcp: true,
@@ -53,7 +37,6 @@ impl AgentBackend for ClaudeBackend {
             agents: true,
             skills: true,
             instructions: false,
-            statusline: true,
             scopes: &["user", "project"],
         }
     }
@@ -105,22 +88,8 @@ impl AgentBackend for ClaudeBackend {
         } else {
             registry
         };
-        // The registry alone decides presence. A statusLine of ours still sitting in
-        // settings.json after a manual `claude plugin uninstall` must not read as
-        // "present but drifted", or self_heal would resurrect a deliberate uninstall
-        // (the Absent arm above already returned). Once the plugin IS registered, a
-        // missing or foreign statusLine is drift like any other surface.
-        //
-        // No `ensure_statusline_resolves` hoist here, deliberately: probe never mutates
-        // anything (only reads), so an unresolvable config dir cannot strand a partial
-        // registry write the way `reconcile`/`remove` can. Hoisting it above the
-        // `Absent` early-return would also turn every self-heal poll of a plugin that
-        // was never installed into a hard failure purely from a broken env var, with
-        // nothing to protect and nothing to repair.
-        Ok(match statusline_state(plugin, scope)? {
-            None | Some(BackendState::Healthy) => registry,
-            Some(_) => BackendState::NeedsRepair,
-        })
+        // The registry alone decides presence.
+        Ok(registry)
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -129,13 +98,6 @@ impl AgentBackend for ClaudeBackend {
 
     fn remove(&self, plugin: &Plugin, scope: &Scope, _source: &Source) -> Result<Outcome> {
         remove(plugin, scope)
-    }
-
-    /// CC's statusLine slot is our only write outside the plugin registry, so a
-    /// plugin the user removed by hand leaves our command behind with nothing left
-    /// to restore it once the marker (and its stash) goes.
-    fn forget(&self, plugin: &Plugin, scope: &Scope) -> Result<()> {
-        statusline_remove(plugin, scope).map(|_| ())
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {
@@ -207,32 +169,10 @@ fn plugin_enable(cli: &ClaudeCli, id: &str, scope: &Scope) -> Result<()> {
 // --- reconcile ---------------------------------------------------------------
 
 pub(crate) fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
-    ensure_statusline_resolves(plugin, scope)?;
-    match reconcile_registry(plugin, desired, scope)? {
-        // Frozen: someone else owns this install, so its statusLine is theirs too.
-        RegistryOutcome::Frozen => Ok(Outcome::NoOp),
-        RegistryOutcome::Converged(outcome) => {
-            let changed = statusline_reconcile(plugin, desired, scope)?;
-            // A drifted statusLine behind an otherwise-converged registry is still a
-            // repair; any real registry change already outranks it.
-            Ok(match (outcome, changed) {
-                (Outcome::NoOp, true) => Outcome::Repaired,
-                (outcome, _) => outcome,
-            })
-        }
-    }
+    reconcile_registry(plugin, desired, scope)
 }
 
-/// What the plugin-registry half of a reconcile settled on. `Frozen` marks a state
-/// this binary must not touch at all — a strictly-newer install (a newer binary owns
-/// it) or a deliberate disable on a non-reenabling pass — so the statusLine half is
-/// skipped with it rather than writing over another owner's slot.
-enum RegistryOutcome {
-    Converged(Outcome),
-    Frozen,
-}
-
-fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<RegistryOutcome> {
+fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
     let cli = ClaudeCli::locate()?;
     let marketplace = find_marketplace(&cli, scope, plugin.marketplace)?;
     let entry = find_plugin(&cli, scope, plugin.name, plugin.marketplace)?;
@@ -249,7 +189,7 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
         plugin_install(&cli, &id, scope)?;
         verify_present(&cli, scope, plugin)?;
         record_staged(plugin, desired, scope, staged.as_deref())?;
-        return Ok(RegistryOutcome::Converged(Outcome::Installed));
+        return Ok(Outcome::Installed);
     };
 
     // Re-enabling does not return: a disabled entry can also be stale or holding an
@@ -260,7 +200,7 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
         // An explicit install/update honors the user's intent and re-enables (the
         // design says install flips enable state). self_heal/adopt never does.
         if !desired.reenable {
-            return Ok(RegistryOutcome::Frozen);
+            return Ok(Outcome::NoOp);
         }
         cli.ensure_min_version()?;
         plugin_enable(&cli, &id, scope)?;
@@ -280,14 +220,14 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
     // it — not even to repair a broken one — or two coexisting binaries downgrade
     // each other on every session. The newer binary owns its own repair.
     if newer {
-        return Ok(RegistryOutcome::Frozen);
+        return Ok(Outcome::NoOp);
     }
 
     if structural_ok && !stale && tree_is_current(plugin, scope, staged.as_deref())? {
         // Healthy, monotonic-satisfied (installed == embedded), and serving the tree
         // this binary ships. A re-enable above is still a change, so it reports one.
         let outcome = if re_enabled { Outcome::Repaired } else { Outcome::NoOp };
-        return Ok(RegistryOutcome::Converged(outcome));
+        return Ok(outcome);
     }
 
     cli.ensure_min_version()?;
@@ -297,7 +237,7 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
         plugin_update(&cli, &id, scope)?;
         verify_present(&cli, scope, plugin)?;
         record_staged(plugin, desired, scope, staged.as_deref())?;
-        Ok(RegistryOutcome::Converged(Outcome::Updated { from: installed, to: plugin.version.to_string() }))
+        Ok(Outcome::Updated { from: installed, to: plugin.version.to_string() })
     } else {
         // Structurally broken (registered but files/marketplace gone), or serving a
         // tree this binary no longer ships at a version that will never bump: clean
@@ -312,7 +252,7 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
         plugin_install(&cli, &id, scope)?;
         verify_present(&cli, scope, plugin)?;
         record_staged(plugin, desired, scope, staged.as_deref())?;
-        Ok(RegistryOutcome::Converged(Outcome::Repaired))
+        Ok(Outcome::Repaired)
     }
 }
 
@@ -473,7 +413,6 @@ fn verify_present(cli: &ClaudeCli, scope: &Scope, plugin: &Plugin) -> Result<()>
 // --- remove ------------------------------------------------------------------
 
 pub(crate) fn remove(plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
-    ensure_statusline_resolves(plugin, scope)?;
     let cli = ClaudeCli::locate()?;
     let id = plugin.id();
 
@@ -485,90 +424,7 @@ pub(crate) fn remove(plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
     if !marketplace_has_installed(&cli, scope, plugin.marketplace)? && find_marketplace(&cli, scope, plugin.marketplace)?.is_some() {
         let _ = marketplace_remove(&cli, plugin.marketplace, scope);
     }
-    // The statusLine slot lives in the user's settings.json, outside the plugin
-    // registry, so the CLI uninstall above cannot have touched it.
-    statusline_remove(plugin, scope)?;
     Ok(Outcome::Removed)
-}
-
-// --- statusLine ---------------------------------------------------------------
-
-/// CC's settings file for `scope`. User scope honors `CLAUDE_CONFIG_DIR` (the
-/// override every isolated install uses, and the one CC itself reads) and falls
-/// back to `~/.claude`; project scope is the project's own `.claude/settings.json`.
-fn settings_file(scope: &Scope) -> Result<PathBuf> {
-    match scope {
-        Scope::User => Ok(cc_config_dir()?.join("settings.json")),
-        Scope::Project { path } => Ok(path.join(".claude").join("settings.json")),
-    }
-}
-
-/// CC's config dir: `CLAUDE_CONFIG_DIR` when set and non-empty, else `~/.claude`.
-///
-/// Real `claude` 2.1.220 takes `CLAUDE_CONFIG_DIR=""` literally for every config-dir
-/// join, writing `settings.json` and `plugins/*` next to the current directory
-/// instead of under `~/.claude` (`docs/design.md` § empty `CLAUDE_CONFIG_DIR`). A
-/// silent fallback here would therefore write a settings file CC itself never reads
-/// behind a green doctor, so the empty case is rejected instead through the shared
-/// [`super::non_empty_config_dir`].
-fn cc_config_dir() -> Result<PathBuf> {
-    if let Some(dir) = super::config_dir_override("CLAUDE_CONFIG_DIR")? {
-        return Ok(dir);
-    }
-    dirs::home_dir()
-        .map(|home| home.join(".claude"))
-        .ok_or_else(|| Error::Tree("no home directory (HOME unset); cannot locate ~/.claude".into()))
-}
-
-/// CC's settings file for the slot lifecycle, or `None` when the host declares no
-/// status line. Resolved through the shared [`statuslinejson::target`] guard so a
-/// declaration-free host never pays for — or fails on — a config-dir lookup it has
-/// no use for.
-fn statusline_target(plugin: &Plugin, scope: &Scope) -> Result<Option<PathBuf>> {
-    statuslinejson::target(plugin, ClaudeBackend.id(), STATUSLINE_SHAPE, || settings_file(scope))
-}
-
-/// Resolve the statusLine settings path before `reconcile`/`remove` run any `claude`
-/// CLI call, so an empty `CLAUDE_CONFIG_DIR` refuses the whole operation up front
-/// instead of letting the registry mutation (marketplace add/install/update/uninstall)
-/// run to completion and only failing afterward on the slot write — which would leave
-/// the plugin installed or removed in CC's own registry behind a `Failed` status.
-/// `cli.rs` never scrubs `CLAUDE_CONFIG_DIR` from the child env, so the real CLI would
-/// otherwise perform its own cwd-relative write before we ever got a chance to reject.
-///
-/// A no-op for a host that declares no status line: `statusline_target`'s own gate
-/// already skips the config-dir lookup in that case, so such a host keeps converging
-/// normally under an empty override — nothing IT writes is misplaced, since `claude`
-/// resolves its own config dir independently of ours.
-fn ensure_statusline_resolves(plugin: &Plugin, scope: &Scope) -> Result<()> {
-    statusline_target(plugin, scope)?;
-    Ok(())
-}
-
-fn statusline_reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<bool> {
-    let Some(path) = statusline_target(plugin, scope)? else {
-        return Ok(false);
-    };
-    statuslinejson::reconcile(&path, STATUSLINE_SLOT, plugin, &desired.source, scope, ClaudeBackend.id(), STATUSLINE_SHAPE)
-}
-
-fn statusline_remove(plugin: &Plugin, scope: &Scope) -> Result<bool> {
-    let Some(path) = statusline_target(plugin, scope)? else {
-        return Ok(false);
-    };
-    statuslinejson::remove(&path, STATUSLINE_SLOT, plugin, scope, ClaudeBackend.id(), STATUSLINE_SHAPE)
-}
-
-fn statusline_state(plugin: &Plugin, scope: &Scope) -> Result<Option<BackendState>> {
-    let Some(path) = statusline_target(plugin, scope)? else {
-        return Ok(None);
-    };
-    statuslinejson::state(&path, STATUSLINE_SLOT, plugin, scope, ClaudeBackend.id(), STATUSLINE_SHAPE)
-}
-
-/// doctor's statusLine slice, or `None` when the host declares no status line.
-pub(crate) fn statusline_check(plugin: &Plugin) -> Option<DoctorCheck> {
-    statuslinejson::check(STATUSLINE_SLOT, plugin, &Scope::User, ClaudeBackend.id(), STATUSLINE_SHAPE, "Claude Code", settings_file)
 }
 
 #[cfg(test)]

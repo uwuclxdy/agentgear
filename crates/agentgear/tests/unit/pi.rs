@@ -13,7 +13,7 @@ use crate::host::{Desired, Outcome, Plugin, Scope, Source};
 
 fn plugin() -> Plugin {
     // `blob` is unused: pi writes nothing and probe ignores the plugin entirely.
-    Plugin { name: "ez-fixture", marketplace: "ez-mkt", version: "0.1.0", agents: &["pi"], instructions: None, statusline: None, blob: &[] }
+    Plugin { name: "ez-fixture", marketplace: "ez-mkt", version: "0.1.0", agents: &["pi"], instructions: None, blob: &[] }
 }
 
 #[test]

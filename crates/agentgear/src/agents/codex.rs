@@ -54,7 +54,6 @@ impl AgentBackend for CodexBackend {
             agents: true,
             skills: false,
             instructions: false,
-            statusline: false,
             scopes: &["user", "project"],
         }
     }

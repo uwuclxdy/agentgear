@@ -18,7 +18,6 @@ use crate::agents::AgentBackend;
 use crate::agents::claude::{ClaudeBackend, MarketplaceHealth, find_marketplace, marketplace_health};
 #[cfg(feature = "claude")]
 use crate::cli::{CLAUDE_FLOOR, ClaudeCli, MIN_CLAUDE_VERSION, parse_version};
-use crate::components::AGENTGEAR_CLIENT_TOKEN;
 use crate::error::Result;
 #[cfg(feature = "claude")]
 use crate::host::data_root;
@@ -122,7 +121,6 @@ pub(crate) fn doctor(plugin: &Plugin, source: &Source) -> Result<DoctorReport> {
     // Both openers are about the HOST's own authoring, not any one agent's state, so
     // they run once before the fan-out rather than inside a backend's report.
     let mut checks = vec![check_host_binary()];
-    checks.extend(check_statusline_client(plugin));
     for id in plugin.agents {
         // An unresolvable id is a failed CHECK, never an aborted report: a health
         // command that throws away every check it already collected is useless
@@ -200,19 +198,10 @@ pub(crate) fn claude_report(plugin: &Plugin, source: &Source) -> DoctorReport {
         checks.push(check_validate(plugin, source));
     }
 
-    // These are pure local checks (hash the tree, resolve hook commands on PATH,
-    // read settings.json) and stay useful even when `claude` is missing, so they run
-    // unconditionally. The statusLine check is absent entirely for a host that
-    // declares none, rather than reporting on a surface nobody asked for.
-    //
-    // No `ensure_statusline_resolves` hoist needed here: `claude_report` is infallible
-    // (returns a `DoctorReport`, never propagates an `Err`) and every CLI call above is
-    // a read (`list`, `--version`), never a mutation, so an unresolvable config dir has
-    // no partial state to strand. `statusline_check` already surfaces it as its own
-    // check (a `Fail` for an empty override, see `statuslinejson::check`).
+    // These are pure local checks (hash the tree, resolve hook commands on PATH) and
+    // stay useful even when `claude` is missing, so they run unconditionally.
     checks.push(check_tree_hash(plugin, source));
     checks.push(check_hook_commands(plugin));
-    checks.extend(crate::agents::claude::statusline_check(plugin));
 
     DoctorReport { checks }
 }
@@ -428,45 +417,6 @@ fn check_hook_commands(plugin: &Plugin) -> DoctorCheck {
             },
         }
     }
-}
-
-/// A host-AUTHORING check, like [`check_hook_commands`] above: the declared
-/// status-line command must carry `${AGENTGEAR_CLIENT}` once two or more of the
-/// host's agents can write a slot.
-///
-/// Each backend expands the token to its own id, and the host's own status-line
-/// subcommand reads the stash of the client it was invoked for
-/// ([`crate::statusline::user_original`]). Hardcode the client and every harness gets
-/// the SAME literal command, so the host reads one backend's stash from all of them:
-/// the user's own row is dropped, or another harness's stashed command runs inside
-/// this one.
-///
-/// `None` — no check at all, not an `Ok` line — below two capable agents or with the
-/// token present. There is nothing for the user to act on, and the slot's other
-/// doctor check is opt-in by declaration the same way.
-fn check_statusline_client(plugin: &Plugin) -> Option<DoctorCheck> {
-    let command = plugin.statusline.as_ref().map(|decl| decl.command.as_str())?;
-    if command.trim().is_empty() || command.contains(AGENTGEAR_CLIENT_TOKEN) {
-        return None;
-    }
-    let capable: Vec<&str> = plugin
-        .agents
-        .iter()
-        .copied()
-        .filter(|id| crate::agents::backend_for(id).is_some_and(|backend| backend.capabilities().statusline))
-        .collect();
-    if capable.len() < 2 {
-        return None;
-    }
-    Some(DoctorCheck {
-        name: "status line client token",
-        status: CheckStatus::Warn(format!(
-            "the declared status-line command names no client, but {} each write their own status-line slot: \
-             all of them get the same command, so the host reads one backend's displaced status line from every harness. \
-             put {AGENTGEAR_CLIENT_TOKEN} in the command — each backend expands it to its own id",
-            capable.join(", ")
-        )),
-    })
 }
 
 #[cfg(feature = "claude")]

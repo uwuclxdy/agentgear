@@ -12,15 +12,10 @@ the fan-out.
 | check | passes when | on failure |
 |---|---|---|
 | host binary on PATH | the running executable's name resolves via PATH | install the binary into a PATH directory, so the plugin's hooks can invoke it |
-| status line client token | the declared status-line command carries `${AGENTGEAR_CLIENT}` | put the token in the command; each backend expands it to its own id |
-
-The second appears only when two or more of the host's declared agents can write a status-line slot
-and the command names no client. Warning, never a failure. Nothing to act on means no line at all,
-so a host with one status-line agent (or none) sees only the first row.
 
 ## Claude Code checks
 
-The `claude` backend adds six, or seven for a host that declares a status line. A claude-only host
+The `claude` backend adds six. A claude-only host
 sees exactly these plus the shared check above:
 
 | # | check | passes when | on failure |
@@ -31,30 +26,19 @@ sees exactly these plus the shared check above:
 | 4 | manifest validates | `claude plugin validate <current> --strict` is clean | fix the reported manifest issue, then `update` |
 | 5 | current tree matches embedded | the materialized tree hashes equal the embedded tree | re-run `update` to re-materialize a stale or corrupt pointer |
 | 6 | hook commands on PATH | every bare command the plugin's hooks call resolves | install the missing binaries |
-| 7 | status line installed | the `statusLine` slot in the user's `settings.json` holds exactly the host's declared line | run the host's `setup` |
 
-Checks 5 to 7 need no `claude`, so they run even when Claude Code is absent. Check 7 exists only
-for a host that declares a [status line](Capability-Status-Line), and warns rather than fails when
-another tool holds the slot: it holds one value, so being displaced is a real state the user can
-see, not a broken install. A slot whose command is still ours (current or last-written) but whose
-value has drifted gets its own warning wording, distinct from a genuinely foreign owner; the next
-`self_heal` repairs it. Every other status-line backend appends the same check to its own slice,
-worded against its own tool and settings file. One more warning arm reaches those: a slot
-agentgear owns sitting behind the tool's own off-switch (antigravity-cli's `enabled`) reports
-`[warn]` naming the switch and how to turn it back on. The install is correct and converged in that
-state; it simply renders nothing.
+Checks 5 and 6 need no `claude`, so they run even when Claude Code is absent.
 
 On a zero-embed host (`embed = false`, github source) check 5 reports `github source; not applicable`, but check 6 still reads the baked tree and warns `could not read the embedded tree` on every run. That warning is the expected steady state for such a host today, not a break.
 
 ## copilot-cli checks
 
-The other plugin-native backend adds two, or three for a host that declares a status line:
+The other plugin-native backend adds two:
 
 | check | passes when |
 |---|---|
 | copilot version | `copilot --version` is at or above the floor `1.0.71`, where the `plugin` lifecycle landed |
 | plugin registered | `copilot plugin list` lists `name@marketplace` |
-| status line installed | the `statusLine` slot in `settings.json` under `$COPILOT_HOME` (else `~/.copilot`) holds exactly the host's declared line, user scope |
 
 An unreadable or unparseable version is a warning, not a failure, and the run proceeds. `copilot`
 off PATH means the backend is undetected, so the slice collapses to the shared `not installed on
@@ -71,7 +55,6 @@ A detected config-merge backend contributes its own slice:
 | mcp server registered | the plugin's server sits under the tool's mcp key in that config |
 | mcp command on PATH | the server's bare command resolves on PATH |
 | translated files present | the commands/agents/hooks agentgear wrote for the tool are on disk |
-| status line installed | the tool's own status-line slot holds exactly the host's declared line (`qwen-code`, `antigravity-cli`, `droid`; only for a host that declares one) |
 
 codex reports its translated hooks as a warning: they sit inert in its config until a human trusts them through codex's `/hooks` TUI. kimi has no trust gate, so its hooks check reports ok.
 

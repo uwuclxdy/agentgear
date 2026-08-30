@@ -2,12 +2,12 @@
 //! the hermetic copilot-cli-backend tests.
 //!
 //! The real CLI is the transaction boundary the copilot-cli backend orchestrates, so
-//! every backend behavior that is NOT the registry — the `statusLine` slot in
-//! `$COPILOT_HOME/settings.json`, the stamp-marker stash, doctor's local checks — is
-//! otherwise reachable only from the docker leg, which needs a real (auth'd) `copilot`
-//! and cannot run under `cargo test`. This binary models just enough of the registry
-//! (`plugin list`/`install`/`update`/`uninstall`, `plugin marketplace list`/`add`,
-//! `--version`) for those tests to run in the normal `cargo test` job.
+//! every backend behavior that is NOT the registry — doctor's local checks, the
+//! tree-hash staleness gate — is otherwise reachable only from the docker leg, which
+//! needs a real (auth'd) `copilot` and cannot run under `cargo test`. This binary
+//! models just enough of the registry (`plugin list`/`install`/`update`/`uninstall`,
+//! `plugin marketplace list`/`add`, `--version`) for those tests to run in the
+//! normal `cargo test` job.
 //!
 //! It is a DOUBLE, never a spec: `docs/research/verify-copilot-cli.md`'s live findings
 //! and the docker leg against the real binary stay the authority on copilot's behavior.

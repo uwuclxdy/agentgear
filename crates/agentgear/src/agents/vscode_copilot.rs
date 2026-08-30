@@ -70,7 +70,6 @@ impl AgentBackend for VscodeCopilotBackend {
             agents: true,
             skills: false,
             instructions: false,
-            statusline: false,
             scopes: &["project"],
         }
     }

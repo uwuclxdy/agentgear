@@ -20,7 +20,6 @@ fn marker(source_mode: &str, source_path: Option<&str>) -> Marker {
         project_path: None,
         source_path: source_path.map(String::from),
         statusline_original: None,
-        statusline_command: None,
         tree_hash: None,
         reinstalling: false,
     }
@@ -120,9 +119,11 @@ fn marker_without_statusline_original_still_deserializes() {
 }
 
 #[test]
-fn statusline_original_round_trips_verbatim() {
+fn a_legacy_statusline_original_round_trips_verbatim() {
     // The stash is the user's own value in whatever shape their harness used, so it
-    // must survive serialization byte-for-byte — including keys we never write.
+    // must survive serialization byte-for-byte — including keys we never wrote.
+    // Written only by pre-retirement binaries now, but still carried forward by
+    // every `write` so the print subcommand keeps composing the user's row.
     let raw = serde_json::json!({"type": "command", "command": "their-bar --wide", "padding": 2, "theirKey": ["a", 1]});
     let mut m = marker("embedded", None);
     m.statusline_original = Some(raw.clone());
@@ -141,39 +142,22 @@ fn an_absent_stash_writes_no_key() {
 }
 
 #[test]
-fn marker_without_statusline_command_still_deserializes() {
-    // Every marker written before the slot's ownership record existed carries no such
-    // key. It must load as "no record", which puts ownership back on the
-    // current-command compare — not fail the whole marker read, which is treated as
-    // absent and would silently re-adopt the install.
+fn a_marker_written_by_a_pre_retirement_binary_still_deserializes() {
+    // Pre-retirement binaries recorded the command they wrote into the slot
+    // (`statusline_command`) beside the stash. Nothing reads the record anymore,
+    // but the marker itself must still load — a failed read is treated as absent,
+    // which would silently re-adopt an install.
     let json = r#"{
         "binary_version": "0.1.0",
         "plugin_version": "0.1.0",
         "source_mode": "embedded",
         "scope": "user",
         "agent": "claude",
-        "statusline_original": {"type": "command", "command": "their-bar"}
+        "statusline_original": {"type": "command", "command": "their-bar"},
+        "statusline_command": "mytool statusline --client claude"
     }"#;
-    let marker: Marker = serde_json::from_str(json).expect("an old marker without statusline_command must still load");
-    assert_eq!(marker.statusline_command, None);
-    assert!(marker.statusline_original.is_some(), "the stash beside it must still load");
-}
-
-#[test]
-fn an_absent_statusline_command_writes_no_key() {
-    // `skip_serializing_if` keeps a record-free marker byte-identical to what a binary
-    // predating the field wrote, so an older binary reading it sees no change.
-    let rendered = serde_json::to_string(&marker("embedded", None)).expect("marker must serialize");
-    assert!(!rendered.contains("statusline_command"), "an unset command record must not emit the key: {rendered}");
-}
-
-#[test]
-fn statusline_command_round_trips() {
-    let mut m = marker("embedded", None);
-    m.statusline_command = Some("mytool statusline --client claude".into());
-    let bytes = serde_json::to_vec(&m).expect("marker must serialize");
-    let back: Marker = serde_json::from_slice(&bytes).expect("round-tripped marker must parse");
-    assert_eq!(back.statusline_command.as_deref(), Some("mytool statusline --client claude"));
+    let marker: Marker = serde_json::from_str(json).expect("a pre-retirement marker must still load");
+    assert!(marker.statusline_original.is_some(), "the stash beside the record must still load");
 }
 
 #[test]

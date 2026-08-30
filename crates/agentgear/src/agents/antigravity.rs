@@ -55,7 +55,6 @@ impl AgentBackend for AntigravityBackend {
             agents: false,
             skills: false,
             instructions: false,
-            statusline: false,
             scopes: &["user"],
         }
     }
