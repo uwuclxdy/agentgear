@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::{
-    blob_entries, compress_dir, dir_hash, dir_hash_for_client, expand_client_entries, generate_marketplace, tree_hash, write_version_dir,
+    TreeSource, blob_entries, compress_dir, content_hash, dir_hash, expand_client_entries, generate_marketplace, prune_superseded,
+    version_dir_name, write_version_dir,
 };
 use crate::host::Plugin;
 
@@ -56,7 +57,7 @@ fn embedded_hash_equals_materialized_hash() {
     // The generated marketplace.json lives in the materialized tree but is
     // excluded from the hash, so the two sides must match exactly.
     assert!(version_dir.join(".claude-plugin/marketplace.json").exists());
-    assert_eq!(dir_hash(&version_dir).unwrap(), tree_hash(&blob, "claude").unwrap());
+    assert_eq!(dir_hash(&version_dir).unwrap(), content_hash(TreeSource::Blob(&blob), "claude").unwrap());
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -103,11 +104,11 @@ fn client_token_materializes_per_client_and_hashes_match_baseline() {
 
     // doctor's exact equality: on-disk current@claude == the substituted baseline,
     // from both the blob and the source-dir hashers.
-    assert_eq!(dir_hash(&version_dir).unwrap(), tree_hash(&blob, "claude").unwrap());
-    assert_eq!(dir_hash(&version_dir).unwrap(), dir_hash_for_client(&src, "claude").unwrap());
+    assert_eq!(dir_hash(&version_dir).unwrap(), content_hash(TreeSource::Blob(&blob), "claude").unwrap());
+    assert_eq!(dir_hash(&version_dir).unwrap(), content_hash(TreeSource::Dir(&src), "claude").unwrap());
     // Per-client staging: a different client bakes different bytes, so the shared
     // data root can never collide between two plugin-native backends.
-    assert_ne!(tree_hash(&blob, "claude").unwrap(), tree_hash(&blob, "copilot-cli").unwrap());
+    assert_ne!(content_hash(TreeSource::Blob(&blob), "claude").unwrap(), content_hash(TreeSource::Blob(&blob), "copilot-cli").unwrap());
 
     std::fs::remove_dir_all(&src).ok();
     std::fs::remove_dir_all(&root).ok();
@@ -137,6 +138,62 @@ fn write_version_dir_is_idempotent_when_target_exists() {
     assert!(temps.is_empty(), "leftover temp dirs: {temps:?}");
 
     std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn one_changed_byte_at_an_unchanged_version_keys_a_new_dir() {
+    // The staleness class: version-keyed dirs skipped the write for any tree the
+    // version had already staged, so a same-version edit never reached a box.
+    let src = scratch();
+    let cp = src.join(".claude-plugin");
+    std::fs::create_dir_all(&cp).unwrap();
+    std::fs::write(cp.join("plugin.json"), br#"{"name":"drift","version":"0.1.0","description":"d","author":{"name":"a"}}"#).unwrap();
+    std::fs::create_dir_all(src.join("hooks")).unwrap();
+    std::fs::write(src.join("hooks").join("hooks.json"), b"{\"hooks\":{}}").unwrap();
+
+    let before = content_hash(TreeSource::Dir(&src), "claude").unwrap();
+    std::fs::write(src.join("hooks").join("hooks.json"), b"{\"hooks\":{ }}").unwrap();
+    let after = content_hash(TreeSource::Dir(&src), "claude").unwrap();
+
+    assert_ne!(before, after, "a changed byte must change the tree hash");
+    assert_ne!(
+        version_dir_name("0.1.0", &before, "claude"),
+        version_dir_name("0.1.0", &after, "claude"),
+        "a changed tree must key a different version dir at the same version"
+    );
+
+    std::fs::remove_dir_all(&src).ok();
+}
+
+#[test]
+fn prune_drops_this_versions_other_variants_and_keeps_everything_else() {
+    let versions = scratch();
+    let keep = version_dir_name("0.1.0", &"a".repeat(64), "claude");
+    // Superseded: this version's other content variant, plus the version-keyed name a
+    // pre-content-keying binary wrote.
+    let superseded = version_dir_name("0.1.0", &"b".repeat(64), "claude");
+    let legacy = "0.1.0@claude".to_string();
+    // Kept: another client's staging, another version, a pre-release version this
+    // version's string is a prefix of, and a concurrent writer's temp dir.
+    let other_client = version_dir_name("0.1.0", &"c".repeat(64), "copilot-cli");
+    let other_version = version_dir_name("0.2.0", &"d".repeat(64), "claude");
+    let prerelease = version_dir_name("0.1.0-rc.1", &"e".repeat(64), "claude");
+    let temp = "0.1.0.tmp.deadbeef.42".to_string();
+    let all = [&keep, &superseded, &legacy, &other_client, &other_version, &prerelease, &temp];
+    for name in all {
+        std::fs::create_dir_all(versions.join(name)).unwrap();
+    }
+
+    prune_superseded(&versions, "0.1.0", "claude", &keep);
+
+    for name in [&superseded, &legacy] {
+        assert!(!versions.join(name).exists(), "{name} should have been pruned");
+    }
+    for name in [&keep, &other_client, &other_version, &prerelease, &temp] {
+        assert!(versions.join(name).exists(), "{name} must survive the prune");
+    }
+
+    std::fs::remove_dir_all(&versions).ok();
 }
 
 #[test]

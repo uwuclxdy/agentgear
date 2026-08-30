@@ -21,6 +21,7 @@ fn marker(source_mode: &str, source_path: Option<&str>) -> Marker {
         source_path: source_path.map(String::from),
         statusline_original: None,
         statusline_command: None,
+        tree_hash: None,
     }
 }
 
@@ -55,6 +56,26 @@ fn marker_with_source_path_round_trips() {
     let bytes = serde_json::to_vec(&marker).expect("marker must serialize");
     let round_tripped: Marker = serde_json::from_slice(&bytes).expect("round-tripped marker must parse");
     assert_eq!(round_tripped.source_path.as_deref(), Some("/tmp/some/plugin"));
+}
+
+#[test]
+fn marker_without_tree_hash_still_deserializes_and_writes_no_key() {
+    // Every marker written before the content record existed carries no such key. It
+    // must load as "what this harness holds is unaccounted for" — which converges once
+    // and records — rather than failing the read, since a failed read reads as absent
+    // and would let self_heal re-adopt an install it never made.
+    let json = r#"{
+        "binary_version": "0.1.0",
+        "plugin_version": "0.1.0",
+        "source_mode": "embedded",
+        "scope": "user",
+        "agent": "claude"
+    }"#;
+    let marker: Marker = serde_json::from_str(json).expect("an old marker without tree_hash must still load");
+    assert_eq!(marker.tree_hash, None);
+
+    let rendered = serde_json::to_string(&marker).expect("marker must serialize");
+    assert!(!rendered.contains("tree_hash"), "an absent record must not emit the key: {rendered}");
 }
 
 #[test]

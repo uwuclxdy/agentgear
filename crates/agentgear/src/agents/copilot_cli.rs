@@ -43,7 +43,8 @@ use crate::cli::{CopilotCli, CopilotPlugin, MIN_COPILOT_VERSION, copilot_meets_f
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
-use crate::materialize::{TreeSource, materialize};
+use crate::materialize::{TreeSource, content_hash, materialize};
+use crate::stamp;
 
 /// copilot's settings key path for the status-line slot: one root-level key holding a
 /// single object, never an array.
@@ -101,7 +102,8 @@ impl AgentBackend for CopilotCliBackend {
         // version-comparable embedded/path install; `plugin list` has no
         // install-path/enabled column, so there is no `Disabled` / files-gone state.
         let cli = CopilotCli::locate()?;
-        let registry = classify(source, find_plugin(&cli, plugin)?.as_ref(), plugin.version);
+        let tree_current = tree_is_current(plugin, scope, staged_tree_hash(plugin, source)?.as_deref())?;
+        let registry = classify(source, find_plugin(&cli, plugin)?.as_ref(), plugin.version, tree_current);
         if matches!(registry, BackendState::Absent) {
             return Ok(BackendState::Absent);
         }
@@ -197,6 +199,13 @@ fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcom
     let cli = CopilotCli::locate()?;
     let id = plugin.id();
 
+    // The tree this pass would stage, hashed before anything is written: copilot copies
+    // the tree into `~/.copilot/installed-plugins/` at install time and never re-reads
+    // it, so an edited tree at an unchanged version reaches copilot only through a
+    // reinstall.
+    let staged = staged_tree_hash(plugin, &desired.source)?;
+    let tree_current = tree_is_current(plugin, scope, staged.as_deref())?;
+
     // The registry half first, exactly as claude splits it: `PresentAction::Frozen`
     // returns before the slot is touched, every other arm falls through to converge it.
     let registry = match find_plugin(&cli, plugin)? {
@@ -210,9 +219,10 @@ fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcom
             ensure_marketplace(&cli, plugin, &desired.source)?;
             plugin_install(&cli, &id)?;
             verify_present(&cli, plugin)?;
+            record_staged(plugin, desired, scope, staged.as_deref())?;
             Outcome::Installed
         }
-        Some(entry) => match present_action(&desired.source, entry.version.as_deref(), plugin.version) {
+        Some(entry) => match present_action(&desired.source, entry.version.as_deref(), plugin.version, tree_current) {
             // A newer binary owns this install, so its slot is theirs too: skip the
             // slot write entirely rather than writing over another owner's value.
             PresentAction::Frozen => return Ok(Outcome::NoOp),
@@ -222,7 +232,20 @@ fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcom
                 ensure_marketplace(&cli, plugin, &desired.source)?;
                 plugin_update(&cli, &id)?;
                 verify_present(&cli, plugin)?;
+                record_staged(plugin, desired, scope, staged.as_deref())?;
                 Outcome::Updated { from: entry.version.clone(), to: plugin.version.to_string() }
+            }
+            PresentAction::Refresh => {
+                // copilot's install copy is not version-keyed (one dir per plugin), so
+                // uninstall + install is what replaces it; `plugin update` at an
+                // unchanged version has nothing to compare and is not proven to re-copy.
+                cli.ensure_min_version()?;
+                ensure_marketplace(&cli, plugin, &desired.source)?;
+                plugin_uninstall(&cli, &id)?;
+                plugin_install(&cli, &id)?;
+                verify_present(&cli, plugin)?;
+                record_staged(plugin, desired, scope, staged.as_deref())?;
+                Outcome::Repaired
             }
         },
     };
@@ -239,8 +262,11 @@ fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcom
 /// Ensure our marketplace is registered, add-if-absent. Embedded/path add the
 /// client-scoped `current@copilot-cli` dir; github adds the bare `repo` (copilot
 /// clones its default branch). copilot has no `marketplace update`, but flipping
-/// `current@copilot-cli` in place re-points it across versions, so a re-materialize
-/// needs no re-add and `plugin update` re-reads the refreshed tree.
+/// `current@copilot-cli` in place re-points it across versions AND across tree edits,
+/// so a re-materialize needs no re-add: the registered marketplace resolves through the
+/// pointer to whatever was staged last. Handing that tree to the plugin registry is a
+/// separate step (`PresentAction::Update`/`Refresh`), since copilot's install copy is
+/// written once and never re-read.
 ///
 /// Ceiling: an install predating client-scoping sits on a plain `current` this code
 /// no longer writes, and copilot exposes no marketplace update/remove to re-point it,
@@ -287,6 +313,9 @@ enum PresentAction {
     /// converges (a github install is ours, just unpinnable).
     NoOp,
     Update,
+    /// Same version, different tree: copilot holds bytes this binary no longer ships,
+    /// at a version that will never bump. Only a reinstall replaces its install copy.
+    Refresh,
     /// A strictly-newer install: a newer binary owns it, the slot included. claude's
     /// `RegistryOutcome::Frozen`, split out of `NoOp` because the two need different
     /// slot handling — writing our command into an install another binary owns would
@@ -302,12 +331,51 @@ enum PresentAction {
 /// binaries never downgrade each other and neither takes the other's slot. An
 /// unparseable or missing installed version is neither older nor newer, so it stays
 /// `NoOp` — converged, slot included.
-fn present_action(source: &Source, installed: Option<&str>, embedded: &str) -> PresentAction {
+///
+/// `tree_current` is the last term, and only reached at a version that is neither
+/// stale nor newer: a version bump re-copies the tree anyway, and a newer install
+/// belongs to a binary whose tree is not ours to replace.
+fn present_action(source: &Source, installed: Option<&str>, embedded: &str, tree_current: bool) -> PresentAction {
     match source {
         Source::GitHub { .. } => PresentAction::NoOp,
         _ if version_lt(installed, embedded) => PresentAction::Update,
         _ if installed.is_some_and(|v| version_lt(Some(embedded), v)) => PresentAction::Frozen,
+        _ if !tree_current => PresentAction::Refresh,
         _ => PresentAction::NoOp,
+    }
+}
+
+/// The hash of the tree this reconcile would stage for copilot, or `None` for a github
+/// source — that one has no local tree, and copilot tracks the repo's default branch.
+fn staged_tree_hash(plugin: &Plugin, source: &Source) -> Result<Option<String>> {
+    let client = CopilotCliBackend.id();
+    match source {
+        Source::Embedded => content_hash(TreeSource::Blob(plugin.blob()), client).map(Some),
+        Source::Path(p) => content_hash(TreeSource::Dir(p), client).map(Some),
+        Source::GitHub { .. } => Ok(None),
+    }
+}
+
+/// Whether copilot already holds the tree `staged` names, read off this agent's own
+/// stamp marker. Unknown content converges rather than assuming freshness: a github
+/// source has no tree to compare (always current), while a marker that is absent or
+/// predates the record leaves what copilot copied unaccounted for, and the version
+/// comparison can never account for it either.
+fn tree_is_current(plugin: &Plugin, scope: &Scope, staged: Option<&str>) -> Result<bool> {
+    let Some(staged) = staged else {
+        return Ok(true);
+    };
+    let marker = stamp::read(plugin, scope, CopilotCliBackend.id())?;
+    Ok(marker.and_then(|m| m.tree_hash).is_some_and(|recorded| recorded == staged))
+}
+
+/// Record the tree copilot now holds, after the call that handed it over succeeded. A
+/// github source records nothing: it has no local tree, and overwriting an earlier
+/// local record would hide the drift of a host switching back.
+fn record_staged(plugin: &Plugin, desired: &Desired, scope: &Scope, staged: Option<&str>) -> Result<()> {
+    match staged {
+        Some(hash) => stamp::record_tree_hash(plugin, scope, &desired.source, CopilotCliBackend.id(), hash),
+        None => Ok(()),
     }
 }
 
@@ -316,11 +384,22 @@ fn present_action(source: &Source, installed: Option<&str>, embedded: &str) -> P
 /// is the default branch drifting, not a repairable break — avoids churn). Other
 /// sources compare monotonic version. copilot's `plugin list` carries no install-path
 /// or enabled column, so there is no `Disabled` / files-gone state.
-fn classify(source: &Source, entry: Option<&CopilotPlugin>, embedded: &str) -> BackendState {
+///
+/// `tree_current` is the one thing the registry read cannot show: copilot's install
+/// copy is not version-keyed, so an edited tree at an unchanged version leaves both the
+/// entry and its version correct. Without it here, self_heal's `(marker present,
+/// Healthy)` row no-ops forever and a box converges only on an explicit `setup`.
+fn classify(source: &Source, entry: Option<&CopilotPlugin>, embedded: &str, tree_current: bool) -> BackendState {
     match entry {
         None => BackendState::Absent,
         Some(_) if matches!(source, Source::GitHub { .. }) => BackendState::Healthy,
         Some(e) if version_lt(e.version.as_deref(), embedded) => BackendState::NeedsRepair,
+        // Monotonic outranks the tree term, exactly as `present_action`'s `Frozen` does:
+        // a strictly-newer install holds a newer binary's tree, which never matches our
+        // hash, so classifying it NeedsRepair would spawn a reconcile every session for
+        // the `Frozen` no-op to throw away.
+        Some(e) if e.version.as_deref().is_some_and(|v| version_lt(Some(embedded), v)) => BackendState::Healthy,
+        Some(_) if !tree_current => BackendState::NeedsRepair,
         Some(_) => BackendState::Healthy,
     }
 }

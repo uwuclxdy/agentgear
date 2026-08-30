@@ -552,3 +552,63 @@ fn copilot_cli_teardown_with_nothing_installed_writes_no_file() {
     assert_eq!(out, "NoOp", "a teardown with nothing of ours to undo must report no change, got {out}");
     assert!(!env.settings_path().exists(), "teardown created a settings file it had nothing to undo in");
 }
+
+/// Mirrors `fake_copilot.rs`'s own `CALL_LOG_FILENAME`, for the same reason the state
+/// file's name is duplicated above.
+const FAKE_COPILOT_CALL_LOG: &str = "fake-copilot-calls.log";
+
+/// The fixture plugin's own name, which is also its data-root directory.
+const PLUGIN_NAME: &str = "ez-fixture-plugin";
+
+fn copy_dir_all(src: &Path, dst: &Path) {
+    fs::create_dir_all(dst).unwrap();
+    for entry in fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let dst_path = dst.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir_all(&entry.path(), &dst_path);
+        } else {
+            fs::copy(entry.path(), &dst_path).unwrap();
+        }
+    }
+}
+
+#[test]
+fn copilot_cli_reinstalls_a_same_version_tree_change_and_nothing_else() {
+    // copilot's install copy is keyed on the plugin, its freshness on the version, so a
+    // tree edited at an unchanged version is invisible to every version comparison the
+    // registry offers and copilot keeps serving the bytes it first copied. Only a
+    // reinstall replaces that copy, and the registry cannot show one — uninstall +
+    // install of the same id leaves the state that was already there — so the double's
+    // call log is the observation.
+    let env = Env::new("tree-refresh");
+    let src = env.root.join("src-plugin");
+    copy_dir_all(&Path::new(env!("CARGO_MANIFEST_DIR")).join("plugin"), &src);
+    let source = src.to_str().unwrap().to_string();
+    let hello = src.join("commands").join("hello.md");
+    let staged = env.data.join(PLUGIN_NAME).join("current@copilot-cli").join("commands").join("hello.md");
+    let calls = || fs::read_to_string(env.copilot_home.join(FAKE_COPILOT_CALL_LOG)).unwrap_or_default();
+    let uninstalls = |log: &str| log.lines().filter(|l| l.starts_with("plugin uninstall")).count();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "copilot-cli", "--path", &source]);
+    assert!(ok, "first setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup did not install");
+    let after_install = calls();
+
+    // An unchanged tree must not churn: without this leg the refresh below passes for
+    // any binary that simply reinstalls every session.
+    let (ok, out) = env.fixture(&["setup", "--agent", "copilot-cli", "--path", &source]);
+    assert!(ok, "second setup failed: {out}");
+    assert_eq!(out, "NoOp", "an unchanged tree at an unchanged version must converge to a no-op");
+    assert_eq!(uninstalls(&calls()), uninstalls(&after_install), "an unchanged tree must not reinstall:\n{}", calls());
+
+    let original = fs::read_to_string(&hello).unwrap();
+    fs::write(&hello, format!("{original}\n<!-- same-version-edit -->\n")).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "copilot-cli", "--path", &source]);
+    assert!(ok, "third setup failed: {out}");
+    let staged_body = fs::read_to_string(&staged).unwrap();
+    assert!(staged_body.contains("same-version-edit"), "the edit never reached the staged tree:\n{staged_body}");
+    assert_eq!(uninstalls(&calls()), uninstalls(&after_install) + 1, "a changed tree must reinstall exactly once:\n{}", calls());
+    assert_eq!(out, "Repaired", "a re-copied tree is a repair, not a no-op");
+}

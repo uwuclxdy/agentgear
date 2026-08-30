@@ -96,12 +96,12 @@ fn github_marketplace_source_drops_the_unpinnable_ref() {
 #[test]
 fn present_action_updates_only_a_stale_non_github_install() {
     let src = Source::Embedded;
-    assert_eq!(present_action(&src, Some("0.1.0"), "0.2.0"), PresentAction::Update);
-    assert_eq!(present_action(&src, Some("0.2.0"), "0.2.0"), PresentAction::NoOp);
+    assert_eq!(present_action(&src, Some("0.1.0"), "0.2.0", true), PresentAction::Update);
+    assert_eq!(present_action(&src, Some("0.2.0"), "0.2.0", true), PresentAction::NoOp);
     // unparseable / missing installed => never churn, and never freeze either: neither
     // older nor newer, so the slot still converges.
-    assert_eq!(present_action(&src, None, "0.2.0"), PresentAction::NoOp);
-    assert_eq!(present_action(&src, Some("weird"), "0.2.0"), PresentAction::NoOp);
+    assert_eq!(present_action(&src, None, "0.2.0", true), PresentAction::NoOp);
+    assert_eq!(present_action(&src, Some("weird"), "0.2.0", true), PresentAction::NoOp);
 }
 
 #[test]
@@ -111,11 +111,27 @@ fn present_action_freezes_a_strictly_newer_install() {
     // differ on the status-line slot. `NoOp` converges the slot; taking it here would
     // point a newer binary's status line at this older one, on every session.
     let src = Source::Embedded;
-    assert_eq!(present_action(&src, Some("0.3.0"), "0.2.0"), PresentAction::Frozen);
-    assert_eq!(present_action(&src, Some("1.0.0"), "0.2.0"), PresentAction::Frozen);
+    assert_eq!(present_action(&src, Some("0.3.0"), "0.2.0", true), PresentAction::Frozen);
+    assert_eq!(present_action(&src, Some("1.0.0"), "0.2.0", true), PresentAction::Frozen);
     // Same for a `--path` install: the freeze is about who owns the install, not the
     // source it came from.
-    assert_eq!(present_action(&Source::Path(PathBuf::from("/tmp/tree")), Some("0.3.0"), "0.2.0"), PresentAction::Frozen);
+    assert_eq!(present_action(&Source::Path(PathBuf::from("/tmp/tree")), Some("0.3.0"), "0.2.0", true), PresentAction::Frozen);
+}
+
+#[test]
+fn present_action_refreshes_a_same_version_tree_change_but_never_outranks_the_others() {
+    // The staleness class: copilot's install copy is keyed on the plugin, and its
+    // freshness is keyed on the version, so a same-version tree edit is invisible to
+    // every version comparison here. It has to be its own term, and the last one.
+    let src = Source::Embedded;
+    assert_eq!(present_action(&src, Some("0.2.0"), "0.2.0", false), PresentAction::Refresh);
+    assert_eq!(present_action(&src, None, "0.2.0", false), PresentAction::Refresh);
+    // A version bump re-copies the tree on its own: `Update`, not a reinstall.
+    assert_eq!(present_action(&src, Some("0.1.0"), "0.2.0", false), PresentAction::Update);
+    // A newer binary's install is not ours to replace, whatever tree we hold.
+    assert_eq!(present_action(&src, Some("0.3.0"), "0.2.0", false), PresentAction::Frozen);
+    // github has no local tree to compare, so it can never reach this term.
+    assert_eq!(present_action(&github(), Some("0.2.0"), "0.2.0", false), PresentAction::NoOp);
 }
 
 #[test]
@@ -123,9 +139,9 @@ fn present_action_github_present_is_converged_no_version_churn() {
     // copilot can't pin a ref, so the default-branch version is unrelated to the
     // baked one — a present github install must NoOp, never `plugin update` each
     // session even when the versions differ in either direction.
-    assert_eq!(present_action(&github(), Some("0.1.0"), "0.2.0"), PresentAction::NoOp);
-    assert_eq!(present_action(&github(), Some("0.9.0"), "0.2.0"), PresentAction::NoOp);
-    assert_eq!(present_action(&github(), None, "0.2.0"), PresentAction::NoOp);
+    assert_eq!(present_action(&github(), Some("0.1.0"), "0.2.0", true), PresentAction::NoOp);
+    assert_eq!(present_action(&github(), Some("0.9.0"), "0.2.0", true), PresentAction::NoOp);
+    assert_eq!(present_action(&github(), None, "0.2.0", true), PresentAction::NoOp);
 }
 
 #[test]
@@ -135,23 +151,38 @@ fn present_action_github_outranks_the_freeze() {
     // default branch, so a newer number there is drift, not another binary's install —
     // freezing on it would silently stop writing the slot for every github host whose
     // default branch moved ahead of the baked version.
-    assert_eq!(present_action(&github(), Some("9.9.9"), "0.2.0"), PresentAction::NoOp);
+    assert_eq!(present_action(&github(), Some("9.9.9"), "0.2.0", true), PresentAction::NoOp);
 }
 
 #[test]
 fn classify_maps_presence_and_version_to_state() {
     let src = Source::Embedded;
-    assert!(matches!(classify(&src, None, "0.2.0"), BackendState::Absent));
-    assert!(matches!(classify(&src, Some(&plugin("p", "m", Some("0.1.0"))), "0.2.0"), BackendState::NeedsRepair));
-    assert!(matches!(classify(&src, Some(&plugin("p", "m", Some("0.2.0"))), "0.2.0"), BackendState::Healthy));
+    assert!(matches!(classify(&src, None, "0.2.0", true), BackendState::Absent));
+    assert!(matches!(classify(&src, Some(&plugin("p", "m", Some("0.1.0"))), "0.2.0", true), BackendState::NeedsRepair));
+    assert!(matches!(classify(&src, Some(&plugin("p", "m", Some("0.2.0"))), "0.2.0", true), BackendState::Healthy));
     // a strictly-newer install reads Healthy (monotonic — never repair/downgrade it).
-    assert!(matches!(classify(&src, Some(&plugin("p", "m", Some("0.9.0"))), "0.2.0"), BackendState::Healthy));
+    assert!(matches!(classify(&src, Some(&plugin("p", "m", Some("0.9.0"))), "0.2.0", true), BackendState::Healthy));
+}
+
+#[test]
+fn classify_reads_a_same_version_tree_change_as_needing_repair() {
+    // self_heal's `(marker present, Healthy)` row mutates nothing, so a drifted tree
+    // that classifies Healthy here converges only on an explicit `setup`. The version
+    // terms cannot see it: copilot's install copy is keyed on the plugin, not the tree.
+    let src = Source::Embedded;
+    assert!(matches!(classify(&src, Some(&plugin("p", "m", Some("0.2.0"))), "0.2.0", false), BackendState::NeedsRepair));
+    // Monotonic still outranks it: a strictly-newer install belongs to another binary.
+    assert!(matches!(classify(&src, Some(&plugin("p", "m", Some("0.9.0"))), "0.2.0", false), BackendState::Healthy));
+    // github has no local tree to compare, so it can never reach this term.
+    assert!(matches!(classify(&github(), Some(&plugin("p", "m", Some("0.2.0"))), "0.2.0", false), BackendState::Healthy));
+    // Absent stays absent: self_heal must never resurrect a deliberate uninstall.
+    assert!(matches!(classify(&src, None, "0.2.0", false), BackendState::Absent));
 }
 
 #[test]
 fn classify_github_present_is_healthy_regardless_of_version() {
-    assert!(matches!(classify(&github(), None, "0.2.0"), BackendState::Absent));
+    assert!(matches!(classify(&github(), None, "0.2.0", true), BackendState::Absent));
     // a stale-LOOKING version must NOT read NeedsRepair for github (would churn on a
     // default-branch that simply differs from the baked version).
-    assert!(matches!(classify(&github(), Some(&plugin("p", "m", Some("0.1.0"))), "0.2.0"), BackendState::Healthy));
+    assert!(matches!(classify(&github(), Some(&plugin("p", "m", Some("0.1.0"))), "0.2.0", true), BackendState::Healthy));
 }

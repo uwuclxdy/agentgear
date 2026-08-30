@@ -16,6 +16,10 @@
 //! `version`/`installPath` from its entries, which the crate's tolerant serde models
 //! read as "unknown, assume fine" rather than letting the double invent a version.
 //!
+//! Every invocation is also appended to `<config-dir>/fake-claude-calls.log`, one
+//! line per call, for the tests whose subject is which calls ran rather than what the
+//! registry ended up holding.
+//!
 //! State lives in `<config-dir>/fake-claude-state.json`, where `<config-dir>` is
 //! `CLAUDE_CONFIG_DIR` (else `$HOME/.claude`). An empty `CLAUDE_CONFIG_DIR` resolves
 //! cwd-relative rather than falling back to `$HOME`, matching real `claude` 2.1.220's
@@ -28,6 +32,7 @@
 
 use std::ffi::OsString;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -40,9 +45,16 @@ const VERSION_LINE: &str = "2.1.196 (Claude Code)";
 /// The state file's name, joined onto whatever `resolve_config_dir` returns.
 const STATE_FILENAME: &str = "fake-claude-state.json";
 
+/// One line per invocation, beside the state file. The registry alone cannot answer
+/// "did the backend reinstall?" — an uninstall + install of the same id leaves exactly
+/// the state that was there before, so a test asserting a reinstall (or asserting that
+/// a converged pass ran none) has to read the calls.
+const CALL_LOG_FILENAME: &str = "fake-claude-calls.log";
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+    log_call(&argv);
     match argv.as_slice() {
         ["--version"] | ["-v"] => {
             println!("{VERSION_LINE}");
@@ -222,8 +234,25 @@ impl State {
 }
 
 fn state_path() -> PathBuf {
-    let dir = resolve_config_dir(std::env::var_os("CLAUDE_CONFIG_DIR"), std::env::var_os("HOME"));
-    dir.join(STATE_FILENAME)
+    config_dir().join(STATE_FILENAME)
+}
+
+fn config_dir() -> PathBuf {
+    resolve_config_dir(std::env::var_os("CLAUDE_CONFIG_DIR"), std::env::var_os("HOME"))
+}
+
+/// Append this invocation to the call log, best-effort: a double that fails a
+/// lifecycle call because its own log could not be written would red the test for the
+/// wrong reason.
+fn log_call(argv: &[&str]) {
+    let path = config_dir().join(CALL_LOG_FILENAME);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) else {
+        return;
+    };
+    let _ = writeln!(file, "{}", argv.join(" "));
 }
 
 /// Pure resolution behind `state_path()`, taking both env lookups as parameters so it's

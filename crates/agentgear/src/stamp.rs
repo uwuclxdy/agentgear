@@ -62,6 +62,17 @@ pub(crate) struct Marker {
     /// what is in the slot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub statusline_command: Option<String>,
+    /// The materialized tree hash (`materialize::content_hash`) this agent's harness
+    /// was last handed, written only once the CLI call that handed it over succeeded.
+    /// A plugin-native backend copies the tree into its own cache keyed on the plugin
+    /// VERSION, so a same-version tree edit is invisible to every version comparison
+    /// the registry offers; this is the record that makes it visible.
+    ///
+    /// Absent for a github source (no local tree) and for any install predating the
+    /// field, both of which read as "unknown content" — the first ignores the gate,
+    /// the second converges once and records what it handed over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree_hash: Option<String>,
 }
 
 fn source_mode(source: &Source) -> &'static str {
@@ -114,6 +125,7 @@ fn base_marker(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str) -> 
         },
         statusline_original: None,
         statusline_command: None,
+        tree_hash: None,
     }
 }
 
@@ -128,15 +140,18 @@ fn write_marker(path: &std::path::Path, marker: &Marker) -> Result<()> {
 pub(crate) fn write(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str) -> Result<()> {
     let path = marker_path(plugin, scope, agent)?;
     let mut marker = base_marker(plugin, scope, source, agent);
-    // Every install/update/self_heal rebuilds the marker, so both status-line fields
-    // have to be carried across explicitly. Without the stash carry the user's
+    // Every install/update/self_heal rebuilds the marker, so the fields a reconcile
+    // records have to be carried across explicitly. Without the stash carry the user's
     // pre-existing status line is lost on the first re-write and uninstall has nothing
     // to restore; without the command carry the record `reconcile` just wrote is erased
     // by the `write` that follows it in the very same pass, and the next release's
-    // rename reads our own value as foreign again.
+    // rename reads our own value as foreign again. The tree hash is the same shape: the
+    // reconcile that converged the harness records it, and dropping it here would make
+    // every pass re-converge a tree the harness already holds.
     let previous = read(plugin, scope, agent)?;
     marker.statusline_original = previous.as_ref().and_then(|m| m.statusline_original.clone());
-    marker.statusline_command = previous.and_then(|m| m.statusline_command);
+    marker.statusline_command = previous.as_ref().and_then(|m| m.statusline_command.clone());
+    marker.tree_hash = previous.and_then(|m| m.tree_hash);
     write_marker(&path, &marker)
 }
 
@@ -161,6 +176,14 @@ crate::agents::cfg_statusline_backends! {
 pub(crate) fn record_statusline_command(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str, command: &str) -> Result<()> {
     amend(plugin, scope, source, agent, |marker| marker.statusline_command = Some(command.to_string()))
 }
+}
+
+/// Record the materialized tree hash this agent's harness now holds, after the CLI
+/// call that handed the tree over returned. Recording it before that would claim a
+/// convergence a failed install never made, and the next pass would skip the repair.
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
+pub(crate) fn record_tree_hash(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str, tree_hash: &str) -> Result<()> {
+    amend(plugin, scope, source, agent, |marker| marker.tree_hash = Some(tree_hash.to_string()))
 }
 
 crate::agents::cfg_statusline_backends! {

@@ -21,6 +21,9 @@
 //! never churn" rather than letting the double invent a version the backend would then
 //! compare against the baked one.
 //!
+//! Every invocation is also appended to `<copilot-home>/fake-copilot-calls.log`, one
+//! line per call, for the tests whose subject is which calls ran.
+//!
 //! State lives in `<copilot-home>/fake-copilot-state.json`, where `<copilot-home>` is
 //! `COPILOT_HOME` (else `$HOME/.copilot`) — copilot's own nullish-coalescing resolution,
 //! kept RAW on purpose, because a double models the vendor rather than us. The backend
@@ -32,6 +35,7 @@
 //! there is no scope to be blind to: one registry per copilot home is the real shape.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -41,9 +45,14 @@ use serde_json::{Value, json};
 /// (`copilot_meets_floor` compares `>=`, so equal passes).
 const VERSION_LINE: &str = "GitHub Copilot CLI 1.0.71.";
 
+/// One line per invocation, beside the state file, for the tests whose subject is which
+/// calls ran rather than what the registry ended up holding.
+const CALL_LOG_FILENAME: &str = "fake-copilot-calls.log";
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+    log_call(&argv);
     match argv.as_slice() {
         ["--version"] | ["-v"] => {
             println!("{VERSION_LINE}");
@@ -209,9 +218,27 @@ impl State {
 }
 
 fn state_path() -> PathBuf {
-    let dir = std::env::var_os("COPILOT_HOME")
+    copilot_home().join("fake-copilot-state.json")
+}
+
+fn copilot_home() -> PathBuf {
+    std::env::var_os("COPILOT_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".copilot")))
-        .unwrap_or_else(|| PathBuf::from(".copilot"));
-    dir.join("fake-copilot-state.json")
+        .unwrap_or_else(|| PathBuf::from(".copilot"))
+}
+
+/// Append this invocation to the call log, best-effort: a double that fails a lifecycle
+/// call because its own log could not be written would red the test for the wrong
+/// reason. The registry alone cannot answer "did the backend reinstall?" — an uninstall
+/// + install of the same id leaves exactly the state that was there before.
+fn log_call(argv: &[&str]) {
+    let path = copilot_home().join(CALL_LOG_FILENAME);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) else {
+        return;
+    };
+    let _ = writeln!(file, "{}", argv.join(" "));
 }

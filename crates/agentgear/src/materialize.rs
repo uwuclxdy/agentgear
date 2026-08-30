@@ -17,9 +17,15 @@
 //!
 //! ```text
 //! <data_root>/
-//!   versions/<version>@<client>/       full tree + generated .claude-plugin/marketplace.json
-//!   current@<client> -> versions/<version>@<client>   symlink (unix) / junction (windows)
+//!   versions/<version>-<hash>@<client>/   full tree + generated .claude-plugin/marketplace.json
+//!   current@<client> -> versions/<version>-<hash>@<client>   symlink (unix) / junction (windows)
 //! ```
+//!
+//! `<hash>` is the first 16 hex chars of the tree hash the client would materialize,
+//! so a tree edited at an UNCHANGED version lands in a new dir and the pointer flips
+//! onto it. Keying the dir on the version alone made the write skip on any tree the
+//! version had already staged, which left a box serving whatever bytes that version
+//! first shipped.
 
 use std::fs;
 #[cfg(any(feature = "claude", feature = "copilot-cli"))]
@@ -33,7 +39,7 @@ use std::path::Path;
 #[cfg(any(feature = "embed", feature = "claude", feature = "copilot-cli"))]
 use std::path::PathBuf;
 
-#[cfg(feature = "claude")]
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 use sha2::{Digest, Sha256};
 
 #[cfg(any(feature = "claude", feature = "copilot-cli"))]
@@ -44,7 +50,7 @@ use crate::host::Plugin;
 use crate::host::data_root;
 #[cfg(any(feature = "claude", feature = "copilot-cli"))]
 use crate::manifest::{MarketplaceManifest, MarketplacePlugin, PluginManifest};
-#[cfg(feature = "claude")]
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 use crate::util::hex;
 
 /// The generated file is excluded from tree hashing: it is a derived artifact, so
@@ -73,11 +79,16 @@ impl TreeSource<'_> {
     }
 }
 
-/// Ensure `versions/<version>/` exists with the full tree + generated marketplace,
-/// then point `current` at it. Returns the `current` pointer path to hand to
-/// `marketplace add`. Idempotent: an existing version dir is reused (dedup across
-/// coexisting binaries), and its tree is not re-read (the blob is only
-/// decompressed when a write is actually needed).
+/// Ensure `versions/<version>-<hash>@<client>/` exists with the full tree + generated
+/// marketplace, then point `current@<client>` at it. Returns the `current` pointer path
+/// to hand to `marketplace add`. Idempotent on unchanged bytes: the same tree hashes to
+/// the same dir name, which is reused (dedup across coexisting binaries) and never
+/// rewritten. Changed bytes at the same version hash differently, so they get their own
+/// dir and the pointer flips onto it.
+///
+/// The tree is therefore always read (the blob decompressed) to compute that hash,
+/// where version-keying could skip it. That is the price of the content key: a hash
+/// derived from anything cheaper than the bytes cannot see a same-version edit.
 #[cfg(any(feature = "claude", feature = "copilot-cli"))]
 pub(crate) fn materialize(plugin: &Plugin, tree: TreeSource<'_>, client_id: &str) -> Result<PathBuf> {
     let version = plugin.version;
@@ -93,17 +104,65 @@ pub(crate) fn materialize(plugin: &Plugin, tree: TreeSource<'_>, client_id: &str
     let versions = root.join("versions");
     fs::create_dir_all(&versions).io_ctx(|| format!("creating {}", versions.display()))?;
 
-    let version_dir = versions.join(format!("{version}@{client_id}"));
+    let mut entries = tree.entries()?;
+    // Client-scope the staging: each plugin-native backend bakes its own id into
+    // the tree it copies and runs, so the shared dir can't collide between them.
+    expand_client_entries(&mut entries, client_id);
+    let dir_name = version_dir_name(version, &hash_entries(&entries), client_id);
+    let version_dir = versions.join(&dir_name);
     if !version_dir.exists() {
-        let mut entries = tree.entries()?;
-        // Client-scope the staging: each plugin-native backend bakes its own id into
-        // the tree it copies and runs, so the shared dir can't collide between them.
-        expand_client_entries(&mut entries, client_id);
         write_version_dir(plugin, &entries, &versions, &version_dir)?;
     }
 
-    flip_pointer(&root, version, client_id, &version_dir)?;
+    flip_pointer(&root, &dir_name, client_id, &version_dir)?;
+    prune_superseded(&versions, version, client_id, &dir_name);
     Ok(root.join(format!("current@{client_id}")))
+}
+
+/// `<version>-<hash prefix>@<client>`. 64 bits of the tree hash: enough that two
+/// distinct trees never share a dir, short enough to keep the path readable.
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
+fn version_dir_name(version: &str, content_hash: &str, client_id: &str) -> String {
+    format!("{version}-{}@{client_id}", &content_hash[..VERSION_DIR_HASH_LEN])
+}
+
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
+const VERSION_DIR_HASH_LEN: usize = 16;
+
+/// Delete this version's other content variants for this client, best-effort, once the
+/// pointer no longer names them. Without it every same-version tree edit leaks a full
+/// copy of the tree, which is routine on a host still in development rather than the
+/// crash-only leak the `.tmp.<rand>` dirs are.
+///
+/// Scoped hard: only `<version>@<client>` (what pre-content-keying binaries wrote) and
+/// `<version>-<16 hex>@<client>`. A pre-release version is a prefix of nothing here —
+/// `0.1.0` never matches `0.1.0-rc.1-<hash>@<client>`, whose remainder is not 16 hex
+/// chars — and another version's dirs are left alone, so a rollback still finds its tree.
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
+fn prune_superseded(versions: &Path, version: &str, client_id: &str, keep: &str) {
+    let suffix = format!("@{client_id}");
+    let Ok(read_dir) = fs::read_dir(versions) else {
+        return;
+    };
+    for entry in read_dir.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == keep {
+            continue;
+        }
+        let Some(stem) = name.strip_suffix(&suffix) else {
+            continue;
+        };
+        let superseded = match stem.strip_prefix(version) {
+            Some("") => true,
+            Some(rest) => {
+                rest.len() == VERSION_DIR_HASH_LEN + 1 && rest.starts_with('-') && rest[1..].bytes().all(|b| b.is_ascii_hexdigit())
+            }
+            None => false,
+        };
+        if superseded && entry.file_type().is_ok_and(|ft| ft.is_dir()) {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 /// Substitute the ASCII [`AGENTGEAR_CLIENT_TOKEN`] with `client` across every file's
@@ -170,7 +229,8 @@ fn write_version_dir(plugin: &Plugin, entries: &[(String, Vec<u8>)], versions: &
 
     if let Err(e) = fs::rename(&tmp, version_dir) {
         // Lost a race: another process built the same version dir first. Its tree
-        // is byte-identical (same version), so drop ours and reuse theirs.
+        // is byte-identical (the dir name carries the content hash), so drop ours
+        // and reuse theirs.
         let _ = fs::remove_dir_all(&tmp);
         if !version_dir.exists() {
             return Err(Error::Io { context: format!("renaming {} -> {}", tmp.display(), version_dir.display()), source: e });
@@ -384,9 +444,9 @@ fn append_tree(builder: &mut tar::Builder<Vec<u8>>, base: &Path, dir: &Path) -> 
 // --- pointer flip ------------------------------------------------------------
 
 #[cfg(any(feature = "claude", feature = "copilot-cli"))]
-fn flip_pointer(root: &Path, version: &str, client_id: &str, version_dir: &Path) -> Result<()> {
+fn flip_pointer(root: &Path, dir_name: &str, client_id: &str, version_dir: &Path) -> Result<()> {
     let current = root.join(format!("current@{client_id}"));
-    let rel_target = Path::new("versions").join(format!("{version}@{client_id}"));
+    let rel_target = Path::new("versions").join(dir_name);
     make_pointer(root, &current, &rel_target, version_dir)
 }
 
@@ -436,29 +496,23 @@ fn rand_suffix() -> String {
 
 // --- content hashing ---------------------------------------------------------
 
-/// Stable hash of the embedded tree AS MATERIALIZED for `client` (token-substituted,
-/// generated marketplace excluded), for the doctor check that `current@<client>` has
-/// not gone stale or corrupt. When the token is absent the substitution is a no-op,
-/// so the hash equals the raw tree's. Decompresses the blob first, so it errors
-/// without the `embed` feature.
-#[cfg(feature = "claude")]
-pub(crate) fn tree_hash(blob: &[u8], client: &str) -> Result<String> {
-    let mut entries = blob_entries(blob)?;
-    expand_client_entries(&mut entries, client);
-    Ok(hash_entries(&entries))
-}
-
-/// Like [`tree_hash`] but for a `Source::Path` on-disk source tree.
-#[cfg(feature = "claude")]
-pub(crate) fn dir_hash_for_client(dir: &Path, client: &str) -> Result<String> {
-    let mut entries = dir_entries(dir)?;
+/// Stable hash of a source tree AS MATERIALIZED for `client` (token-substituted,
+/// generated marketplace excluded). Three callers key on the same bytes: the version
+/// dir's own name, the doctor check that `current@<client>` has not gone stale or
+/// corrupt, and the plugin-native backends' staleness gate (the hash their stamp
+/// marker records against what the harness was last handed). When the token is absent
+/// the substitution is a no-op, so the hash equals the raw tree's. A `Blob` source is
+/// decompressed first, so it errors without the `embed` feature.
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
+pub(crate) fn content_hash(tree: TreeSource<'_>, client: &str) -> Result<String> {
+    let mut entries = tree.entries()?;
     expand_client_entries(&mut entries, client);
     Ok(hash_entries(&entries))
 }
 
 /// Hash flattened entries (generated marketplace excluded), for the client-scoped
 /// baselines that compare against a materialized `current@<client>` tree.
-#[cfg(feature = "claude")]
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn hash_entries(entries: &[(String, Vec<u8>)]) -> String {
     let mut files: Vec<(String, &[u8])> =
         entries.iter().filter(|(rel, _)| rel != GENERATED_MARKETPLACE).map(|(rel, bytes)| (rel.clone(), bytes.as_slice())).collect();
@@ -495,7 +549,7 @@ fn collect_disk(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) -> Re
     Ok(())
 }
 
-#[cfg(feature = "claude")]
+#[cfg(any(feature = "claude", feature = "copilot-cli"))]
 fn hash_pairs(files: &mut [(String, &[u8])]) -> String {
     files.sort_by(|a, b| a.0.cmp(&b.0));
     let mut hasher = Sha256::new();

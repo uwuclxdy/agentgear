@@ -18,7 +18,8 @@ use crate::doctor::{DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 use crate::manifest::{MarketplaceEntry, PluginEntry};
-use crate::materialize::{TreeSource, materialize};
+use crate::materialize::{TreeSource, content_hash, materialize};
+use crate::stamp;
 
 /// CC's settings key path for the status-line slot: one top-level key holding a
 /// single object (`{"type":"command","command":…}`), never an array.
@@ -76,6 +77,7 @@ impl AgentBackend for ClaudeBackend {
         let errors_ok = entry.errors.as_ref().is_none_or(Vec::is_empty);
         let files_ok = entry.install_path.as_ref().is_none_or(|p| Path::new(p).exists());
         let monotonic_current = !version_lt(entry.version.as_deref(), plugin.version);
+        let newer = entry.version.as_deref().is_some_and(|v| version_lt(Some(plugin.version), v));
         let registry = if errors_ok && files_ok && monotonic_current { BackendState::Healthy } else { BackendState::NeedsRepair };
         // A healthy-looking entry can still sit on a divergent or broken
         // marketplace — a registration elsewhere than the materialized pointer
@@ -86,10 +88,20 @@ impl AgentBackend for ClaudeBackend {
         let registry = if matches!(registry, BackendState::Healthy) {
             let marketplace = find_marketplace(&cli, scope, plugin.marketplace)?;
             let expected = crate::host::data_root(plugin)?.join(format!("current@{}", ClaudeBackend.id()));
-            match marketplace_health(marketplace.as_ref(), source, &expected) {
-                MarketplaceHealth::Healthy => BackendState::Healthy,
-                MarketplaceHealth::Absent | MarketplaceHealth::Dangling => BackendState::NeedsRepair,
-            }
+            let healthy = matches!(marketplace_health(marketplace.as_ref(), source, &expected), MarketplaceHealth::Healthy)
+                // The tree CC holds is the third thing a healthy-looking entry can be
+                // wrong about, and the only one no read of CC's own state can see: its
+                // cache copy is version-keyed, so an edited tree at an unchanged version
+                // leaves the entry, its files and its version all correct. Without this
+                // term self_heal's `(marker present, Healthy)` row no-ops forever and a
+                // box converges only on an explicit `setup`.
+                //
+                // Monotonic outranks it, matching `reconcile`'s `Frozen`: a strictly-newer
+                // install holds a newer binary's tree, which never matches our hash, so
+                // folding it in would spawn a reconcile every session for that no-op to
+                // throw away.
+                && (newer || tree_is_current(plugin, scope, staged_tree_hash(plugin, source)?.as_deref())?);
+            if healthy { BackendState::Healthy } else { BackendState::NeedsRepair }
         } else {
             registry
         };
@@ -225,6 +237,10 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
     let marketplace = find_marketplace(&cli, scope, plugin.marketplace)?;
     let entry = find_plugin(&cli, scope, plugin.name, plugin.marketplace)?;
     let id = plugin.id();
+    // The tree this pass would stage, hashed before anything is written: CC copies the
+    // tree into its own cache at install time and keys that cache on the plugin VERSION,
+    // so an edited tree at an unchanged version reaches CC only through a reinstall.
+    let staged = staged_tree_hash(plugin, &desired.source)?;
 
     let Some(entry) = entry else {
         // Absent: full install.
@@ -232,6 +248,7 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
         ensure_marketplace(&cli, plugin, &desired.source, scope, marketplace.as_ref())?;
         plugin_install(&cli, &id, scope)?;
         verify_present(&cli, scope, plugin)?;
+        record_staged(plugin, desired, scope, staged.as_deref())?;
         return Ok(RegistryOutcome::Converged(Outcome::Installed));
     };
 
@@ -262,8 +279,9 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
         return Ok(RegistryOutcome::Frozen);
     }
 
-    if structural_ok && !stale {
-        // Healthy and monotonic-satisfied (installed == embedded).
+    if structural_ok && !stale && tree_is_current(plugin, scope, staged.as_deref())? {
+        // Healthy, monotonic-satisfied (installed == embedded), and serving the tree
+        // this binary ships.
         return Ok(RegistryOutcome::Converged(Outcome::NoOp));
     }
 
@@ -273,13 +291,52 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
     if stale && structural_ok {
         plugin_update(&cli, &id, scope)?;
         verify_present(&cli, scope, plugin)?;
+        record_staged(plugin, desired, scope, staged.as_deref())?;
         Ok(RegistryOutcome::Converged(Outcome::Updated { from: installed, to: plugin.version.to_string() }))
     } else {
-        // Structurally broken (registered but files/marketplace gone): clean reinstall.
+        // Structurally broken (registered but files/marketplace gone), or serving a
+        // tree this binary no longer ships at a version that will never bump: clean
+        // reinstall, the one sequence that re-copies a same-version tree into CC's
+        // own cache (design § marketplace ground truth).
         let _ = plugin_uninstall(&cli, &id, scope);
         plugin_install(&cli, &id, scope)?;
         verify_present(&cli, scope, plugin)?;
+        record_staged(plugin, desired, scope, staged.as_deref())?;
         Ok(RegistryOutcome::Converged(Outcome::Repaired))
+    }
+}
+
+/// The hash of the tree this reconcile would stage for CC, or `None` for a github
+/// source — that one has no local tree, and CC tracks the pinned ref itself.
+fn staged_tree_hash(plugin: &Plugin, source: &Source) -> Result<Option<String>> {
+    let client = ClaudeBackend.id();
+    match source {
+        Source::Embedded => content_hash(TreeSource::Blob(plugin.blob()), client).map(Some),
+        Source::Path(p) => content_hash(TreeSource::Dir(p), client).map(Some),
+        Source::GitHub { .. } => Ok(None),
+    }
+}
+
+/// Whether CC already holds the tree `staged` names, read off this agent's own stamp
+/// marker. Unknown content converges rather than assuming freshness: a github source
+/// has no tree to compare (always current), while a marker that is absent or predates
+/// the record leaves what CC copied unaccounted for, and the version comparison can
+/// never account for it either.
+fn tree_is_current(plugin: &Plugin, scope: &Scope, staged: Option<&str>) -> Result<bool> {
+    let Some(staged) = staged else {
+        return Ok(true);
+    };
+    let marker = stamp::read(plugin, scope, ClaudeBackend.id())?;
+    Ok(marker.and_then(|m| m.tree_hash).is_some_and(|recorded| recorded == staged))
+}
+
+/// Record the tree CC now holds, after the call that handed it over succeeded. A
+/// github source records nothing: it has no local tree, and overwriting an earlier
+/// local record would hide the drift of a host switching back.
+fn record_staged(plugin: &Plugin, desired: &Desired, scope: &Scope, staged: Option<&str>) -> Result<()> {
+    match staged {
+        Some(hash) => stamp::record_tree_hash(plugin, scope, &desired.source, ClaudeBackend.id(), hash),
+        None => Ok(()),
     }
 }
 

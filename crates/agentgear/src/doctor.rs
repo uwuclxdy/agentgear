@@ -24,7 +24,7 @@ use crate::error::Result;
 use crate::host::data_root;
 use crate::host::{Plugin, Scope, Source};
 #[cfg(feature = "claude")]
-use crate::materialize::{dir_hash, dir_hash_for_client, tree_hash};
+use crate::materialize::{TreeSource, content_hash, dir_hash};
 
 /// The CC client id materialize scopes its tree under. doctor is CC-oriented (it runs
 /// `claude plugin validate` and hashes against the tree CC would run), so it reads and
@@ -383,8 +383,8 @@ fn check_tree_hash(plugin: &Plugin, source: &Source) -> DoctorCheck {
     // substitute too (a no-op for a token-free tree, so existing plugins are unchanged).
     // Embedded hashes the decompressed blob; Path hashes its on-disk source tree.
     let expected = match source {
-        Source::Path(p) => dir_hash_for_client(p, CLAUDE_CLIENT),
-        _ => tree_hash(plugin.blob(), CLAUDE_CLIENT),
+        Source::Path(p) => content_hash(TreeSource::Dir(p), CLAUDE_CLIENT),
+        _ => content_hash(TreeSource::Blob(plugin.blob()), CLAUDE_CLIENT),
     };
     match (dir_hash(&current), expected) {
         (Ok(on_disk), Ok(exp)) if on_disk == exp => DoctorCheck { name, status: CheckStatus::Ok("hashes match".into()) },
