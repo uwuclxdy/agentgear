@@ -17,10 +17,21 @@
 //! | present| Healthy | no-op |
 //! | present| NeedsRepair | reconcile + write marker (repair/update) |
 //!
+//! The plugin-native backends record the staged tree's hash in that marker, so with no
+//! marker `claude` and `copilot-cli` reach the adopt row only where nothing needs the
+//! hash: a github source, or an install strictly newer than this binary (monotonic
+//! short-circuits the tree term, and the reconcile behind it is a `Frozen` no-op). At
+//! this binary's own version under a local source the tree the harness holds is
+//! unaccounted for, `probe` classifies `NeedsRepair`, and the heal re-hands the tree as
+//! a `Repaired`. A config-family backend compares its own rendered config and adopts.
+//!
 //! The restart-pending flag is Claude-only: CC has no mid-session hot-reload, so a
-//! repair strands the running session; config-family harnesses re-read each
-//! session and need no nag. A healthy, adopted, or cleanly-removed CC install
-//! clears it; a CC repair that changed something sets it.
+//! repair strands the running session; config-family harnesses re-read each session and
+//! need no nag. Every CC reconcile above keys the flag on its own outcome, a takeover of
+//! an unowned install included: changed something sets it, changed nothing clears it.
+//! What strands the session is the tree moving under it, never whose install it was. The
+//! two rows that run no reconcile (healthy, clean uninstall) clear it; the disabled row
+//! leaves it alone, since it converges nothing either way.
 
 use crate::agents::{AgentBackend, BackendState};
 use crate::error::Result;
@@ -103,11 +114,9 @@ fn heal_agent(
 
         (false, BackendState::Healthy) => {
             // Adopt a healthy pre-existing install: converge (a no-op here), record
-            // ownership; not our update, so clear any stale restart flag.
-            if is_claude {
-                let _ = restart::clear(plugin);
-            }
+            // ownership.
             let outcome = backend.reconcile(plugin, &desired, scope)?;
+            flag_restart(plugin, is_claude, &outcome);
             stamp::write(plugin, scope, &desired.source, backend.id())?;
             Ok(match outcome {
                 Outcome::NoOp => Outcome::Adopted,
@@ -116,12 +125,10 @@ fn heal_agent(
         }
 
         (false, BackendState::Disabled | BackendState::NeedsRepair) => {
-            // Adopt a disabled/broken install: reconcile (leaves a disable alone,
-            // repairs a break), record ownership; not our update -> clear the flag.
-            if is_claude {
-                let _ = restart::clear(plugin);
-            }
+            // Take over a disabled/broken install: reconcile (leaves a disable alone,
+            // repairs a break), record ownership.
             let outcome = backend.reconcile(plugin, &desired, scope)?;
+            flag_restart(plugin, is_claude, &outcome);
             stamp::write(plugin, scope, &desired.source, backend.id())?;
             Ok(outcome)
         }
@@ -132,9 +139,7 @@ fn heal_agent(
         // repair that fails again stay loud rather than settling into a no-op.
         (true, BackendState::Absent) if interrupted => {
             let outcome = backend.reconcile(plugin, &desired, scope)?;
-            if is_claude && outcome != Outcome::NoOp {
-                let _ = restart::set(plugin);
-            }
+            flag_restart(plugin, is_claude, &outcome);
             stamp::write(plugin, scope, &desired.source, backend.id())?;
             Ok(outcome)
         }
@@ -161,12 +166,22 @@ fn heal_agent(
 
         (true, BackendState::NeedsRepair) => {
             let outcome = backend.reconcile(plugin, &desired, scope)?;
-            // A repair re-materialized the plugin; the running CC session is now stale.
-            if is_claude && outcome != Outcome::NoOp {
-                let _ = restart::set(plugin);
-            }
+            flag_restart(plugin, is_claude, &outcome);
             stamp::write(plugin, scope, &desired.source, backend.id())?;
             Ok(outcome)
         }
     }
+}
+
+/// What a CC reconcile did to the running session, recorded for the host's own notice
+/// hook. A reconcile that changed something handed CC a tree the session cannot reload,
+/// so it strands; one that changed nothing means this session started on what CC holds,
+/// which retires any flag an earlier session left. Whose install it was never enters it:
+/// a takeover that re-hands the tree strands the session exactly like an owned repair.
+/// Best-effort both ways, so a flag write cannot fail a heal that otherwise succeeded.
+fn flag_restart(plugin: &Plugin, is_claude: bool, outcome: &Outcome) {
+    if !is_claude {
+        return;
+    }
+    let _ = if *outcome == Outcome::NoOp { restart::clear(plugin) } else { restart::set(plugin) };
 }

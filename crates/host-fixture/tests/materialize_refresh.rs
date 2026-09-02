@@ -128,6 +128,19 @@ impl Env {
         fs::read_to_string(self.cfg.join("fake-claude-state.json")).unwrap_or_default()
     }
 
+    /// Delete every stamp marker, leaving the install healthy but unowned — what a
+    /// binary that never installed it meets.
+    fn clear_markers(&self) {
+        let markers = self.data.join(PLUGIN_NAME).join("markers");
+        assert!(markers.is_dir(), "no markers dir to clear at {}", markers.display());
+        fs::remove_dir_all(&markers).unwrap();
+    }
+
+    /// Whether the restart-pending flag stands: what a host's own notice hook reads.
+    fn restart_pending(&self) -> bool {
+        self.data.join(PLUGIN_NAME).join("restart-pending").exists()
+    }
+
     /// Every `claude` invocation so far, one per line.
     fn calls(&self) -> Vec<String> {
         fs::read_to_string(self.cfg.join(CALL_LOG_FILENAME)).unwrap_or_default().lines().map(str::to_string).collect()
@@ -234,6 +247,45 @@ fn self_heal_converges_a_same_version_tree_edit_without_an_explicit_setup() {
     assert!(ok, "second self-heal failed: {out}");
     assert_eq!(out, "NoOp", "a converged tree must heal to a no-op");
     assert_eq!(env.calls().iter().filter(|l| l.starts_with("plugin install")).count(), count_calls(&after_heal, "plugin install"));
+}
+
+#[test]
+fn an_unowned_install_is_re_handed_the_tree_rather_than_adopted() {
+    // The marker is the only record of the tree the harness was handed, so wiping it
+    // leaves what `claude` holds unaccounted for while entry, files and version all
+    // still read correct. Adopting on that read alone stamps ownership over bytes
+    // nothing ever compared, and the `(marker present, Healthy)` row then no-ops
+    // forever. Embedded on both passes, so the marker is the only variable.
+    let env = Env::new("unowned");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok, "first setup failed: {out}");
+    let baseline = env.calls();
+    assert!(!env.restart_pending(), "an install must not raise the restart notice");
+
+    env.clear_markers();
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal failed on an unowned install: {out}");
+    assert_eq!(out, "Repaired", "an unowned install must be re-handed its tree, got {out}");
+    let calls = env.calls();
+    // The uninstall half is the assertion that means anything: CC's cache copy is
+    // version-keyed, so an install alone leaves it serving the bytes it already had.
+    assert!(
+        count_calls(&calls, "plugin uninstall") > count_calls(&baseline, "plugin uninstall")
+            && count_calls(&calls, "plugin install") > count_calls(&baseline, "plugin install"),
+        "the takeover never re-handed the tree to claude:\n{calls:#?}"
+    );
+    // The tree moved under the session that is running right now, and a takeover
+    // strands it exactly like a repair of our own install does.
+    assert!(env.restart_pending(), "the takeover re-handed the tree and left the session with no restart notice");
+
+    // The takeover records the tree it handed over, so the next session no-ops and
+    // retires the notice with it.
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "the settling heal failed: {out}");
+    assert_eq!(out, "NoOp", "a recorded takeover must converge to a no-op");
+    assert!(!env.restart_pending(), "a heal that converged nothing must retire the restart notice");
 }
 
 #[test]

@@ -4,11 +4,13 @@
 //! hot-reload, so an out-of-band `setup update` leaves the running session stale
 //! until the user restarts.
 //!
-//! `update` and `self_heal`'s repair branch set it (only when the reconcile
-//! actually changed the on-disk plugin, i.e. was not a no-op); `self_heal` clears
-//! it whenever the running install is already current — a fresh session loaded the
-//! new plugin, so the nag no longer applies. `install` never sets it (a first
-//! install precedes any session that relies on the plugin).
+//! `update` and every `self_heal` reconcile set it, and only when that reconcile
+//! actually changed the on-disk plugin (a takeover of an unowned install included, since
+//! the session is stranded by the tree moving under it rather than by whose install it
+//! was); a reconcile that changed nothing clears it, as does a heal that found the
+//! install already current — a fresh session loaded what CC holds, so the nag no longer
+//! applies. `install` never sets it (a first install precedes any session that relies on
+//! the plugin).
 //!
 //! The flag is advisory UX state, not transactional: a write/clear failure is
 //! swallowed (`let _ = …`) so it can never flip a successful lifecycle op red or
