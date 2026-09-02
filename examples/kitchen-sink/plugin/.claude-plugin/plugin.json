@@ -1,6 +1,6 @@
 {
   "name": "kitchen-sink",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Full-surface agentgear example plugin: MCP server, hooks, command, subagent, and skill.",
   "author": { "name": "agentgear examples" },
   "mcpServers": {
