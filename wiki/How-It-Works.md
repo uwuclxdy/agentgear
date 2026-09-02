@@ -43,12 +43,12 @@ The hook ships inside the plugin, so `self_heal` only ever runs on an install th
 | present | broken, stale, or serving a tree the binary no longer ships | repair or update |
 | present | healthy, current, and serving the binary's own tree | no-op |
 
-The marker records the tree hash the harness was last handed, and Claude Code and copilot-cli read it back. With the marker gone there is nothing to check their copy against, so at the running binary's own version those two repair where the table says adopt: the tree is handed over again and the hash recorded, and the session after that is a no-op. They still adopt where no hash is needed, meaning a GitHub source and an install newer than the running binary. Every other harness compares its own config directly and adopts as written.
+The marker records the tree hash the harness was last handed, and Claude Code and copilot-cli read it back. With the marker gone there is nothing to check their copy against, so at the running binary's own version those two repair where the table says adopt: the tree is handed over again and the hash recorded, and the session after that is a no-op. They still adopt where no hash is needed, meaning a GitHub source and an install newer than the running binary that another build of the same tool owns. Every other harness compares its own config directly and adopts as written.
 
 Two invariants sit on top:
 
 - **Never re-enable.** A disabled plugin is a deliberate choice; self-heal repairs structure, not enable state. An explicit `install`/`update` does re-enable, because that is a direct user request.
-- **Monotonic.** When the installed version is at or above the embedded version, self-heal does nothing, so two coexisting binaries of the same tool (a system package and a `cargo install` build) do not fight over the version each session.
+- **Monotonic.** A registration at or above the embedded version is left alone when another build of the same tool owns it, so two coexisting binaries (a system package and a `cargo install` build) do not fight over the version each session, whether or not they share a data directory. What a newer version does not buy is protection for a registration nobody owns: one that is broken serves nothing, and a GitHub-sourced one under a binary that materializes its own tree serves the repo rather than any build. Both are repaired. Claude Code only: copilot-cli freezes on the version alone.
 
 ## Restart-pending flag
 
