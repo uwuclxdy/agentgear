@@ -256,3 +256,85 @@ fn claude_heal_ignores_a_dead_project_entry_at_user_scope() {
     assert!(ok, "self-heal errored with a dead project entry present: {out}");
     assert_eq!(out, "NoOp", "a dead project entry must not drive the user-scope heal, got {out}");
 }
+
+/// The migration half of the monotonic fix: a strictly-newer github registration
+/// loads and serves the REPO's tree under an embedded host, so reconcile must
+/// migrate it onto the local materialized marketplace instead of no-op'ing on the
+/// version. probe reports NeedsRepair (the github entry is divergence); reconcile
+/// re-points and reinstalls, then the next heal no-ops.
+///
+/// The reinstall is asserted through the call log, not only through the re-pointed
+/// path: an early return placed after `ensure_marketplace` re-points without ever
+/// re-handing the tree, and CC's cache is version-keyed, so the user would keep
+/// serving the github tree off a registration that now looks local.
+#[test]
+fn claude_a_newer_github_registration_migrates_to_the_local_marketplace() {
+    let env = Env::new("newer-github");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    let state_path = env.cfg.join(FAKE_CLAUDE_STATE_FILENAME);
+    let mut state: serde_json::Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    state["marketplaces"] = serde_json::json!([
+        {"name": "ez-fixture-plugin", "source": "github", "ref": "v99"}
+    ]);
+    for plugin in state["plugins"].as_array_mut().unwrap() {
+        plugin["version"] = serde_json::json!("99.0.0");
+    }
+    fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+    let log_path = env.cfg.join("fake-claude-calls.log");
+    fs::write(&log_path, "").unwrap();
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal errored on a newer github registration: {out}");
+    assert_eq!(out, "Repaired", "a strictly-newer github registration must migrate onto the local marketplace, got {out}");
+
+    let log = fs::read_to_string(&log_path).unwrap();
+    assert!(
+        log.lines().any(|l| l.starts_with("plugin install")),
+        "the migration must re-hand the tree, not only re-point the marketplace, calls were:\n{log}"
+    );
+
+    let state: serde_json::Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    let path = state["marketplaces"][0]["path"].as_str().expect("marketplace path");
+    let expected = env.data.join("ez-fixture-plugin").join("current@claude");
+    assert_eq!(path, expected.to_string_lossy().as_ref(), "the repair must re-point the registration at the materialized tree");
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "a migrated registration must no-op, got {out}");
+}
+
+/// The guard the fix must not break: a strictly-newer LOCAL install is another
+/// binary's working install. Even with an unaccounted tree (marker deleted), the
+/// adopt row leaves it alone and runs no install/uninstall/marketplace-add call.
+#[test]
+fn claude_a_newer_local_install_is_left_alone_with_an_unaccounted_tree() {
+    let env = Env::new("newer-local");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    let state_path = env.cfg.join(FAKE_CLAUDE_STATE_FILENAME);
+    let mut state: serde_json::Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    for plugin in state["plugins"].as_array_mut().unwrap() {
+        plugin["version"] = serde_json::json!("99.0.0");
+    }
+    fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+
+    fs::remove_dir_all(env.data.join("ez-fixture-plugin").join("markers")).unwrap();
+    let log_path = env.cfg.join("fake-claude-calls.log");
+    fs::write(&log_path, "").unwrap();
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal errored on a newer local install: {out}");
+    assert_eq!(out, "Adopted", "a strictly-newer local install must be adopted, not reinstalled, got {out}");
+
+    let log = fs::read_to_string(&log_path).unwrap();
+    assert!(!log.lines().any(|l| l.starts_with("plugin install")), "the newer local install must not be reinstalled, calls were:\n{log}");
+    assert!(!log.lines().any(|l| l.starts_with("plugin uninstall")), "the newer local install must not be uninstalled, calls were:\n{log}");
+    assert!(
+        !log.lines().any(|l| l.starts_with("plugin marketplace add")),
+        "the newer local install must not re-register its marketplace, calls were:\n{log}"
+    );
+}

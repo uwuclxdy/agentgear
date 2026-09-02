@@ -19,8 +19,10 @@
 //!
 //! The plugin-native backends record the staged tree's hash in that marker, so with no
 //! marker `claude` and `copilot-cli` reach the adopt row only where nothing needs the
-//! hash: a github source, or an install strictly newer than this binary (monotonic
-//! short-circuits the tree term, and the reconcile behind it is a `Frozen` no-op). At
+//! hash: a github source, or an install strictly newer than this binary. The two
+//! backends part company there: `copilot-cli` freezes every strictly-newer install,
+//! `claude` freezes only a structurally sound one, so a github registration ahead of
+//! the binary takes the repair row instead of adopting. At
 //! this binary's own version under a local source the tree the harness holds is
 //! unaccounted for, `probe` classifies `NeedsRepair`, and the heal re-hands the tree as
 //! a `Repaired`. A config-family backend compares its own rendered config and adopts.

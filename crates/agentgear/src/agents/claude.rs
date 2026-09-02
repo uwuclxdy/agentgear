@@ -216,10 +216,17 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
     let expected = crate::host::data_root(plugin)?.join(format!("current@{}", ClaudeBackend.id()));
     let structural_ok = structural_ok(&entry, marketplace.as_ref(), &desired.source, &expected);
 
-    // Monotonic: a strictly-newer install belongs to a newer binary. Never touch
-    // it — not even to repair a broken one — or two coexisting binaries downgrade
-    // each other on every session. The newer binary owns its own repair.
-    if newer {
+    // Monotonic protects a strictly-newer install that is structurally sound, and
+    // nothing else. `probe` splits the same way — its `newer` term sits inside
+    // `(newer || tree_is_current(..))`, never above `marketplace_health` — so
+    // nothing this guard waves through is anything `probe` calls broken. What it
+    // buys is two coexisting binaries of one tool, sharing a data root, not
+    // downgrading each other every session. A divergent entry is outside that: a
+    // github registration under an embedded/path source serves the repo's tree
+    // rather than any binary's, and missing files or a CC-computed load error
+    // serve nothing at all. Two binaries on DIFFERENT data roots re-point each
+    // other every session instead, which they already do at equal versions.
+    if newer && structural_ok {
         return Ok(Outcome::NoOp);
     }
 
