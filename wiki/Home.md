@@ -22,6 +22,7 @@ embeds plugin/ (.tar.br blob) ── materialize ──▶ ~/.local/share/<name>
 | page | topic |
 |---|---|
 | [Getting started](Getting-Started) | add the crate, the derive, the build guard, hook wiring |
+| [Adopting an existing plugin](Adopting-An-Existing-Plugin) | what adopting does to installs your users already have, and the three conditions that migrate them |
 | [Plugin tree](Plugin-Tree) | what `plugin/` holds, what each backend can translate out of it |
 | [How it works](How-It-Works) | lifecycle to CLI mapping, materialize, the self-heal state table |
 | [Agent backends](Agent-Backends) | the unsealed `AgentBackend` trait, install models, adding your own |

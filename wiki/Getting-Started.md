@@ -1,5 +1,8 @@
 # Getting started
 
+> [!IMPORTANT]
+> This page assumes your tool ships no plugin yet. If it already ships one and users have it installed, read [Adopting an existing plugin](Adopting-An-Existing-Plugin) first: three things have to hold for their existing registrations to migrate, and step 2 below is where the first one gets broken.
+
 ## 1. Add the crate
 
 The derive ships behind the default `derive` feature, so a consumer adds one dependency in two places (a build dependency is needed for the version guard).
@@ -38,7 +41,7 @@ mytool/
 }
 ```
 
-Its `name` must match the derive's `name` attr, and its `version` must equal `CARGO_PKG_VERSION`. The crate generates `marketplace.json`, so you do not ship one. Component dirs (`commands/`, `agents/`, `skills/`, `hooks/`), MCP servers, and what each harness does with them: [Plugin tree](Plugin-Tree).
+Its `name` must match the derive's `name` attr, and its `version` must equal `CARGO_PKG_VERSION`. The crate generates `marketplace.json`, so a host starting from nothing ships none. A host whose users already hold a GitHub-sourced registration keeps its committed root manifest instead: [Adopting an existing plugin](Adopting-An-Existing-Plugin). Component dirs (`commands/`, `agents/`, `skills/`, `hooks/`), MCP servers, and what each harness does with them: [Plugin tree](Plugin-Tree).
 
 ## 3. Derive the host
 

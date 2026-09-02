@@ -48,6 +48,23 @@ use known_agents::{KNOWN_AGENTS, feature_const_ident};
 /// | `embed` | no | `true` | `false` bakes an empty blob for a github/path-source host |
 /// | `instructions_fn` | no | none | path to a `fn() -> Option<String>` feeding `PluginHost::instructions` |
 ///
+/// # Adopting into a host that already ships a plugin
+///
+/// The keys above wire a NEW host. A host whose users already hold a GitHub-sourced
+/// registration needs three more things, none of them an attr:
+///
+/// 1. keep the committed root `.claude-plugin/marketplace.json`. That file is what
+///    their registration reads, and a marketplace that stops loading serves 0 hooks,
+///    `self_heal` among them;
+/// 2. expect the adoption release itself to migrate nobody through the `SessionStart`
+///    hook, which ships inside the plugin and so only reaches releases that already
+///    carried it;
+/// 3. call `self_heal()` from somewhere in the binary too (a daemon tick, an MCP
+///    server's startup, a launcher pre-flight), because a plugin that fails to load
+///    cannot repair itself.
+///
+/// Full path: <https://github.com/uwuclxdy/agentgear/wiki/Adopting-An-Existing-Plugin>
+///
 /// # Compile-time errors
 ///
 /// - an unknown `agents` id, or an empty `agents` list;

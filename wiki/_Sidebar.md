@@ -2,6 +2,7 @@
 
 - [Home](Home)
 - [Getting started](Getting-Started)
+  - [Adopting an existing plugin](Adopting-An-Existing-Plugin)
 - [Plugin tree](Plugin-Tree)
 - [How it works](How-It-Works)
 - [Agent backends](Agent-Backends)

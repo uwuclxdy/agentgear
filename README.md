@@ -236,6 +236,7 @@ The README is a map. The reference lives in the wiki.
 | page | topic |
 |---|---|
 | [Getting started](https://github.com/uwuclxdy/agentgear/wiki/Getting-Started) | add the crate, derive, build guard, hook wiring |
+| [Adopting an existing plugin](https://github.com/uwuclxdy/agentgear/wiki/Adopting-An-Existing-Plugin) | migrating installs your users already have: keep the committed manifest, count from the release that carried the hook, trigger from outside the plugin |
 | [Plugin tree](https://github.com/uwuclxdy/agentgear/wiki/Plugin-Tree) | tree layout, `plugin.json`, the version lock, `${CLAUDE_PLUGIN_ROOT}` portability |
 | [How it works](https://github.com/uwuclxdy/agentgear/wiki/How-It-Works) | lifecycle to CLI mapping, materialize, the self-heal state table |
 | [Types and errors](https://github.com/uwuclxdy/agentgear/wiki/Types-and-Errors) | the programmatic API: `AgentReport`/`AgentResult`/`AgentStatus`/`SkipReason`, the `Error` enum, building a `DoctorReport` from outside the crate |
