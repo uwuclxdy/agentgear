@@ -214,19 +214,25 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
     // (an old checkout dir, a github entry under an embedded host, a pre-client-
     // scoping pointer) is structural damage a heal repairs by re-pointing.
     let expected = crate::host::data_root(plugin)?.join(format!("current@{}", ClaudeBackend.id()));
+    // Monotonic's own structural test, and the reason it takes a different `expected`:
+    // it protects a strictly-newer install that ANOTHER BINARY OF THIS TOOL owns, so
+    // the registered path is read against ITSELF rather than against our pointer. An
+    // entry sitting at another binary's materialized dir is that binary's working
+    // install; comparing it to ours instead is what makes two binaries on different
+    // data roots re-point each other every session, forever. Every other term still
+    // bites, and none of those shapes is anyone's working install: a github entry
+    // under a local source tracks the repo rather than a binary, while an absent
+    // marketplace, a vanished manifest, missing files and a CC-computed load error
+    // each serve nothing at all.
+    let registered = marketplace.as_ref().and_then(|m| m.path.as_deref()).map(Path::new).unwrap_or(expected.as_path());
+    let owned_by_another_binary = structural_ok(&entry, marketplace.as_ref(), &desired.source, registered);
     let structural_ok = structural_ok(&entry, marketplace.as_ref(), &desired.source, &expected);
 
-    // Monotonic protects a strictly-newer install that is structurally sound, and
-    // nothing else. `probe` splits the same way — its `newer` term sits inside
-    // `(newer || tree_is_current(..))`, never above `marketplace_health` — so
-    // nothing this guard waves through is anything `probe` calls broken. What it
-    // buys is two coexisting binaries of one tool, sharing a data root, not
-    // downgrading each other every session. A divergent entry is outside that: a
-    // github registration under an embedded/path source serves the repo's tree
-    // rather than any binary's, and missing files or a CC-computed load error
-    // serve nothing at all. Two binaries on DIFFERENT data roots re-point each
-    // other every session instead, which they already do at equal versions.
-    if newer && structural_ok {
+    // Never downgrade or re-hand a tree to a newer binary's install. `probe` cannot
+    // express "another binary owns it" — it knows only our pointer — so on such a box
+    // it reports `NeedsRepair` and this answers with a no-op: two registry reads per
+    // session, no mutation, which is the price of not thrashing.
+    if newer && owned_by_another_binary {
         return Ok(Outcome::NoOp);
     }
 

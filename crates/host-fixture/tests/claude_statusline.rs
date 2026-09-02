@@ -338,3 +338,77 @@ fn claude_a_newer_local_install_is_left_alone_with_an_unaccounted_tree() {
         "the newer local install must not re-register its marketplace, calls were:\n{log}"
     );
 }
+
+/// The case monotonic's relaxed pointer term exists for: a strictly-newer install
+/// registered at a DIFFERENT local dir that still loads, which is what a coexisting
+/// binary resolving another data root leaves behind. Comparing that path to our own
+/// pointer classifies it divergent, and both binaries then re-point each other every
+/// session forever. `probe` still reports `NeedsRepair` here — it knows only our
+/// pointer — so the no-op has to come from `reconcile`.
+#[test]
+fn claude_a_newer_install_at_another_binarys_pointer_is_left_alone() {
+    let env = Env::new("newer-other-pointer");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    // A second binary's materialized dir: a valid manifest, so it loads, at a path
+    // that is not ours.
+    let other = env.root.join("other-binary-pointer");
+    fs::create_dir_all(other.join(".claude-plugin")).unwrap();
+    fs::write(other.join(".claude-plugin").join("marketplace.json"), "{}").unwrap();
+    fs::write(other.join(".claude-plugin").join("plugin.json"), "{}").unwrap();
+    let state_path = env.cfg.join(FAKE_CLAUDE_STATE_FILENAME);
+    let mut state: serde_json::Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    for marketplace in state["marketplaces"].as_array_mut().unwrap() {
+        marketplace["path"] = serde_json::json!(other.to_string_lossy().as_ref());
+    }
+    for plugin in state["plugins"].as_array_mut().unwrap() {
+        plugin["version"] = serde_json::json!("99.0.0");
+    }
+    fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+    let log_path = env.cfg.join("fake-claude-calls.log");
+    fs::write(&log_path, "").unwrap();
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal errored on a newer install at another pointer: {out}");
+    assert_eq!(out, "NoOp", "a newer install another binary owns must be left alone, got {out}");
+
+    let log = fs::read_to_string(&log_path).unwrap();
+    assert!(
+        !log.lines().any(|l| l.starts_with("plugin install")),
+        "another binary's newer install must not be reinstalled, calls were:\n{log}"
+    );
+    assert!(
+        !log.lines().any(|l| l.starts_with("plugin marketplace add")),
+        "another binary's newer install must not be re-pointed, calls were:\n{log}"
+    );
+
+    let state: serde_json::Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    let path = state["marketplaces"][0]["path"].as_str().expect("marketplace path");
+    assert_eq!(path, other.to_string_lossy().as_ref(), "the registration must stay where the other binary put it");
+}
+
+/// The other half of that relaxation: monotonic protects a WORKING install, so every
+/// term but the pointer still repairs. A strictly-newer entry carrying a CC-computed
+/// load error serves 0 hooks, and a guard keyed on the source kind alone would strand
+/// it on any box where the newer binary is gone.
+#[test]
+fn claude_a_newer_install_with_a_load_error_still_repairs() {
+    let env = Env::new("newer-load-error");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    let state_path = env.cfg.join(FAKE_CLAUDE_STATE_FILENAME);
+    let mut state: serde_json::Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    for plugin in state["plugins"].as_array_mut().unwrap() {
+        plugin["version"] = serde_json::json!("99.0.0");
+        plugin["errors"] = serde_json::json!(["Marketplace ez-fixture-plugin failed to load: cache-miss"]);
+    }
+    fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal errored on a newer entry carrying a load error: {out}");
+    assert_eq!(out, "Repaired", "a newer install that loads nothing must still be repaired, got {out}");
+}
