@@ -369,28 +369,29 @@ fn self_heal_repairs_a_broken_install() {
 
 #[test]
 #[ignore = "spawns the real `claude` CLI; run with --ignored"]
-fn self_heal_adopts_a_healthy_unowned_install() {
+fn self_heal_takes_over_an_unowned_install() {
     if !claude_available() {
         eprintln!("skipping: `claude` not on PATH");
         return;
     }
-    let env = Env::new("adopt");
+    let env = Env::new("unowned");
 
     let (ok, _) = env.fixture("setup");
     assert!(ok);
     assert!(env.plugin_list().contains(PLUGIN_ID));
 
-    // Marker absent + install healthy: self_heal takes ownership without mutating
-    // the install (reconcile no-ops, so the outcome is `Adopted`, not `Repaired`).
+    // Marker absent: the tree CC holds is unaccounted for (the hash lives in the
+    // marker), so the probe reads `NeedsRepair` and the heal re-hands the tree
+    // rather than vouching for it. `Adopted` needs a backend with no tree hash.
     env.clear_markers();
     let (ok, out) = env.fixture("self-heal");
-    assert!(ok, "self-heal errored on an unowned healthy install: {out}");
-    assert_eq!(out, "Adopted", "expected adoption of a healthy unowned install, got {out}");
-    assert!(env.plugin_list().contains(PLUGIN_ID), "adoption disturbed a healthy install");
+    assert!(ok, "self-heal errored on an unowned install: {out}");
+    assert_eq!(out, "Repaired", "expected an unowned install to be re-handed the tree, got {out}");
+    assert!(env.plugin_list().contains(PLUGIN_ID), "the takeover dropped the install");
 
-    // The marker is back, so the next heal takes the owned-and-healthy fast path.
+    // The marker is back and records the tree, so the next heal no-ops.
     let (ok, out) = env.fixture("self-heal");
-    assert!(ok && out == "NoOp", "post-adopt self-heal should no-op, got {out}");
+    assert!(ok && out == "NoOp", "post-takeover self-heal should no-op, got {out}");
 
     env.fixture("uninstall");
 }

@@ -198,3 +198,34 @@ fn copilot_cli_reinstalls_a_same_version_tree_change_and_nothing_else() {
     assert_eq!(uninstalls(&calls()), uninstalls(&after_install) + 1, "a changed tree must reinstall exactly once:\n{}", calls());
     assert_eq!(out, "Repaired", "a re-copied tree is a repair, not a no-op");
 }
+
+#[test]
+fn copilot_cli_re_hands_the_tree_to_an_unowned_install() {
+    // The same class claude carries: the tree hash lives in the marker, so an install
+    // this binary never made leaves copilot's copy unaccounted for while the registry
+    // entry still reads correct. Adopting on that read alone stamps ownership over bytes
+    // nothing ever compared, and the (marker present, Healthy) row no-ops over them from
+    // then on.
+    let env = Env::new("unowned");
+    let calls = || fs::read_to_string(env.copilot_home.join(FAKE_COPILOT_CALL_LOG)).unwrap_or_default();
+    let uninstalls = |log: &str| log.lines().filter(|l| l.starts_with("plugin uninstall")).count();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "copilot-cli"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "setup did not install");
+    let after_install = calls();
+
+    fs::remove_dir_all(env.data.join(PLUGIN_NAME).join("markers")).unwrap();
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal failed on an unowned install: {out}");
+    assert_eq!(out, "Repaired", "an unowned install must be re-handed its tree, got {out}");
+    // Copilot's copy is version-keyed the same way CC's is, so the uninstall half is
+    // what proves the tree was handed over rather than merely re-registered.
+    assert_eq!(uninstalls(&calls()), uninstalls(&after_install) + 1, "the takeover never re-handed the tree:\n{}", calls());
+
+    // The takeover records the tree, so the next session no-ops.
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "the settling heal failed: {out}");
+    assert_eq!(out, "NoOp", "a recorded takeover must converge to a no-op");
+}

@@ -401,3 +401,31 @@ fn reconcile_leaves_a_foreign_script_at_the_retired_hooks_dir_untouched() {
 
     assert_eq!(fs::read_to_string(&env.retired_hook).unwrap(), foreign, "a foreign script at the retired path was touched by the sweep");
 }
+
+/// The only behavioral `Adopted` pin in the suite. A config-family backend renders
+/// its own config and compares it directly, so it needs no tree hash and no marker to
+/// tell converged from drifted — which is what keeps the adopt row reachable here after
+/// the plugin-native backends stopped reaching it (they re-hand the tree instead).
+#[test]
+fn self_heal_adopts_an_unowned_but_healthy_install() {
+    let env = Env::new("adopt");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "cline"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    let settings_before = fs::read_to_string(&env.settings).unwrap();
+    let hook_before = fs::read_to_string(&env.our_hook).unwrap();
+
+    // What a fresh binary meets on a box that already has the plugin: every surface
+    // healthy, nothing recording that we put it there.
+    fs::remove_dir_all(env.data.join("ez-fixture-plugin").join("markers")).unwrap();
+
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal failed on an unowned install: {out}");
+    assert_eq!(out, "Adopted", "a healthy unowned config install must be adopted, got {out}");
+    assert_eq!(fs::read_to_string(&env.settings).unwrap(), settings_before, "adoption rewrote a healthy settings file");
+    assert_eq!(fs::read_to_string(&env.our_hook).unwrap(), hook_before, "adoption rewrote a healthy hook script");
+
+    // Ownership recorded: the next session takes the owned-and-healthy fast path.
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out == "NoOp", "post-adoption self-heal should no-op, got {out}");
+}
