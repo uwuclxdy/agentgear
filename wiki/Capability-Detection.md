@@ -1,9 +1,11 @@
 # Detection & config roots
 
 Before writing anything, a backend answers two questions: is this tool installed (`detect()`), and
-where does its config live? A tool that fails detection is a clean skip — no file, no marker, no
-error — and `self_heal` adopts it once it appears. This page maps the detection signal, the user and
-project config roots, and the environment override each backend honors.
+where does its config live? A tool that fails detection is a clean skip: no file, no marker, no
+error. The next `setup` or `update` covers it once it appears, since a session-start heal repairs
+what it already owns and never installs into a harness holding nothing of ours. This page maps the
+detection signal, the user and project config roots, and the environment override each backend
+honors.
 
 ## Detection signal & config roots
 

@@ -43,6 +43,8 @@ The hook ships inside the plugin, so `self_heal` only ever runs on an install th
 | present | broken, stale, or serving a tree the binary no longer ships | repair or update |
 | present | healthy, current, and serving the binary's own tree | no-op |
 
+The marker records the tree hash the harness was last handed, and Claude Code and copilot-cli read it back. With the marker gone there is nothing to check their copy against, so at the running binary's own version those two repair where the table says adopt: the tree is handed over again and the hash recorded, and the session after that is a no-op. They still adopt where no hash is needed, meaning a GitHub source and an install newer than the running binary. Every other harness compares its own config directly and adopts as written.
+
 Two invariants sit on top:
 
 - **Never re-enable.** A disabled plugin is a deliberate choice; self-heal repairs structure, not enable state. An explicit `install`/`update` does re-enable, because that is a direct user request.
@@ -52,7 +54,7 @@ Two invariants sit on top:
 
 An out-of-band `setup update` re-materializes the plugin into Claude Code's cache and bumps the version, but the running session loaded the old plugin at session start. Claude Code does not hot-reload plugin hooks, so the session stays stale until the user runs `/reload-plugins` or restarts. A presence-only flag at `<data_root>/restart-pending` bridges that gap so the model can relay it.
 
-`update()` and `self_heal()`'s repair branch set the flag when the reconcile changed something, a same-version run whose plugin tree changed included; `install()` never sets it. Every other `self_heal` branch that touches Claude Code clears it: healthy, adopt, and the marker-clear after a clean uninstall all mean the running session is not stale. The flag is advisory: a write or clear failure is swallowed, so it can never fail a lifecycle op that otherwise succeeded. A host `UserPromptSubmit` hook reads it through `PluginHost::restart_pending()` (the notice, or `None`) and prints the notice as plain stdout; the `SessionStart → self_heal` hook clears it. Ship the `UserPromptSubmit` hook from your first release, since it fires from whatever version the running session has loaded.
+`update()` and every `self_heal()` branch that reconciles set the flag when that reconcile changed something, a same-version run whose plugin tree changed included, and a takeover of an install the binary never made along with it; `install()` never sets it. A reconcile that changed nothing clears the flag, as do the healthy branch and the marker-clear after a clean uninstall: all three mean the running session is not stale. The flag is advisory: a write or clear failure is swallowed, so it can never fail a lifecycle op that otherwise succeeded. A host `UserPromptSubmit` hook reads it through `PluginHost::restart_pending()` (the notice, or `None`) and prints the notice as plain stdout; the `SessionStart → self_heal` hook clears it. Ship the `UserPromptSubmit` hook from your first release, since it fires from whatever version the running session has loaded.
 
 ## Concurrency
 

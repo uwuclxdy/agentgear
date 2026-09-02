@@ -55,8 +55,9 @@ Not surfaces a plugin ships, but how a backend decides *whether* and *where* to 
 
 Uniform across all 23 config-merge backends, regardless of capability:
 
-- **Detect-gated.** Nothing is written for a tool that is not on the machine. `self_heal` adopts it
-  once the tool appears.
+- **Detect-gated.** Nothing is written for a tool that is not on the machine. The next `setup` or
+  `update` covers it once it appears: a session-start heal repairs what it already owns and never
+  installs into a harness holding nothing of ours.
 - **Never clobber.** Every write is read-modify-write; only the entries agentgear owns (keyed by the
   plugin's server/hook/command names) are touched. A config it cannot parse is refused, never
   overwritten.
