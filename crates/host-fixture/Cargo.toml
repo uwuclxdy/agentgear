@@ -45,7 +45,7 @@ workspace = true
 [dependencies]
 agentgear = { path = "../agentgear", features = ["all-agents"] }
 # The `fake_claude` bin renders and parses the registry JSON its double serves.
-serde_json = "1.0.150"
+serde_json = "1.0.151"
 
 [build-dependencies]
 agentgear = { path = "../agentgear" }
@@ -54,4 +54,4 @@ agentgear = { path = "../agentgear" }
 # derive backs the zed test's transcription of zed's untagged settings enum.
 # (`serde_json` is a normal dependency above, which test targets also link.)
 [dev-dependencies]
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }

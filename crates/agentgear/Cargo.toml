@@ -73,21 +73,21 @@ all-agents = [
 embed = ["dep:tar", "dep:brotli"]
 
 [dependencies]
-brotli = { version = "8.0.4", optional = true }
-dirs = "6.0.0"
+brotli = { version = "9.0.0", optional = true }
+dirs = "7.0.0"
 agentgear-derive = { workspace = true, optional = true }
-fastrand = "2.4.1"
+fastrand = "2.5.0"
 fs4 = { version = "1.1.0", features = ["sync"] }
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
 # preserve_order: a config read-modify-write keeps the user's existing key order
 # instead of re-sorting their whole file on our first write.
-serde_json = { version = "1.0.150", features = ["preserve_order"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
 serde_norway = { version = "0.9.42", optional = true }
 sha2 = "0.11.0"
 tar = { version = "0.4.46", optional = true, default-features = false }
-thiserror = "2.0.18"
-which = "8.0.4"
-toml_edit = { version = "0.25.12", optional = true }
+thiserror = "2.0.20"
+which = "8.0.6"
+toml_edit = { version = "0.25.15", optional = true }
 
 [target."cfg(windows)".dependencies]
 junction = "2.0.0"
