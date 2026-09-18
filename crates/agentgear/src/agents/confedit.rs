@@ -12,11 +12,12 @@
 //! path can delete a file.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::{Map, Value};
 
-use crate::error::{Error, IoContext, Result};
+use crate::error::{Error, Result};
+use crate::util::atomic_write;
 
 /// Read `path` as JSON (missing -> `{}`), hand the mutable root to `edit`, then
 /// write it back pretty + trailing `\n`, no BOM, via temp-then-rename. Creates
@@ -399,32 +400,6 @@ pub(crate) fn yaml_quote(s: &str) -> String {
     }
     out.push('"');
     out
-}
-
-/// Write to a temp sibling then rename onto `path`, so a reader never sees a
-/// half-written config and a crash leaves the prior file intact.
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        fs::create_dir_all(parent).io_ctx(|| format!("creating {}", parent.display()))?;
-    }
-    let tmp = tmp_sibling(path);
-    fs::write(&tmp, bytes).io_ctx(|| format!("writing {}", tmp.display()))?;
-    if let Err(source) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(Error::Io { context: format!("renaming {} -> {}", tmp.display(), path.display()), source });
-    }
-    Ok(())
-}
-
-/// The pid is not decoration: `fastrand`'s only cross-process entropy is
-/// `Instant::now()`, and the lifecycle flock narrows rather than excludes —
-/// `lock_path()` falls back to `std::env::temp_dir()` when `XDG_RUNTIME_DIR` is
-/// unset, so two processes under different `TMPDIR`s share no lock file at all and
-/// can otherwise pick the same temp name for the same config.
-fn tmp_sibling(path: &Path) -> PathBuf {
-    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
-    name.push(format!(".tmp.{:016x}.{}", fastrand::u64(..), std::process::id()));
-    path.with_file_name(name)
 }
 
 #[cfg(test)]

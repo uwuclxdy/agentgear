@@ -5,7 +5,9 @@
 //! each behind a cargo feature.
 //!
 //! For Claude Code the lifecycle orchestrates the `claude` CLI (≥ 2.1.196) as its
-//! transaction boundary; it never forges Claude Code's on-disk registry state.
+//! transaction boundary; it never forges Claude Code's on-disk registry state,
+//! with one exception: [`repoint_install_paths`] re-spells `installPath` values a
+//! host's own remap targets (design §installPath convergence).
 //! Non-Claude backends need no CLI at all: each translates the plugin's components
 //! (MCP servers, hooks, commands, agents) into that tool's own config files via
 //! atomic read-modify-write merges that leave the user's entries untouched, and
@@ -114,6 +116,8 @@ mod lock;
 #[cfg(any(feature = "claude", feature = "copilot-cli"))]
 mod manifest;
 mod materialize;
+#[cfg(feature = "claude")]
+mod repoint;
 mod restart;
 #[cfg(test)]
 #[path = "../tests/unit/scratch.rs"]
@@ -136,6 +140,8 @@ pub use error::{Error, Result};
 pub use host::{
     AgentReport, AgentResult, AgentStatus, Capabilities, Desired, Outcome, Plugin, PluginHost, Scope, SkipReason, Source, current_pointer,
 };
+#[cfg(feature = "claude")]
+pub use repoint::{Remap, RepointReport, RepointSkip, Repointed, repoint_install_paths};
 pub use statusline::StatusLineDecl;
 
 #[cfg(feature = "derive")]
