@@ -111,6 +111,18 @@ Building a report is public too, for an external `AgentBackend`'s own `report()`
 `DoctorReport::from_error(err: Error)` collapses an upfront failure (say, an unreadable config)
 into a single `Fail` check named `"doctor"` with `fix: "see the error above"`.
 
+## Registry re-point
+
+`repoint_install_paths(registry: &Path, remap: impl FnMut(&str) -> Remap) -> Result<RepointReport>` is the one registry write this crate makes: a host whose Claude Code sessions run against per-session config dirs uses it to re-spell the `installPath` values CC recorded through a session dir that no longer exists (CC checks the recorded path, so the plugin then loads again). Only spellings the host's own remap targets change, the edit is byte-level (never a parse, never a reformat), and a no-change pass never writes the file.
+
+| item | meaning |
+|---|---|
+| `Remap::Keep` | not a path this remap targets; bytes untouched |
+| `Remap::Rewrite(to)` | rewrite the value to `to`; rewriting to the same spelling is a no-op |
+| `Remap::Skip(reason)` | a targeted path this pass cannot converge; named in the report, bytes untouched |
+| `RepointReport { rewritten, skipped }` | what one pass did, in file order; one `Repointed { from, to }` row per spelling however many entries record it, one `RepointSkip { path, reason }` row per targeted-but-unconverged path |
+| `RepointReport::changed()` | whether the file was written |
+
 ## The components IR
 
 `Plugin::components(&source) -> Result<PluginComponents>` parses a plugin tree once into a
