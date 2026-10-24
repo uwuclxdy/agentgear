@@ -6,7 +6,11 @@
 //! Servers live under the root `mcp` object of `~/.config/kilo/kilo.json`, written
 //! via `confedit::json_edit`. Commands copy through as markdown (kilo's command
 //! format is CC-shaped); agents translate into kilo subagent markdown (`mode:
-//! subagent`, an opencode-inherited field). Every file we emit is
+//! subagent`, an opencode-inherited field). The host's always-loaded guidance
+//! lands as a tagged block in `~/.config/kilo/AGENTS.md` (user scope only — the
+//! project channel is the repo-root `AGENTS.md`, the user's own file, never
+//! written), marker-id-scoped so the user's lines and a rival plugin's block
+//! survive byte-identical. Every file we emit is
 //! plugin-name-prefixed and every mcp key is our own server name, so `remove` is
 //! exact and a second reconcile is a true `NoOp`.
 //!
@@ -24,6 +28,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
+use super::agentsmd;
 use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem, yaml_quote};
 use super::report;
 use super::skillsdir;
@@ -50,7 +55,7 @@ impl AgentBackend for KiloBackend {
 
     fn capabilities(&self) -> Capabilities {
         // `hooks:false` — kilo has no config-file shell-hook surface (kilocode#5827).
-        // mcp + commands + agents + skills translate.
+        // mcp + commands + agents + skills + user-scope instructions translate.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -58,7 +63,7 @@ impl AgentBackend for KiloBackend {
             commands: true,
             agents: true,
             skills: true,
-            instructions: false,
+            instructions: true,
             scopes: &["user", "project"],
         }
     }
@@ -80,7 +85,11 @@ impl AgentBackend for KiloBackend {
             |_, _| true,
         )?;
         let skills = skillsdir::probe(&base.join("skills"), plugin, &comp.skills)?;
-        Ok(report::compose([mcp, commands, agents, skills].into_iter().flatten()))
+        let instructions = match agents_md(scope)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([mcp, commands, agents, skills, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -99,6 +108,9 @@ impl AgentBackend for KiloBackend {
             changed |= write_file_idem(&doc_path(&base, "agents", plugin.name, doc), render_agent_md(doc).as_bytes())?;
         }
         changed |= skillsdir::reconcile(&base.join("skills"), plugin, &comp.skills)?;
+        if let Some(path) = agents_md(scope)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -116,6 +128,9 @@ impl AgentBackend for KiloBackend {
             changed |= remove_file_idem(&doc_path(&base, "agents", plugin.name, doc))?;
         }
         changed |= skillsdir::remove(&base.join("skills"), plugin, &comp.skills)?;
+        if let Some(path) = agents_md(scope)? {
+            changed |= agentsmd::remove(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
@@ -171,6 +186,16 @@ fn surface_base(scope: &Scope) -> Result<PathBuf> {
     match scope {
         Scope::User => kilo_config_dir(),
         Scope::Project { path } => Ok(path.join(".kilo")),
+    }
+}
+
+/// The user-scope `~/.config/kilo/AGENTS.md` carrying the host's always-loaded
+/// guidance. Project scope has none: the project channel is the repo-root
+/// `AGENTS.md`, which is the user's own file, never written.
+fn agents_md(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(kilo_config_dir()?.join("AGENTS.md"))),
+        Scope::Project { .. } => Ok(None),
     }
 }
 
@@ -390,6 +415,10 @@ fn report_checks(backend: &KiloBackend, plugin: &Plugin, source: &Source) -> Vec
     };
     checks.push(check_docs_present("translated commands present", &comp.commands, &base, "commands", plugin.name));
     checks.push(check_docs_present("translated agents present", &comp.agents, &base, "agents", plugin.name));
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(agents_md(&Scope::User), plugin));
+    }
 
     checks
 }

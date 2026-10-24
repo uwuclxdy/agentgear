@@ -4,10 +4,12 @@
 //! `XDG_CONFIG_HOME` (+ HOME/XDG data dirs) and assert the written `context_servers`
 //! by parsing it back. `detect()` passes off the pre-created config dir alone.
 //!
-//! Zed is mcp-only, so the only surface asserted is `context_servers`; there are no
-//! hook/command files to check. Every path the backend touches derives from the
-//! redirected env, so proving our server lands under the temp root (and the seeded
-//! user entries survive) also proves the backend never reaches the real config.
+//! Zed translates mcp + skills (and, at user scope, the host's always-loaded
+//! guidance into a tagged block inside zed's own `~/.config/zed/AGENTS.md`), so the
+//! asserted surfaces are `context_servers`, the skills tree, and the AGENTS.md block.
+//! Every path the backend touches derives from the redirected env, so proving our
+//! entries land under the temp root (and the seeded user entries survive) also proves
+//! the backend never reaches the real config.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -88,6 +90,14 @@ impl Env {
 
     fn settings(&self) -> String {
         fs::read_to_string(self.zed.join("settings.json")).unwrap()
+    }
+
+    fn agents_md(&self) -> String {
+        fs::read_to_string(self.agents_md_path()).unwrap()
+    }
+
+    fn agents_md_path(&self) -> PathBuf {
+        self.zed.join("AGENTS.md")
     }
 }
 
@@ -217,4 +227,92 @@ fn zed_never_clobbers_a_foreign_skill() {
         assert_eq!(fs::read_to_string(&skill).unwrap(), seed, "uninstall altered the foreign skill ({label})");
         assert!(support.exists(), "uninstall removed the foreign support file ({label})");
     }
+}
+
+/// The fixture's `<name>@<marketplace>` plugin id; the derive defaults `marketplace`
+/// to `name` when no attr names it.
+const INSTR_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const INSTR_GUIDANCE: &str = "ez-fixture always-loaded guidance line.\n";
+
+/// The exact tagged block the instructions surface must render into AGENTS.md: the
+/// host guidance between two html-comment markers naming the plugin id, invisible in
+/// rendered markdown, the whole block replaceable byte-for-byte.
+fn instr_block() -> String {
+    format!("<!-- agentgear:{INSTR_ID} begin -->\n{INSTR_GUIDANCE}<!-- agentgear:{INSTR_ID} end -->\n")
+}
+
+/// The full user-scope instructions lifecycle in zed's own `~/.config/zed/AGENTS.md`:
+/// install appends our block after the user's content with one blank separator line
+/// and touches nothing else byte-wise; a second install is a true NoOp; a drifted or
+/// deleted block is repaired by self-heal; uninstall strips exactly our block and the
+/// separator, restoring the user's file byte-for-byte.
+#[test]
+fn zed_instructions_block_lifecycle() {
+    let env = Env::new("instr-lifecycle");
+    let seed = "user rule one\nuser rule two\n";
+    fs::write(env.agents_md_path(), seed).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "zed"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+    let installed = format!("{seed}\n{}", instr_block());
+    assert_eq!(env.agents_md(), installed, "install must append exactly our block after a blank line");
+
+    // idempotent: a second identical setup writes nothing.
+    let (ok, out) = env.fixture(&["setup", "--agent", "zed"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(env.agents_md(), installed, "a no-op setup must not rewrite AGENTS.md");
+
+    // drift: user-edit between our markers -> self-heal repairs to the exact render.
+    let tampered = format!("{seed}\n<!-- agentgear:{INSTR_ID} begin -->\ntampered\n<!-- agentgear:{INSTR_ID} end -->\n");
+    fs::write(env.agents_md_path(), &tampered).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the drifted block: {out}");
+    assert_eq!(env.agents_md(), installed, "self-heal must restore the exact block bytes");
+
+    // deletion: the whole block gone -> self-heal re-adds it (partial absence = repair).
+    fs::write(env.agents_md_path(), seed).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted block: {out}");
+    assert_eq!(env.agents_md(), installed, "self-heal must re-add the block");
+
+    // uninstall: exactly our block and its separator go, the user's bytes stay.
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(env.agents_md(), seed, "uninstall must restore the user's file byte-for-byte");
+}
+
+/// With no pre-existing AGENTS.md, install creates the file holding only our block,
+/// and uninstall — our removal being what emptied it — takes the file with it.
+#[test]
+fn zed_instructions_owns_only_its_file() {
+    let env = Env::new("instr-owned-file");
+    assert!(!env.agents_md_path().exists(), "precondition: no AGENTS.md seeded");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "zed"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(env.agents_md(), instr_block(), "a file we created holds exactly our block, no leading blank line");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!env.agents_md_path().exists(), "uninstall must remove the file our removal emptied");
+}
+
+/// A rival agentgear host's block (different plugin id in the markers) and the user's
+/// own lines must survive our install and uninstall byte-identical: the marker id
+/// scopes ownership, so two agentgear plugins coexist in one AGENTS.md.
+#[test]
+fn zed_never_clobbers_a_rival_instructions_block() {
+    let env = Env::new("instr-rival");
+    let rival =
+        "user line\n<!-- agentgear:rival-plugin@rival-mkt begin -->\nrival guidance\n<!-- agentgear:rival-plugin@rival-mkt end -->\n";
+    fs::write(env.agents_md_path(), rival).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "zed"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(env.agents_md(), format!("{rival}\n{}", instr_block()), "install must append our block, leaving the rival's untouched");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(env.agents_md(), rival, "uninstall must strip only our block, keeping the rival's and the user's");
 }

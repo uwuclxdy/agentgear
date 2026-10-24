@@ -2,7 +2,10 @@
 //! `~/.kimi-code/` (override `KIMI_CODE_HOME`). MCP goes through the shared json
 //! renderer (`mcp.json` `mcpServers`, Plain shape — kimi's stdio body is
 //! `{command,args,env}`); hooks land in `config.toml` as a `[[hooks]]`
-//! array-of-tables under CC's exact event names (kimi mirrors them 1:1). Every mcp
+//! array-of-tables under CC's exact event names (kimi mirrors them 1:1). The
+//! host's always-loaded guidance lands as a tagged block in
+//! `~/.kimi-code/AGENTS.md`, marker-id-scoped so the user's lines and a rival
+//! plugin's block survive byte-identical. Every mcp
 //! key is our own server name and every hook is matched by its command string, so
 //! `remove` is exact and a second reconcile is a true `NoOp`. Commands/agents have no
 //! user-level file surface here and are skipped; skills land as bare
@@ -20,6 +23,7 @@ use std::path::{Path, PathBuf};
 
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
+use super::agentsmd;
 use super::cchooks::hook_is_portable;
 use super::confedit;
 use super::mcpjson::{self, RemoteShape, ServerShape};
@@ -53,7 +57,8 @@ impl AgentBackend for KimiBackend {
 
     fn capabilities(&self) -> Capabilities {
         // No user-level command/agent file surface exists (kimi's slash-command analog
-        // is a `SKILL.md` subdir, not a flat `.md`); mcp + hooks + skills translate.
+        // is a `SKILL.md` subdir, not a flat `.md`); mcp + hooks + skills +
+        // instructions translate.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -61,7 +66,7 @@ impl AgentBackend for KimiBackend {
             commands: false,
             agents: false,
             skills: true,
-            instructions: false,
+            instructions: true,
             scopes: &["user"],
         }
     }
@@ -76,7 +81,11 @@ impl AgentBackend for KimiBackend {
         let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let hooks = probe_hooks(&base.join("config.toml"), &comp.hooks)?;
         let skills = skillsdir::probe(&base.join("skills"), plugin, &comp.skills)?;
-        Ok(report::compose([mcp, hooks, skills].into_iter().flatten()))
+        let instructions = match agents_md(scope)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([mcp, hooks, skills, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -87,6 +96,9 @@ impl AgentBackend for KimiBackend {
         changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= reconcile_hooks(&base.join("config.toml"), &comp.hooks)?;
         changed |= skillsdir::reconcile(&base.join("skills"), plugin, &comp.skills)?;
+        if let Some(path) = agents_md(scope)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -98,6 +110,9 @@ impl AgentBackend for KimiBackend {
         changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= remove_hooks(&base.join("config.toml"), &comp.hooks)?;
         changed |= skillsdir::remove(&base.join("skills"), plugin, &comp.skills)?;
+        if let Some(path) = agents_md(scope)? {
+            changed |= agentsmd::remove(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
@@ -129,6 +144,16 @@ fn kimi_base(scope: &Scope) -> Result<PathBuf> {
     match scope {
         Scope::User => kimi_home(),
         Scope::Project { path } => Ok(path.join(".kimi-code")),
+    }
+}
+
+/// The user-scope `~/.kimi-code/AGENTS.md` carrying the host's always-loaded
+/// guidance. User scope is kimi's only capability, so the project arm is the same
+/// defensive fallback shape as [`kimi_base`] and writes nothing.
+fn agents_md(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(kimi_home()?.join("AGENTS.md"))),
+        Scope::Project { .. } => Ok(None),
     }
 }
 
@@ -303,6 +328,10 @@ fn report_checks(backend: &KimiBackend, plugin: &Plugin, source: &Source) -> Vec
     ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_hooks_present(&comp.hooks, &base.join("config.toml")));
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(agents_md(&Scope::User), plugin));
+    }
 
     checks
 }

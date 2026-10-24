@@ -117,6 +117,14 @@ impl Env {
     fn config_toml(&self) -> String {
         fs::read_to_string(self.kimi.join("config.toml")).unwrap()
     }
+
+    fn agents_md(&self) -> String {
+        fs::read_to_string(self.kimi.join("AGENTS.md")).unwrap()
+    }
+
+    fn agents_md_path(&self) -> PathBuf {
+        self.kimi.join("AGENTS.md")
+    }
 }
 
 impl Drop for Env {
@@ -327,4 +335,87 @@ fn kimi_uninstall_leaves_a_windows_saved_config_toml_untouched() {
         assert!(config.exists(), "uninstall took a {label} comment-only config it never wrote to");
         assert_eq!(fs::read(&config).unwrap(), seed, "uninstall rewrote a {label} config that held nothing of ours");
     }
+}
+
+/// The fixture's `<name>@<marketplace>` plugin id; the derive defaults `marketplace`
+/// to `name` when no attr names it.
+const INSTR_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const INSTR_GUIDANCE: &str = "ez-fixture always-loaded guidance line.\n";
+
+/// The exact tagged block the instructions surface must render into AGENTS.md: the
+/// host guidance between two html-comment markers naming the plugin id, invisible in
+/// rendered markdown, the whole block replaceable byte-for-byte.
+fn instr_block() -> String {
+    format!("<!-- agentgear:{INSTR_ID} begin -->\n{INSTR_GUIDANCE}<!-- agentgear:{INSTR_ID} end -->\n")
+}
+
+/// The user-scope instructions lifecycle in kimi's global `$KIMI_CODE_HOME/AGENTS.md`
+/// (live-proven loaded into the system prompt): install appends our block after the
+/// user's content with one blank separator line; a drifted or deleted block is
+/// repaired by self-heal; uninstall strips exactly our block and the separator.
+#[test]
+fn kimi_instructions_block_lifecycle() {
+    let env = Env::new("instr-lifecycle");
+    let seed = "user rule one\nuser rule two\n";
+    fs::write(env.agents_md_path(), seed).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "kimi"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+    let installed = format!("{seed}\n{}", instr_block());
+    assert_eq!(env.agents_md(), installed, "install must append exactly our block after a blank line");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "kimi"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(env.agents_md(), installed, "a no-op setup must not rewrite AGENTS.md");
+
+    let tampered = format!("{seed}\n<!-- agentgear:{INSTR_ID} begin -->\ntampered\n<!-- agentgear:{INSTR_ID} end -->\n");
+    fs::write(env.agents_md_path(), &tampered).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the drifted block: {out}");
+    assert_eq!(env.agents_md(), installed, "self-heal must restore the exact block bytes");
+
+    fs::write(env.agents_md_path(), seed).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted block: {out}");
+    assert_eq!(env.agents_md(), installed, "self-heal must re-add the block");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(env.agents_md(), seed, "uninstall must restore the user's file byte-for-byte");
+}
+
+/// With no pre-existing AGENTS.md, install creates the file holding only our block,
+/// and uninstall — our removal being what emptied it — takes the file with it.
+#[test]
+fn kimi_instructions_owns_only_its_file() {
+    let env = Env::new("instr-owned-file");
+    assert!(!env.agents_md_path().exists(), "precondition: no AGENTS.md seeded");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "kimi"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(env.agents_md(), instr_block(), "a file we created holds exactly our block, no leading blank line");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!env.agents_md_path().exists(), "uninstall must remove the file our removal emptied");
+}
+
+/// A rival agentgear host's block (different plugin id in the markers) and the user's
+/// own lines must survive our install and uninstall byte-identical: the marker id
+/// scopes ownership, so two agentgear plugins coexist in one AGENTS.md.
+#[test]
+fn kimi_never_clobbers_a_rival_instructions_block() {
+    let env = Env::new("instr-rival");
+    let rival =
+        "user line\n<!-- agentgear:rival-plugin@rival-mkt begin -->\nrival guidance\n<!-- agentgear:rival-plugin@rival-mkt end -->\n";
+    fs::write(env.agents_md_path(), rival).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "kimi"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(env.agents_md(), format!("{rival}\n{}", instr_block()), "install must append our block, leaving the rival's untouched");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(env.agents_md(), rival, "uninstall must strip only our block, keeping the rival's and the user's");
 }

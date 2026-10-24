@@ -128,6 +128,10 @@ cfg_config_backends! {
     #[allow(dead_code)]
     pub(crate) mod skillsdir;
 }
+cfg_config_backends! {
+    #[allow(dead_code)]
+    pub(crate) mod agentsmd;
+}
 
 // The HOME-based Claude Code registry reader, shared by every backend that
 // detects native CC-plugin-tree ingestion already covering it (omp's

@@ -20,7 +20,8 @@ use agentgear::{PluginHost, Scope, Source};
 struct FixtureHost;
 
 /// Host-authored always-loaded guidance, exercising the `instructions` surface
-/// (only opencode writes it today; other backends ignore `Plugin.instructions`).
+/// (opencode's registered file and the AGENTS.md-family tagged block write it;
+/// backends without an always-loaded channel ignore `Plugin.instructions`).
 fn fixture_instructions() -> Option<String> {
     Some("ez-fixture always-loaded guidance line.".to_string())
 }

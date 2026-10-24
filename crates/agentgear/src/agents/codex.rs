@@ -3,7 +3,11 @@
 //! `[mcp_servers.<name>]`, via `mcptoml`); hooks land in `hooks.json` under CC's
 //! exact event names (codex mirrors them 1:1); commands become flat markdown
 //! prompts under `prompts/`; agents translate into codex subagent TOML under
-//! `agents/`. Every mcp key is our own server name and every translated file is
+//! `agents/`. The host's always-loaded guidance lands as a tagged block in
+//! `$CODEX_HOME/AGENTS.md` (user scope only — the project channel is the
+//! repo-root `AGENTS.md`, which is the user's own file, never written),
+//! marker-id-scoped so the user's lines and a rival plugin's block survive
+//! byte-identical. Every mcp key is our own server name and every translated file is
 //! plugin-name-prefixed, so `remove` is exact and a second reconcile is a true
 //! `NoOp`.
 //!
@@ -24,6 +28,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::agentsmd;
 use super::cchooks::{hook_is_portable, remove_hook_groups, render_hook_group};
 use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem};
 use super::report;
@@ -45,7 +50,8 @@ impl AgentBackend for CodexBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // mcp + hooks + commands (prompts) + agents translate; no skills surface.
+        // mcp + hooks + commands (prompts) + agents + user-scope instructions
+        // translate; no skills surface.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -53,7 +59,7 @@ impl AgentBackend for CodexBackend {
             commands: true,
             agents: true,
             skills: false,
-            instructions: false,
+            instructions: true,
             scopes: &["user", "project"],
         }
     }
@@ -83,7 +89,11 @@ impl AgentBackend for CodexBackend {
                 .collect::<Vec<_>>(),
             |_, _| true,
         )?;
-        Ok(report::compose([mcp, hooks, commands, agent_files].into_iter().flatten()))
+        let instructions = match agents_md(scope)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([mcp, hooks, commands, agent_files, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -106,6 +116,9 @@ impl AgentBackend for CodexBackend {
         for doc in &comp.agents {
             changed |= write_file_idem(&agent_path(&agents, plugin.name, doc), render_agent_toml(plugin.name, doc).as_bytes())?;
         }
+        if let Some(path) = agents_md(scope)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -124,6 +137,9 @@ impl AgentBackend for CodexBackend {
         let agents = base.join("agents");
         for doc in &comp.agents {
             changed |= remove_file_idem(&agent_path(&agents, plugin.name, doc))?;
+        }
+        if let Some(path) = agents_md(scope)? {
+            changed |= agentsmd::remove(&path, plugin)?;
         }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
@@ -154,6 +170,16 @@ fn codex_base(scope: &Scope) -> Result<PathBuf> {
     match scope {
         Scope::User => codex_home(),
         Scope::Project { path } => Ok(path.join(".codex")),
+    }
+}
+
+/// The user-scope `$CODEX_HOME/AGENTS.md` carrying the host's always-loaded
+/// guidance. Project scope has none: codex's project channel is the repo-root
+/// `AGENTS.md` (and trust-gated), which is the user's own file, never written.
+fn agents_md(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(codex_home()?.join("AGENTS.md"))),
+        Scope::Project { .. } => Ok(None),
     }
 }
 
@@ -381,6 +407,10 @@ fn report_checks(backend: &CodexBackend, plugin: &Plugin, source: &Source) -> Ve
     checks.push(check_prompts_present(&comp.commands, &base.join("prompts"), plugin.name));
     checks.push(check_agents_present(&comp.agents, &base.join("agents"), plugin.name));
     checks.push(check_hooks_present(&comp.hooks, &base.join("hooks.json")));
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(agents_md(&Scope::User), plugin));
+    }
 
     checks
 }

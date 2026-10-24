@@ -110,6 +110,14 @@ impl Env {
         fs::read_to_string(self.codex.join("hooks.json")).unwrap()
     }
 
+    fn agents_md(&self) -> String {
+        fs::read_to_string(self.codex.join("AGENTS.md")).unwrap()
+    }
+
+    fn agents_md_path(&self) -> PathBuf {
+        self.codex.join("AGENTS.md")
+    }
+
     /// The project root a `--project`-scoped run installs into: its config base is
     /// `<project>/.codex`, independent of `CODEX_HOME`.
     fn project(&self) -> PathBuf {
@@ -382,4 +390,100 @@ fn codex_second_setup_over_a_windows_saved_config_toml_is_a_noop() {
         assert_eq!(out, "NoOp", "a converged {label} config must report NoOp, not a rewrite");
         assert_eq!(fs::read_to_string(&config).unwrap(), windows_saved, "second setup rewrote a converged {label} config");
     }
+}
+
+/// The fixture's `<name>@<marketplace>` plugin id; the derive defaults `marketplace`
+/// to `name` when no attr names it.
+const INSTR_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const INSTR_GUIDANCE: &str = "ez-fixture always-loaded guidance line.\n";
+
+/// The exact tagged block the instructions surface must render into AGENTS.md: the
+/// host guidance between two html-comment markers naming the plugin id, invisible in
+/// rendered markdown, the whole block replaceable byte-for-byte.
+fn instr_block() -> String {
+    format!("<!-- agentgear:{INSTR_ID} begin -->\n{INSTR_GUIDANCE}<!-- agentgear:{INSTR_ID} end -->\n")
+}
+
+/// The user-scope instructions lifecycle in codex's global `$CODEX_HOME/AGENTS.md`
+/// (live-proven loaded by `codex exec`): install appends our block after the user's
+/// content with one blank separator line; a drifted or deleted block is repaired by
+/// self-heal; uninstall strips exactly our block and the separator.
+#[test]
+fn codex_instructions_block_lifecycle() {
+    let env = Env::new("instr-lifecycle");
+    let seed = "user rule one\nuser rule two\n";
+    fs::write(env.agents_md_path(), seed).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "codex"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+    let installed = format!("{seed}\n{}", instr_block());
+    assert_eq!(env.agents_md(), installed, "install must append exactly our block after a blank line");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "codex"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(env.agents_md(), installed, "a no-op setup must not rewrite AGENTS.md");
+
+    let tampered = format!("{seed}\n<!-- agentgear:{INSTR_ID} begin -->\ntampered\n<!-- agentgear:{INSTR_ID} end -->\n");
+    fs::write(env.agents_md_path(), &tampered).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the drifted block: {out}");
+    assert_eq!(env.agents_md(), installed, "self-heal must restore the exact block bytes");
+
+    fs::write(env.agents_md_path(), seed).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted block: {out}");
+    assert_eq!(env.agents_md(), installed, "self-heal must re-add the block");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(env.agents_md(), seed, "uninstall must restore the user's file byte-for-byte");
+}
+
+/// With no pre-existing AGENTS.md, install creates the file holding only our block,
+/// and uninstall — our removal being what emptied it — takes the file with it.
+#[test]
+fn codex_instructions_owns_only_its_file() {
+    let env = Env::new("instr-owned-file");
+    assert!(!env.agents_md_path().exists(), "precondition: no AGENTS.md seeded");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "codex"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(env.agents_md(), instr_block(), "a file we created holds exactly our block, no leading blank line");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!env.agents_md_path().exists(), "uninstall must remove the file our removal emptied");
+}
+
+/// A rival agentgear host's block (different plugin id in the markers) and the user's
+/// own lines must survive our install and uninstall byte-identical: the marker id
+/// scopes ownership, so two agentgear plugins coexist in one AGENTS.md.
+#[test]
+fn codex_never_clobbers_a_rival_instructions_block() {
+    let env = Env::new("instr-rival");
+    let rival =
+        "user line\n<!-- agentgear:rival-plugin@rival-mkt begin -->\nrival guidance\n<!-- agentgear:rival-plugin@rival-mkt end -->\n";
+    fs::write(env.agents_md_path(), rival).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "codex"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(env.agents_md(), format!("{rival}\n{}", instr_block()), "install must append our block, leaving the rival's untouched");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(env.agents_md(), rival, "uninstall must strip only our block, keeping the rival's and the user's");
+}
+
+/// Project scope has no instructions surface: codex's project AGENTS.md channel is
+/// the repo-root file (and trust-gated), which agentgear does not write in v1 — so a
+/// `--project` install must leave no AGENTS.md anywhere under the project.
+#[test]
+fn codex_instructions_user_scope_only() {
+    let env = Env::new("instr-user-scope-only");
+    let (ok, out) = env.fixture(&["setup", "--agent", "codex", "--project", env.project().to_str().unwrap()]);
+    assert!(ok, "setup failed: {out}");
+    assert!(env.project().join(".codex").join("config.toml").exists(), "precondition: project install ran");
+    assert!(!env.project().join("AGENTS.md").exists(), "project-root AGENTS.md must not be written");
+    assert!(!env.project().join(".codex").join("AGENTS.md").exists(), "project .codex AGENTS.md must not be written");
 }

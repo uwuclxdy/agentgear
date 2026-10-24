@@ -1,13 +1,17 @@
-//! The zed backend — mcp + skills. Zed reads MCP servers from a `context_servers`
-//! object in its `settings.json` (`~/.config/zed/settings.json`, XDG-based on both
-//! Linux and macOS; `%APPDATA%\Zed` on Windows): stdio is the shared Plain
-//! `{command,args,env}` body, remote http is `{url,headers}` (zed's one remote
-//! transport; sse is skipped — no faithful landing). Entries are keyed by our
-//! plugin's server names, so `remove` is exact and a second reconcile is a true
-//! `NoOp`. Skills land as bare `<name>/SKILL.md` under zed's ONLY skill path
+//! The zed backend — mcp + skills + instructions. Zed reads MCP servers from a
+//! `context_servers` object in its `settings.json` (`~/.config/zed/settings.json`,
+//! XDG-based on both Linux and macOS; `%APPDATA%\Zed` on Windows): stdio is the
+//! shared Plain `{command,args,env}` body, remote http is `{url,headers}` (zed's
+//! one remote transport; sse is skipped — no faithful landing). Entries are keyed
+//! by our plugin's server names, so `remove` is exact and a second reconcile is a
+//! true `NoOp`. Skills land as bare `<name>/SKILL.md` under zed's ONLY skill path
 //! `~/.agents/skills` (user) / `<worktree>/.agents/skills` (project), tagged for
 //! ownership so a foreign skill in that shared root is never swept; zed requires
-//! `name`+`description`, which the shared renderer ensures. Accepted limit: zed caps
+//! `name`+`description`, which the shared renderer ensures. The host's
+//! always-loaded guidance lands as a tagged block inside zed's own
+//! `~/.config/zed/AGENTS.md` (user scope only — the worktree-root `AGENTS.md` is
+//! the repo's own file, never written), marker-id-scoped so the user's lines and
+//! a rival plugin's block survive byte-identical. Accepted limit: zed caps
 //! the aggregate name+description catalog at ~50KB — a plugin shipping past that is
 //! the author's concern, not truncated here. Zed ships no general hook/command/
 //! subagent config-file surface (its `tasks.json` "hooks" fire on a single
@@ -18,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::agentsmd;
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
 use super::skillsdir;
@@ -43,7 +48,8 @@ impl AgentBackend for ZedBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // mcp + skills: zed has no config-file hook/command/subagent surface to translate.
+        // mcp + skills + user-scope instructions: zed has no config-file
+        // hook/command/subagent surface to translate.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -51,7 +57,7 @@ impl AgentBackend for ZedBackend {
             commands: false,
             agents: false,
             skills: true,
-            instructions: false,
+            instructions: true,
             scopes: &["user", "project"],
         }
     }
@@ -65,13 +71,20 @@ impl AgentBackend for ZedBackend {
         let comp = plugin.components(source)?.with_client(self.id());
         let mcp = probe_mcp(&settings_path(scope)?, &comp.mcp_servers)?;
         let skills = skillsdir::probe(&skillsdir::agents_skills_root(scope)?, plugin, &comp.skills)?;
-        Ok(report::compose([Some(mcp), skills].into_iter().flatten()))
+        let instructions = match agents_md(scope)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([Some(mcp), skills, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?.with_client(self.id());
         let mut changed = reconcile_mcp(&settings_path(scope)?, &comp.mcp_servers)? != Outcome::NoOp;
         changed |= skillsdir::reconcile(&skillsdir::agents_skills_root(scope)?, plugin, &comp.skills)?;
+        if let Some(path) = agents_md(scope)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -79,6 +92,9 @@ impl AgentBackend for ZedBackend {
         let comp = plugin.components(source)?.with_client(self.id());
         let mut changed = remove_mcp(&settings_path(scope)?, &comp.mcp_servers)? != Outcome::NoOp;
         changed |= skillsdir::remove(&skillsdir::agents_skills_root(scope)?, plugin, &comp.skills)?;
+        if let Some(path) = agents_md(scope)? {
+            changed |= agentsmd::remove(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
@@ -126,6 +142,22 @@ fn settings_path(scope: &Scope) -> Result<PathBuf> {
             Error::Tree("no config directory (XDG_CONFIG_HOME and HOME both unset); cannot locate zed's settings.json".into())
         }),
         Scope::Project { path } => Ok(path.join(".zed").join("settings.json")),
+    }
+}
+
+/// The user-scope `~/.config/zed/AGENTS.md` carrying the host's always-loaded
+/// guidance as a tagged block. Project scope has none: the worktree-root
+/// `AGENTS.md` is the repo's own file, and writing it would clobber user content.
+fn agents_md(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(
+            user_config_dir()
+                .ok_or_else(|| {
+                    Error::Tree("no config directory (XDG_CONFIG_HOME and HOME both unset); cannot locate zed's AGENTS.md".into())
+                })?
+                .join("AGENTS.md"),
+        )),
+        Scope::Project { .. } => Ok(None),
     }
 }
 
@@ -196,6 +228,10 @@ fn report_checks(backend: &ZedBackend, plugin: &Plugin, source: &Source) -> Vec<
 
     checks.push(check_mcp_registered(&comp.mcp_servers, root.as_ref()));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(agents_md(&Scope::User), plugin));
+    }
 
     checks
 }
