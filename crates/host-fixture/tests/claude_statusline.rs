@@ -1,5 +1,5 @@
 //! Hermetic Claude-backend tests, fully isolated from a real `~/.claude`. No
-//! docker, no auth, no real `claude`: the `fake_claude` bin is copied onto a
+//! docker, no auth, no real `claude`: the `fake_claude` bin is staged onto a
 //! scratch `PATH` as `claude`, so the backend's CLI orchestration runs against a
 //! throwaway registry while the parts under test are real code writing real files.
 //!
@@ -57,7 +57,7 @@ impl Env {
         for dir in [&bin, &env.cfg, &env.data, &env.run] {
             fs::create_dir_all(dir).unwrap();
         }
-        fs::copy(FAKE_CLAUDE, bin.join(format!("claude{}", std::env::consts::EXE_SUFFIX))).unwrap();
+        stage_double(FAKE_CLAUDE, &bin.join(format!("claude{}", std::env::consts::EXE_SUFFIX)));
         fs::write(env.settings_path(), SEED_SETTINGS).unwrap();
         env
     }
@@ -103,6 +103,22 @@ fn curated_path(scratch_bin: &Path) -> OsString {
         dirs.push(dir.to_path_buf());
     }
     std::env::join_paths(&dirs).unwrap_or_default()
+}
+
+/// Stages a CLI double onto the scratch `PATH`: a symlink on unix, a copy
+/// elsewhere. A copy opens the destination for write, which races a sibling
+/// test's exec of it (`ETXTBSY`); the symlink never write-opens the inode the
+/// child execs. The link points at the build artifact, so a test needing its
+/// own variant must remove the link and copy in a replacement, never write
+/// through the link.
+#[cfg(unix)]
+fn stage_double(src: &str, dst: &Path) {
+    std::os::unix::fs::symlink(src, dst).unwrap();
+}
+
+#[cfg(not(unix))]
+fn stage_double(src: &str, dst: &Path) {
+    fs::copy(src, dst).unwrap();
 }
 
 #[test]

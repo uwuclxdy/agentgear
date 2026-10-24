@@ -13,7 +13,7 @@
 //! install replaces the copy. `fake_claude` models the registry, not the cache copy, so
 //! the reinstall is asserted through its call log.
 //!
-//! No docker, no auth, no real `claude`: the `fake_claude` bin is copied onto a scratch
+//! No docker, no auth, no real `claude`: the `fake_claude` bin is staged onto a scratch
 //! `PATH` as `claude`, and every other backend's detection stays false.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -65,7 +65,7 @@ impl Env {
         for dir in [&bin, &env.cfg, &env.data, &env.run] {
             fs::create_dir_all(dir).unwrap();
         }
-        fs::copy(FAKE_CLAUDE, bin.join(format!("claude{}", std::env::consts::EXE_SUFFIX))).unwrap();
+        stage_double(FAKE_CLAUDE, &bin.join(format!("claude{}", std::env::consts::EXE_SUFFIX)));
         copy_dir_all(&Path::new(env!("CARGO_MANIFEST_DIR")).join("plugin"), &env.src);
         env
     }
@@ -159,6 +159,22 @@ impl Drop for Env {
 fn fixture_path(bin: &Path) -> OsString {
     let fixture_dir = Path::new(BIN).parent().map(Path::to_path_buf).unwrap_or_default();
     std::env::join_paths([bin.to_path_buf(), fixture_dir]).unwrap()
+}
+
+/// Stages a CLI double onto the scratch `PATH`: a symlink on unix, a copy
+/// elsewhere. A copy opens the destination for write, which races a sibling
+/// test's exec of it (`ETXTBSY`); the symlink never write-opens the inode the
+/// child execs. The link points at the build artifact, so a test needing its
+/// own variant must remove the link and copy in a replacement, never write
+/// through the link.
+#[cfg(unix)]
+fn stage_double(src: &str, dst: &Path) {
+    std::os::unix::fs::symlink(src, dst).unwrap();
+}
+
+#[cfg(not(unix))]
+fn stage_double(src: &str, dst: &Path) {
+    fs::copy(src, dst).unwrap();
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) {

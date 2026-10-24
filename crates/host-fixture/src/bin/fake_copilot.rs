@@ -1,4 +1,4 @@
-//! A test double for the `copilot` CLI, copied onto a scratch `PATH` as `copilot` by
+//! A test double for the `copilot` CLI, staged onto a scratch `PATH` as `copilot` by
 //! the hermetic copilot-cli-backend tests.
 //!
 //! The real CLI is the transaction boundary the copilot-cli backend orchestrates, so

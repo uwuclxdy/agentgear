@@ -1,4 +1,4 @@
-//! A test double for the `claude` CLI, copied onto a scratch `PATH` as `claude` by
+//! A test double for the `claude` CLI, staged onto a scratch `PATH` as `claude` by
 //! the hermetic Claude-backend tests.
 //!
 //! The real CLI is the transaction boundary the claude backend orchestrates, so

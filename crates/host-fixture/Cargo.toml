@@ -24,7 +24,7 @@ path = "src/bin/github_fixture.rs"
 name = "embedded_github_fixture"
 path = "src/bin/embedded_github_fixture.rs"
 
-# A `claude` CLI test double, copied onto a scratch PATH by the hermetic
+# A `claude` CLI test double, staged onto a scratch PATH by the hermetic
 # claude-backend tests so they can run without a real (auth'd) claude.
 [[bin]]
 name = "fake_claude"
