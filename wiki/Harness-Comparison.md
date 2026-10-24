@@ -58,8 +58,9 @@ copy of `hooks/hooks.json` fires at all is unconfirmed.
 Two more surfaces sit outside these five, both declared by the host rather than shipped in the
 tree, so neither rides the components IR:
 
-- **instructions** (`PluginHost::instructions`, always-loaded guidance text). Only `opencode`
-  writes it today, a dedicated file registered in its `instructions[]` array; `claude` receives
+- **instructions** (`PluginHost::instructions`, always-loaded guidance text). `opencode` writes a
+  dedicated file registered in its `instructions[]` array; `zed`, `codex`, `kilo` and `kimi` write a
+  tagged block in the harness's own global `AGENTS.md` (user scope); `claude` receives
   the same text through the MCP `initialize.instructions` field instead.
 - **status line** (retired automatic wiring). Five backends used to write a host-declared line into their tool's own single
   slot: `claude`, `copilot-cli` (user scope only), `qwen-code`, `antigravity-cli` (user scope only),

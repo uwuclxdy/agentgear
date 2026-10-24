@@ -154,23 +154,28 @@ Grouped by what each surface translates:
 |---|---|
 | plugin lifecycle (mcp, hooks, commands, agents, skills) | `claude`, `copilot-cli` |
 | mcp, hooks, commands, agents, skills | `cursor`, `devin`, `qwen-code`, `droid` |
-| mcp, hooks, commands, agents | `codex`, `gemini`, `augment` |
+| mcp, hooks, commands, agents | `gemini`, `augment` |
+| mcp, hooks, commands, agents, instructions | `codex` |
 | mcp, hooks, commands, skills | `crush` |
-| mcp, commands, agents, skills | `kilo` |
+| mcp, commands, agents, skills, instructions | `kilo` |
 | mcp, hooks, agents | `vscode-copilot` |
 | mcp, hooks, commands | `cline` |
 | mcp, commands, agents, instructions | `opencode` |
 | mcp, commands, agents | `omp` |
-| mcp, hooks, skills | `kimi`, `goose` |
+| mcp, hooks, skills, instructions | `kimi` |
+| mcp, hooks, skills | `goose` |
 | mcp, hooks | `antigravity-cli` |
-| mcp, skills | `kiro`, `zed`, `openclaw` |
+| mcp, skills, instructions | `zed` |
+| mcp, skills | `kiro`, `openclaw` |
 | mcp only | `jetbrains-copilot`, `antigravity`, `amp` |
 | detect-only, no surface | `pi` |
 
 Skills translate on 13 of 25 backends now (see above). One surface sits outside that grid because
 the host declares it instead of shipping it in the tree: instructions (always-loaded guidance
-from `PluginHost::instructions`) translate on `opencode` only so far, written to a dedicated file
-whose path is registered in opencode's `instructions[]`. Status lines are manual: a host ships a
+from `PluginHost::instructions`) translate on 5 backends — `opencode` via a dedicated file
+registered in its `instructions[]`, and `zed`, `codex`, `kilo`, `kimi` via a tagged block in the
+harness's own global `AGENTS.md` (user scope), delimited by agentgear markers so the user's own
+lines survive install and uninstall byte-identical. Status lines are manual: a host ships a
 statusline print subcommand, and the user wires it into their harness config themselves —
 agentgear writes no harness's status-line slot (a pre-existing one is left untouched). Of the 24
 non-Claude backends, 14 accept both scopes and 9 are user-scope only (`copilot-cli` among them,
