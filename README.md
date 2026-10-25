@@ -153,9 +153,10 @@ Grouped by what each surface translates:
 | translated surfaces | agents |
 |---|---|
 | plugin lifecycle (mcp, hooks, commands, agents, skills) | `claude`, `copilot-cli` |
-| mcp, hooks, commands, agents, skills | `cursor`, `devin`, `qwen-code`, `droid` |
-| mcp, hooks, commands, agents | `gemini`, `augment` |
-| mcp, hooks, commands, agents, instructions | `codex` |
+| mcp, hooks, commands, agents, skills, instructions | `cursor`, `qwen-code` |
+| mcp, hooks, commands, agents, skills | `devin`, `droid` |
+| mcp, hooks, commands, agents, instructions | `gemini`, `codex` |
+| mcp, hooks, commands, agents | `augment` |
 | mcp, hooks, commands, skills | `crush` |
 | mcp, commands, agents, skills, instructions | `kilo` |
 | mcp, hooks, agents | `vscode-copilot` |
@@ -171,11 +172,7 @@ Grouped by what each surface translates:
 | detect-only, no surface | `pi` |
 
 Skills translate on 13 of 25 backends now (see above). One surface sits outside that grid because
-the host declares it instead of shipping it in the tree: instructions (always-loaded guidance
-from `PluginHost::instructions`) translate on 5 backends — `opencode` via a dedicated file
-registered in its `instructions[]`, and `zed`, `codex`, `kilo`, `kimi` via a tagged block in the
-harness's own global `AGENTS.md` (user scope), delimited by agentgear markers so the user's own
-lines survive install and uninstall byte-identical. Status lines are manual: a host ships a
+the host declares it instead of shipping it in the tree: instructions (always-loaded guidance from `PluginHost::instructions`) translate on 8 backends — `opencode` via a dedicated file registered in its `instructions[]`; `zed`, `codex`, `kilo`, `kimi`, `gemini` and `qwen-code` via a tagged block in the harness's own global context file (`AGENTS.md`, `GEMINI.md`, `QWEN.md`), delimited by agentgear markers so the user's own lines and a second plugin's block survive install and uninstall byte-identical; and `cursor` via a tag-owned `alwaysApply: true` rule in `.cursor/rules/` (both scopes), a foreign file at the same name skipped whole. Status lines are manual: a host ships a
 statusline print subcommand, and the user wires it into their harness config themselves —
 agentgear writes no harness's status-line slot (a pre-existing one is left untouched). Of the 24
 non-Claude backends, 14 accept both scopes and 9 are user-scope only (`copilot-cli` among them,
