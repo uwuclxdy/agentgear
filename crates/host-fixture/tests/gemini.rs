@@ -219,3 +219,111 @@ fn gemini_uninstall_drops_a_settings_file_it_authored() {
     assert!(ok && out == "Removed", "uninstall failed: {out}");
     assert!(!settings.exists(), "uninstall orphaned a settings file it authored:\n{}", fs::read_to_string(&settings).unwrap());
 }
+
+// --- instructions ------------------------------------------------------------
+
+/// The fixture's `<name>@<marketplace>` plugin id; the derive defaults `marketplace`
+/// to `name` when no attr names it.
+const INSTR_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const INSTR_GUIDANCE: &str = "ez-fixture always-loaded guidance line.\n";
+
+/// The exact tagged block the instructions surface must render into the global
+/// `~/.gemini/GEMINI.md`: the host guidance between two html-comment markers naming
+/// the plugin id, the whole block replaceable byte-for-byte.
+fn instr_block() -> String {
+    format!("<!-- agentgear:{INSTR_ID} begin -->\n{INSTR_GUIDANCE}<!-- agentgear:{INSTR_ID} end -->\n")
+}
+
+/// The user-scope instructions lifecycle in gemini's global `~/.gemini/GEMINI.md`
+/// (its only default context filename at the global tier, reached with zero settings
+/// writes): install appends our block after the user's content with one blank
+/// separator line; a drifted or deleted block is repaired by self-heal; uninstall
+/// strips exactly our block and the separator.
+#[test]
+fn gemini_instructions_block_lifecycle() {
+    let env = Env::new("instr-lifecycle");
+    let gemini_md = env.gemini.join("GEMINI.md");
+    let seed = "user rule one\nuser rule two\n";
+    fs::write(&gemini_md, seed).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "gemini"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+    let installed = format!("{seed}\n{}", instr_block());
+    assert_eq!(fs::read_to_string(&gemini_md).unwrap(), installed, "install must append exactly our block after a blank line");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "gemini"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(fs::read_to_string(&gemini_md).unwrap(), installed, "a no-op setup must not rewrite GEMINI.md");
+
+    let tampered = format!("{seed}\n<!-- agentgear:{INSTR_ID} begin -->\ntampered\n<!-- agentgear:{INSTR_ID} end -->\n");
+    fs::write(&gemini_md, &tampered).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the drifted block: {out}");
+    assert_eq!(fs::read_to_string(&gemini_md).unwrap(), installed, "self-heal must restore the exact block bytes");
+
+    fs::write(&gemini_md, seed).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted block: {out}");
+    assert_eq!(fs::read_to_string(&gemini_md).unwrap(), installed, "self-heal must re-add the block");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&gemini_md).unwrap(), seed, "uninstall must restore the user's file byte-for-byte");
+}
+
+/// With no pre-existing GEMINI.md, install creates the file holding only our block,
+/// and uninstall — our removal being what emptied it — takes the file with it.
+#[test]
+fn gemini_instructions_owns_only_its_file() {
+    let env = Env::new("instr-owned-file");
+    let gemini_md = env.gemini.join("GEMINI.md");
+    assert!(!gemini_md.exists(), "precondition: no GEMINI.md seeded");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "gemini"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(fs::read_to_string(&gemini_md).unwrap(), instr_block(), "a file we created holds exactly our block, no leading blank line");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!gemini_md.exists(), "uninstall must remove the file our removal emptied");
+}
+
+/// A rival agentgear host's block (different plugin id in the markers) and the user's
+/// own lines must survive our install and uninstall byte-identical: the marker id
+/// scopes ownership, so two agentgear plugins coexist in one GEMINI.md.
+#[test]
+fn gemini_never_clobbers_a_rival_instructions_block() {
+    let env = Env::new("instr-rival");
+    let gemini_md = env.gemini.join("GEMINI.md");
+    let rival =
+        "user line\n<!-- agentgear:rival-plugin@rival-mkt begin -->\nrival guidance\n<!-- agentgear:rival-plugin@rival-mkt end -->\n";
+    fs::write(&gemini_md, rival).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "gemini"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(
+        fs::read_to_string(&gemini_md).unwrap(),
+        format!("{rival}\n{}", instr_block()),
+        "install must append our block, leaving the rival's untouched"
+    );
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&gemini_md).unwrap(), rival, "uninstall must strip only our block, keeping the rival's and the user's");
+}
+
+/// Project scope has no instructions surface: gemini's global `GEMINI.md` is the
+/// only default context filename at the global tier and the project context-file
+/// tier is a separate, folder-trust-gated surface agentgear does not write in v1 —
+/// so a `--project` install must leave no GEMINI.md anywhere.
+#[test]
+fn gemini_instructions_user_scope_only() {
+    let env = Env::new("instr-user-scope-only");
+    let proj = env.root.join("proj");
+    let (ok, out) = env.fixture(&["setup", "--agent", "gemini", "--project", proj.to_str().unwrap()]);
+    assert!(ok, "setup failed: {out}");
+    assert!(proj.join(".gemini").join("settings.json").exists(), "precondition: project install ran");
+    assert!(!proj.join(".gemini").join("GEMINI.md").exists(), "project .gemini/GEMINI.md must not be written");
+    assert!(!env.gemini.join("GEMINI.md").exists(), "a project install must not touch the user's global GEMINI.md");
+}

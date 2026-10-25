@@ -5,18 +5,31 @@
 //! -> `sessionStart`, `UserPromptSubmit` -> `beforeSubmitPrompt`); commands become
 //! one plain-markdown file each under `~/.cursor/commands/`; CC agent defs become
 //! cursor subagent files under `~/.cursor/agents/` (its native subagent surface,
-//! valid at both scopes — unlike `.cursor/rules/*.mdc`, which cursor only reads as
-//! project files, storing user rules in a SQLite blob no file write can reach).
-//! Every file/key we write is prefixed/keyed by our plugin name, so `remove` is
-//! exact and a second reconcile is a true `NoOp`. Skills land as bare
-//! `~/.cursor/skills/<name>/SKILL.md` (both scopes), tagged for ownership so `remove`
-//! only ever deletes skills we wrote (see `docs/harness/cursor.md`). Cursor is
-//! GUI-first with no headless config probe, so detection rides on `~/.cursor` (or a
-//! CLI on PATH).
+//! valid at both scopes). Every file/key we write is prefixed/keyed by our plugin
+//! name, so `remove` is exact and a second reconcile is a true `NoOp`. Skills land
+//! as bare `~/.cursor/skills/<name>/SKILL.md` (both scopes), tagged for ownership
+//! so `remove` only ever deletes skills we wrote. Cursor is GUI-first with no
+//! headless config probe, so detection rides on `~/.cursor` (or a CLI on PATH).
+//!
+//! The host's always-loaded guidance lands as one `.cursor/rules/*.mdc` rule per
+//! scope: cursor's agent session reads `.cursor/rules/**/*.mdc` for the workspace
+//! and additionally walks every ancestor of the workspace root up to `/` (each
+//! level's `.cursor/rules/*.mdc` and `AGENTS.md`), so a rule in `~/.cursor/rules/`
+//! reaches every project under HOME — cursor's own rule UI writes its user rules
+//! exactly there, and the old SQLite `state.vscdb` global-rules store is gone from
+//! the CLI bundle. `alwaysApply: true` is the one frontmatter class cursor loads
+//! unconditionally (its globs/description triage is skipped), so the rule carries
+//! that plus the same frontmatter-scoped `x-agentgear` tag as the skills surface:
+//! the tag, not the file name, decides write/repair/skip, a user-authored file at
+//! our exact name is never clobbered or swept, and `remove` takes the `rules/` dir
+//! only when our own removal emptied it. The legacy `.cursorrules` file is also
+//! force-always-on, but its single shared slot makes it never a target. No
+//! auth-free channel observes cursor loading rules live; the read paths above are
+//! bundle-read facts.
 //!
 //! **The whole translation is retired when cursor already surfaces the plugin itself.**
-//! Cursor's default-on `loadClaude` loader (`docs/research/verify-cursor.md` re-verify
-//! #1) reads CC's own on-disk registry (`$HOME/.claude/plugins/installed_plugins.json`,
+//! Cursor's default-on `loadClaude` loader reads CC's own on-disk registry
+//! (`$HOME/.claude/plugins/installed_plugins.json`,
 //! HOME-based, hardcoded) and, for each listed+enabled plugin, loads
 //! `.claude-plugin/plugin.json` straight off its `installPath` — mcp, hooks, skills,
 //! rules, agents, commands, the **whole** surface, with `${CLAUDE_PLUGIN_ROOT}`
@@ -39,20 +52,21 @@
 //! registry off this path and the translation fallback fires.
 
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
 use super::cchooks::hook_is_portable;
 use super::ccregistry::registry_lists_plugin;
-use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem};
+use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem, yaml_scalar};
 use super::mcpjson::{self, ServerShape};
 use super::report;
 use super::skillsdir;
 use super::{AgentBackend, BackendState};
 use crate::components::{HookBinding, MarkdownDoc};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
-use crate::error::{Error, Result};
+use crate::error::{Error, IoContext, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 pub(crate) struct CursorBackend;
@@ -72,8 +86,9 @@ impl AgentBackend for CursorBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // Whole surface translates (mcp + hooks + commands + agents + skills); the
-        // cc-registry `loadClaude` coverage is a runtime retire gate, not a capability.
+        // Whole surface translates (mcp + hooks + commands + agents + skills +
+        // instructions); the cc-registry `loadClaude` coverage is a runtime retire
+        // gate, not a capability.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -81,7 +96,7 @@ impl AgentBackend for CursorBackend {
             commands: true,
             agents: true,
             skills: true,
-            instructions: false,
+            instructions: true,
             scopes: &["user", "project"],
         }
     }
@@ -112,7 +127,8 @@ impl AgentBackend for CursorBackend {
             |_, _| true,
         )?;
         let skills = skillsdir::probe(&base.join("skills"), plugin, &comp.skills)?;
-        Ok(report::compose([mcp, hooks, commands, agents, skills].into_iter().flatten()))
+        let instructions = probe_instructions(&base, plugin)?;
+        Ok(report::compose([mcp, hooks, commands, agents, skills, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -138,6 +154,7 @@ impl AgentBackend for CursorBackend {
             changed |= write_file_idem(&agent_root.join(agent_file(plugin.name, doc)), render_agent(plugin.name, doc).as_bytes())?;
         }
         changed |= skillsdir::reconcile(&base.join("skills"), plugin, &comp.skills)?;
+        changed |= reconcile_instructions(&base, plugin)?;
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -160,6 +177,7 @@ impl AgentBackend for CursorBackend {
             changed |= remove_file_idem(&agent_root.join(agent_file(plugin.name, doc)))?;
         }
         changed |= skillsdir::remove(&base.join("skills"), plugin, &comp.skills)?;
+        changed |= remove_instructions(&base, plugin)?;
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
@@ -363,6 +381,115 @@ fn render_agent(plugin: &str, doc: &MarkdownDoc) -> String {
     out
 }
 
+// --- instructions (always-apply rule) -----------------------------------------
+
+/// Frontmatter key naming the owning `<plugin>@<marketplace>` id, the same tag the
+/// skills surface uses. Presence with our exact value marks a rule file as ours;
+/// the tag, never the file name, carries ownership.
+const TAG_KEY: &str = "x-agentgear";
+
+/// Our rule file under a `.cursor` base's `rules/` dir. The `agentgear-` prefix
+/// makes the file identifiable as ours at a glance; ownership itself rides the
+/// frontmatter tag.
+fn instructions_path(base: &Path, plugin: &Plugin) -> PathBuf {
+    base.join("rules").join(format!("agentgear-{}.mdc", plugin.name))
+}
+
+/// The rule's exact bytes: cursor frontmatter whose `alwaysApply: true` puts it in
+/// the unconditional class, our ownership tag, then the guidance text with a
+/// trailing newline guaranteed. The one render both reconcile and probe key off,
+/// so the two cannot drift.
+fn render_instructions(plugin: &Plugin, text: &str) -> Vec<u8> {
+    let mut out = format!("---\nalwaysApply: true\n{TAG_KEY}: {}\n---\n", yaml_scalar(&plugin.id()));
+    out.push_str(text);
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.into_bytes()
+}
+
+/// Write or repair our rule file. A slot already occupied by a foreign file is
+/// skipped whole — never clobbered, never tagged, exactly like a foreign
+/// same-named skill. `None` instructions -> no-op. Returns whether anything
+/// changed (a converged file writes zero bytes).
+fn reconcile_instructions(base: &Path, plugin: &Plugin) -> Result<bool> {
+    let Some(text) = &plugin.instructions else { return Ok(false) };
+    let path = instructions_path(base, plugin);
+    if slot_ownership(&path, plugin)? == Some(false) {
+        return Ok(false);
+    }
+    write_file_idem(&path, &render_instructions(plugin, text))
+}
+
+/// Classify the instructions surface for `probe`: `None` when the plugin declares
+/// no guidance or the slot is foreign (contributes nothing to the composite),
+/// else the file's state — `Absent` (a deleted rule self-heals back in),
+/// `Healthy` (byte-exact), `NeedsRepair` (tagged but drifted). Reuses
+/// [`report::probe_files`] with the tag as the drift filter.
+fn probe_instructions(base: &Path, plugin: &Plugin) -> Result<Option<BackendState>> {
+    let Some(text) = &plugin.instructions else { return Ok(None) };
+    let tag = plugin.id();
+    report::probe_files(&[(instructions_path(base, plugin), render_instructions(plugin, text))], |_, existing| {
+        std::str::from_utf8(existing).is_ok_and(|t| frontmatter_has_tag(t, &tag))
+    })
+}
+
+/// Strip our rule file whenever it carries our tag — unconditional, like every
+/// other cursor surface (the cc-registry retire gate pauses reconcile/probe only).
+/// The `rules/` dir goes only when our own removal emptied it, so a foreign
+/// sibling rule survives with the dir.
+fn remove_instructions(base: &Path, plugin: &Plugin) -> Result<bool> {
+    let rules = base.join("rules");
+    let path = instructions_path(base, plugin);
+    if slot_ownership(&path, plugin)? != Some(true) {
+        return Ok(false);
+    }
+    let removed = remove_file_idem(&path)?;
+    if removed && fs::read_dir(&rules).io_ctx(|| format!("reading {}", rules.display()))?.next().is_none() {
+        fs::remove_dir(&rules).io_ctx(|| format!("removing {}", rules.display()))?;
+    }
+    Ok(removed)
+}
+
+/// Ownership of our rule slot: `None` when absent (writable), `Some(true)` ours,
+/// `Some(false)` foreign. Shared by reconcile (skip a foreign slot), remove
+/// (delete only ours) and probe's drift filter, so the three can never disagree.
+fn slot_ownership(path: &Path, plugin: &Plugin) -> Result<Option<bool>> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(frontmatter_has_tag(&text, &plugin.id()))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(Error::Io { context: format!("reading {}", path.display()), source }),
+    }
+}
+
+/// Whether a rule file's leading `---`-fenced frontmatter carries a top-level
+/// `x-agentgear` key with exactly our plugin id, the value form our render writes.
+/// Scoped to the frontmatter block, never a whole-file substring: a tag line
+/// quoted in the rule body is not ours (skillsdir's discipline). An unterminated
+/// fence reads as no frontmatter.
+fn frontmatter_has_tag(text: &str, tag: &str) -> bool {
+    let Some(rest) = text.strip_prefix("---\n").or_else(|| text.strip_prefix("---\r\n")) else {
+        return false;
+    };
+    let mut ours = false;
+    let mut terminated = false;
+    for line in rest.split_inclusive('\n') {
+        let line = line.trim_end_matches(['\n', '\r']);
+        if line == "---" {
+            terminated = true;
+            break;
+        }
+        if !line.starts_with([' ', '\t'])
+            && let Some((key, value)) = line.split_once(':')
+            && key.trim() == TAG_KEY
+            && value.trim() == yaml_scalar(tag)
+        {
+            ours = true;
+        }
+    }
+    terminated && ours
+}
+
 // --- report ------------------------------------------------------------------
 
 fn report_checks(backend: &CursorBackend, plugin: &Plugin, source: &Source) -> Vec<DoctorCheck> {
@@ -414,6 +541,10 @@ fn report_checks(backend: &CursorBackend, plugin: &Plugin, source: &Source) -> V
     checks.push(check_docs_present("translated commands present", &comp.commands, &base.join("commands"), plugin.name, "commands/"));
     checks.push(check_docs_present("translated agents present", &comp.agents, &base.join("agents"), plugin.name, "agents/"));
 
+    if plugin.instructions.is_some() {
+        checks.push(instructions_check(&base, plugin));
+    }
+
     checks
 }
 
@@ -430,6 +561,33 @@ fn check_docs_present(name: &'static str, docs: &[MarkdownDoc], dir: &Path, plug
             name,
             status: CheckStatus::Fail { problem: format!("file(s) missing: {}", missing.join(", ")), fix: "run the host's `setup`".into() },
         }
+    }
+}
+
+/// The doctor check for the instructions surface, keyed on our own rule file (the
+/// same semantics as `agentsmd::guidance_check`): present and byte-exact -> Ok;
+/// absent or drifted -> fail naming the fix; a slot held by a foreign (untagged)
+/// file -> warn, never fail — that file is the user's. Reached only when the
+/// plugin declares guidance.
+fn instructions_check(base: &Path, plugin: &Plugin) -> DoctorCheck {
+    const NAME: &str = "always-apply rule present";
+    let path = instructions_path(base, plugin);
+    match probe_instructions(base, plugin) {
+        Ok(Some(BackendState::Healthy)) => {
+            DoctorCheck { name: NAME, status: CheckStatus::Ok(format!("rule present at {}", path.display())) }
+        }
+        Ok(Some(_)) => DoctorCheck {
+            name: NAME,
+            status: CheckStatus::Fail {
+                problem: format!("our rule missing or drifted at {}", path.display()),
+                fix: "run the host's `setup`".into(),
+            },
+        },
+        Ok(None) => DoctorCheck {
+            name: NAME,
+            status: CheckStatus::Warn(format!("{} holds a foreign (untagged) rule; ours is not written", path.display())),
+        },
+        Err(e) => DoctorCheck { name: NAME, status: CheckStatus::Warn(e.to_string()) },
     }
 }
 

@@ -6,7 +6,13 @@
 //! `SessionStart`/`UserPromptSubmit`/`PreToolUse`/… — match CC 1:1); CC commands
 //! copy through verbatim as markdown under `~/.qwen/commands/<plugin>/` (subdirs
 //! preserved for qwen's `:` namespacing); CC agents become plugin-prefixed
-//! `~/.qwen/agents/<plugin>-<name>.md` subagent files.
+//! `~/.qwen/agents/<plugin>-<name>.md` subagent files. The host's always-loaded
+//! guidance lands as a tagged block in `$QWEN_HOME/QWEN.md`, the first of the
+//! two default global context filenames (beside `AGENTS.md`), marker-id-scoped
+//! so the user's lines and a rival plugin's block survive byte-identical. A
+//! user-set `context.fileName` override replaces the whole default candidate
+//! list, so it stops our block loading — an accepted limit: the key is never
+//! written, since seeding it would clobber the user's own list.
 //!
 //! Ownership: mcp servers are keyed by our server names; commands live in a
 //! `commands/<plugin>/` subtree we own whole; agent files are plugin-prefixed. So
@@ -22,6 +28,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::agentsmd;
 use super::cchooks::{hook_is_portable, remove_hook_groups, render_hook_group};
 use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem};
 use super::mcpjson::{self, RemoteShape, ServerShape};
@@ -53,8 +60,8 @@ impl AgentBackend for QwenCodeBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // Claude-Code-shaped fork: mcp + hooks + commands + agents + skills all
-        // translate.
+        // Claude-Code-shaped fork: mcp + hooks + commands + agents + skills +
+        // instructions all translate.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -62,7 +69,7 @@ impl AgentBackend for QwenCodeBackend {
             commands: true,
             agents: true,
             skills: true,
-            instructions: false,
+            instructions: true,
             scopes: &["user", "project"],
         }
     }
@@ -94,7 +101,11 @@ impl AgentBackend for QwenCodeBackend {
             |_, _| true,
         )?;
         let skills = skillsdir::probe(&base.join("skills"), plugin, &comp.skills)?;
-        Ok(report::compose([mcp, hooks, commands, agents, skills].into_iter().flatten()))
+        let instructions = match agents_md(scope)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([mcp, hooks, commands, agents, skills, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -119,6 +130,9 @@ impl AgentBackend for QwenCodeBackend {
             changed |= write_file_idem(&agent_root.join(agent_file(plugin.name, doc)), render_agent(plugin.name, doc).as_bytes())?;
         }
         changed |= skillsdir::reconcile(&base.join("skills"), plugin, &comp.skills)?;
+        if let Some(path) = agents_md(scope)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -144,6 +158,9 @@ impl AgentBackend for QwenCodeBackend {
             changed |= remove_file_idem(&agent_root.join(agent_file(plugin.name, doc)))?;
         }
         changed |= skillsdir::remove(&base.join("skills"), plugin, &comp.skills)?;
+        if let Some(path) = agents_md(scope)? {
+            changed |= agentsmd::remove(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
@@ -179,6 +196,18 @@ fn qwen_dir(scope: &Scope) -> Result<PathBuf> {
 /// independently at each call site.
 fn settings_file(scope: &Scope) -> Result<PathBuf> {
     Ok(qwen_dir(scope)?.join("settings.json"))
+}
+
+/// The user-scope `$QWEN_HOME/QWEN.md` carrying the host's always-loaded
+/// guidance: the first of qwen's two default global context filenames (beside
+/// `AGENTS.md`), and this surface's one file — settings.json is never written
+/// for it. `None` at project scope: no project context file is a surface this
+/// backend owns.
+fn agents_md(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(qwen_dir(scope)?.join("QWEN.md"))),
+        Scope::Project { .. } => Ok(None),
+    }
 }
 
 // --- hooks -------------------------------------------------------------------
@@ -357,6 +386,10 @@ fn report_checks(backend: &QwenCodeBackend, plugin: &Plugin, source: &Source) ->
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_commands_present(&comp.commands, &base.join("commands").join(plugin.name)));
     checks.push(check_agents_present(&comp.agents, &base.join("agents"), plugin.name));
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(agents_md(&Scope::User), plugin));
+    }
 
     checks
 }

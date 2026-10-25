@@ -5,7 +5,10 @@
 //! subdir of `~/.gemini/commands/`; CC agents become plugin-prefixed
 //! `~/.gemini/agents/<plugin>-<name>.md` subagent files, gemini's stable general
 //! subagent-file schema (not the still-preview extension-bundled form — see
-//! `docs/harness/gemini.md`). Everything we write is keyed by our plugin's server
+//! `docs/harness/gemini.md`). The host's always-loaded guidance lands as a tagged
+//! block in `~/.gemini/GEMINI.md`, the global tier's only default context file,
+//! marker-id-scoped so the user's lines and a rival plugin's block survive
+//! byte-identical. Everything we write is keyed by our plugin's server
 //! names, namespaced under `<plugin>/`, or plugin-prefixed, so `remove` is exact
 //! and a second reconcile is a true `NoOp`. Skills have no stable file surface
 //! here and are skipped (see `docs/harness/gemini.md`).
@@ -17,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::agentsmd;
 use super::cchooks::{hook_is_portable, remove_hook_groups, render_hook_group};
 use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem, yaml_scalar};
 use super::mcpjson::{self, ServerShape};
@@ -41,7 +45,8 @@ impl AgentBackend for GeminiBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // mcp + hooks + commands + agents translate; skills have no stable surface.
+        // mcp + hooks + commands + agents + instructions translate; skills have
+        // no stable surface.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -49,7 +54,7 @@ impl AgentBackend for GeminiBackend {
             commands: true,
             agents: true,
             skills: false,
-            instructions: false,
+            instructions: true,
             scopes: &["user", "project"],
         }
     }
@@ -69,7 +74,11 @@ impl AgentBackend for GeminiBackend {
         let commands = report::probe_files(&expected_commands(&cmd_root, &comp.commands), |_, _| true)?;
         let agent_root = base.join("agents");
         let agents = report::probe_files(&expected_agents(&agent_root, plugin.name, &comp.agents), |_, _| true)?;
-        Ok(report::compose([mcp, hooks, commands, agents].into_iter().flatten()))
+        let instructions = match agents_md(scope)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([mcp, hooks, commands, agents, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -91,6 +100,9 @@ impl AgentBackend for GeminiBackend {
         let agent_root = base.join("agents");
         for doc in &comp.agents {
             changed |= write_file_idem(&agent_root.join(agent_file(plugin.name, doc)), render_agent(plugin.name, doc).as_bytes())?;
+        }
+        if let Some(path) = agents_md(scope)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
         }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
@@ -116,6 +128,9 @@ impl AgentBackend for GeminiBackend {
         for doc in &comp.agents {
             changed |= remove_file_idem(&agent_root.join(agent_file(plugin.name, doc)))?;
         }
+        if let Some(path) = agents_md(scope)? {
+            changed |= agentsmd::remove(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
@@ -134,6 +149,19 @@ fn gemini_dir(scope: &Scope) -> Result<PathBuf> {
             .map(|h| h.join(".gemini"))
             .ok_or_else(|| Error::Tree("no home directory (HOME unset); cannot locate ~/.gemini".into())),
         Scope::Project { path } => Ok(path.join(".gemini")),
+    }
+}
+
+/// The user-scope `~/.gemini/GEMINI.md` carrying the host's always-loaded
+/// guidance: the global tier's only default context file, and this surface's one
+/// file — a settings `context.fileName` override only adds candidates, so it
+/// cannot unload the block and nothing is written to settings.json for it.
+/// `None` at project scope: the project context-file tier is a separate,
+/// folder-trust-gated surface this backend does not own.
+fn agents_md(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(gemini_dir(scope)?.join("GEMINI.md"))),
+        Scope::Project { .. } => Ok(None),
     }
 }
 
@@ -350,6 +378,10 @@ fn report_checks(backend: &GeminiBackend, plugin: &Plugin, source: &Source) -> V
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_commands_present(&comp.commands, &base.join("commands").join(plugin.name)));
     checks.push(check_agents_present(&comp.agents, &base.join("agents"), plugin.name));
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(agents_md(&Scope::User), plugin));
+    }
 
     checks
 }

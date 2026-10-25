@@ -91,3 +91,108 @@ fn agentgear_client_token_expands_to_this_backend_id() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&project);
 }
+
+// --- instructions (always-apply rule) -----------------------------------------
+
+fn instr_plugin() -> Plugin {
+    Plugin {
+        name: "ez-cid",
+        marketplace: "ez-mkt",
+        version: "0.1.0",
+        agents: &["cursor"],
+        instructions: Some("line one\n".into()),
+        blob: &[],
+    }
+}
+
+#[test]
+fn rule_tag_line_quotes_the_at_scoped_id() {
+    // `@` is a YAML reserved indicator, so the value must be quoted; the exact line
+    // is what probe's ownership filter matches on, so pin it.
+    let bytes = render_instructions(&instr_plugin(), "line one\n");
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.starts_with("---\nalwaysApply: true\nx-agentgear: \"ez-cid@ez-mkt\"\n---\n"), "frontmatter:\n{text}");
+}
+
+#[test]
+fn render_guarantees_exactly_one_trailing_newline() {
+    let text = String::from_utf8(render_instructions(&instr_plugin(), "line one")).unwrap();
+    assert!(text.ends_with("\n") && !text.ends_with("\n\n"), "render:\n{text}");
+}
+
+#[test]
+fn frontmatter_tag_is_scoped_to_the_frontmatter_block() {
+    let tag = "ez-cid@ez-mkt";
+    // ours: the tag lives in the frontmatter with our exact quoted value.
+    assert!(frontmatter_has_tag("---\nalwaysApply: true\nx-agentgear: \"ez-cid@ez-mkt\"\n---\nbody\n", tag));
+    // NOT ours: the tag line appears only in the BODY (a false whole-file substring match).
+    assert!(
+        !frontmatter_has_tag("---\nalwaysApply: true\n---\nsee x-agentgear: \"ez-cid@ez-mkt\" below\n", tag),
+        "a body mention of the tag line must not read as ours"
+    );
+    // NOT ours: an indented line is a nested mapping, not a top-level key.
+    assert!(
+        !frontmatter_has_tag("---\nalwaysApply: true\n  x-agentgear: \"ez-cid@ez-mkt\"\n---\nbody\n", tag),
+        "an indented tag line must not read as ours"
+    );
+    // NOT ours: an unquoted value is not the form our render writes.
+    assert!(
+        !frontmatter_has_tag("---\nx-agentgear: ez-cid@ez-mkt\n---\nbody\n", tag),
+        "a hand-written unquoted tag value must not read as ours"
+    );
+}
+
+#[test]
+fn unterminated_frontmatter_reads_foreign() {
+    // An unterminated fence has no frontmatter block at all; the safe direction is
+    // foreign (skip-write, skip-delete), never ours.
+    assert!(!frontmatter_has_tag("---\nx-agentgear: \"ez-cid@ez-mkt\"\nbody never fenced\n", "ez-cid@ez-mkt"));
+}
+
+#[test]
+fn probe_treats_a_foreign_slot_as_contributing_nothing() {
+    let base = crate::scratch::path("ez-cursor-instr-probe");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("rules")).unwrap();
+    let plugin = instr_plugin();
+
+    // absent -> Some(Absent): a deleted rule self-heals back in.
+    assert!(matches!(probe_instructions(&base, &plugin).unwrap(), Some(BackendState::Absent)));
+
+    // ours, byte-exact -> Healthy.
+    std::fs::write(instructions_path(&base, &plugin), render_instructions(&plugin, "line one\n")).unwrap();
+    assert!(matches!(probe_instructions(&base, &plugin).unwrap(), Some(BackendState::Healthy)));
+
+    // ours, drifted -> NeedsRepair.
+    std::fs::write(instructions_path(&base, &plugin), "---\nalwaysApply: true\nx-agentgear: \"ez-cid@ez-mkt\"\n---\ndrifted\n").unwrap();
+    assert!(matches!(probe_instructions(&base, &plugin).unwrap(), Some(BackendState::NeedsRepair)));
+
+    // foreign (untagged same-named file) -> Ok(None): the slot is the user's and
+    // contributes nothing to the composite, so a foreign occupant never churns.
+    std::fs::write(instructions_path(&base, &plugin), "---\nalwaysApply: true\n---\ntheir body\n").unwrap();
+    assert!(probe_instructions(&base, &plugin).unwrap().is_none());
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn instructions_check_classifies_by_probe_not_file_existence() {
+    let base = crate::scratch::path("ez-cursor-instr-check");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("rules")).unwrap();
+    let plugin = instr_plugin();
+
+    // absent -> fail naming the fix (a present-but-foreign file must NOT fail below).
+    assert!(matches!(instructions_check(&base, &plugin).status, CheckStatus::Fail { .. }));
+
+    std::fs::write(instructions_path(&base, &plugin), render_instructions(&plugin, "line one\n")).unwrap();
+    assert!(matches!(instructions_check(&base, &plugin).status, CheckStatus::Ok(_)));
+
+    std::fs::write(instructions_path(&base, &plugin), "---\nalwaysApply: true\n---\ntheir body\n").unwrap();
+    assert!(
+        matches!(instructions_check(&base, &plugin).status, CheckStatus::Warn(_)),
+        "a foreign slot is the user's own file: warn, never fail"
+    );
+
+    let _ = std::fs::remove_dir_all(&base);
+}

@@ -339,3 +339,115 @@ fn cursor_uninstall_leaves_a_user_owned_empty_event_array_alone() {
     let after: serde_json::Value = serde_json::from_str(&env.hooks()).unwrap();
     assert_eq!(after, seed, "an event array the user had empty is theirs, not ours to sweep");
 }
+
+// --- instructions (always-apply rule) -----------------------------------------
+
+/// The fixture's `<name>@<marketplace>` plugin id; the derive defaults `marketplace`
+/// to `name` when no attr names it.
+const INSTR_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const INSTR_GUIDANCE: &str = "ez-fixture always-loaded guidance line.\n";
+const INSTR_MDC_NAME: &str = "agentgear-ez-fixture-plugin.mdc";
+
+/// The exact `.mdc` rule file the instructions surface must render: cursor
+/// frontmatter with `alwaysApply: true` (its unconditional class) plus the
+/// `x-agentgear` ownership tag — the same frontmatter-scoped tag as skills — then
+/// the host guidance.
+fn instr_mdc() -> String {
+    format!("---\nalwaysApply: true\nx-agentgear: \"{INSTR_ID}\"\n---\n{INSTR_GUIDANCE}")
+}
+
+/// Our rule file's path under a `.cursor` base (user `~/.cursor` or a project's
+/// `<root>/.cursor`).
+fn instr_mdc_at(cursor_base: &Path) -> PathBuf {
+    cursor_base.join("rules").join(INSTR_MDC_NAME)
+}
+
+/// The user-scope instructions lifecycle in `~/.cursor/rules/`: install authors
+/// the rule with exactly our render; a drifted or deleted rule is repaired by
+/// self-heal; uninstall removes our file and a rules dir our own removal emptied.
+#[test]
+fn cursor_instructions_mdc_lifecycle() {
+    let env = Env::new("instr-lifecycle");
+    let rules = env.cursor.join("rules");
+    let mdc = instr_mdc_at(&env.cursor);
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "cursor"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(fs::read_to_string(&mdc).unwrap(), instr_mdc(), "setup must author the rule file with exactly our render");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "cursor"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(fs::read_to_string(&mdc).unwrap(), instr_mdc(), "a no-op setup must not rewrite the rule");
+
+    fs::write(&mdc, format!("---\nalwaysApply: true\nx-agentgear: \"{INSTR_ID}\"\n---\ntampered\n")).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the drifted rule: {out}");
+    assert_eq!(fs::read_to_string(&mdc).unwrap(), instr_mdc(), "self-heal must restore the exact bytes");
+
+    fs::remove_file(&mdc).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted rule: {out}");
+    assert_eq!(fs::read_to_string(&mdc).unwrap(), instr_mdc(), "self-heal must re-add the rule");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!mdc.exists(), "uninstall must remove our rule file");
+    assert!(!rules.exists(), "a rules dir our own removal emptied must not survive as an orphan");
+}
+
+/// Project scope writes the same render under the project's own `.cursor/rules/`,
+/// and a project-scope uninstall removes it there.
+#[test]
+fn cursor_instructions_project_scope() {
+    let env = Env::new("instr-project");
+    let proj = env.root.join("proj");
+    let mdc = instr_mdc_at(&proj.join(".cursor"));
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "cursor", "--project", proj.to_str().unwrap()]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(fs::read_to_string(&mdc).unwrap(), instr_mdc(), "project scope must write the same render under <project>/.cursor/rules");
+
+    let (ok, out) = env.fixture(&["uninstall", "--project", proj.to_str().unwrap()]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!mdc.exists(), "project-scope uninstall must remove our rule file");
+}
+
+/// A foreign file at our exact slot (no `x-agentgear` tag) is the user's: skipped
+/// whole by install, never tagged or rewritten, and left byte-identical by
+/// uninstall — the same three-way ownership gate as skills.
+#[test]
+fn cursor_instructions_foreign_same_named_file_is_skipped() {
+    let env = Env::new("instr-foreign-samename");
+    let mdc = instr_mdc_at(&env.cursor);
+    fs::create_dir_all(mdc.parent().unwrap()).unwrap();
+    let theirs = "---\nalwaysApply: true\n---\ntheir own rule body\n";
+    fs::write(&mdc, theirs).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "cursor"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    assert_eq!(fs::read_to_string(&mdc).unwrap(), theirs, "a foreign file at our slot must be skipped whole, never clobbered or tagged");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&mdc).unwrap(), theirs, "uninstall must leave a file we never owned byte-identical");
+}
+
+/// A foreign rule file beside ours must survive our install and uninstall: the
+/// rules dir is shared with the user's own rules, never swept.
+#[test]
+fn cursor_instructions_foreign_rule_survives() {
+    let env = Env::new("instr-foreign-sibling");
+    let rules = env.cursor.join("rules");
+    fs::create_dir_all(&rules).unwrap();
+    let theirs = rules.join("my-own-rule.mdc");
+    fs::write(&theirs, "---\ndescription: mine\n---\ntheir rule\n").unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "cursor"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(fs::read_to_string(instr_mdc_at(&env.cursor)).unwrap(), instr_mdc(), "our rule lands beside theirs");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(theirs.exists(), "uninstall must never sweep a foreign rule file");
+    assert!(rules.exists(), "the rules dir survives while it still holds the user's own rule");
+}
