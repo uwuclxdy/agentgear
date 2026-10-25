@@ -1,7 +1,7 @@
 //! Shared tagged-block surface for the backends whose harness loads always-loaded
 //! guidance from a global context file the user also owns (zed, codex, kilo and
-//! kimi write each harness's own `AGENTS.md`; gemini writes `GEMINI.md` and
-//! qwen-code `QWEN.md` — user scope only). The host's [`Plugin::instructions`] text is
+//! kimi write each harness's own `AGENTS.md`; gemini writes `GEMINI.md`, qwen-code
+//! `QWEN.md` and crush `CRUSH.md` — user scope only). The host's [`Plugin::instructions`] text is
 //! rendered between two html-comment markers naming the plugin id, so the block
 //! is invisible in rendered markdown — and the id in the markers, not the file,
 //! carries ownership: the user's own lines and a rival plugin's block are never

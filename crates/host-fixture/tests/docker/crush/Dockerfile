@@ -16,7 +16,7 @@ FROM node:20-slim
 # The npm wrapper is auth-free; pin alongside docs/harness/crush.md when a version
 # is chosen. Best-effort: the config-file parse below is authoritative, so a CLI
 # that fails to install must not fail the leg (the hermetic test owns correctness).
-RUN npm install -g @charmland/crush || echo "note: crush CLI unavailable; relying on config-file assert"
+RUN npm install -g @charmland/crush@0.98.2 || echo "note: crush CLI unavailable; relying on config-file assert"
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 
 RUN <<'SH'
@@ -64,6 +64,25 @@ if out=$(crush dirs 2>&1); then
 else
   echo "note: crush dirs unavailable; relied on config-file assert"
 fi
+
+# Instructions surface: the tagged block in the global CRUSH.md beside crush.json
+# (the first default of crush's global_context_paths). The user's own line is
+# seeded before setup and must survive both install and uninstall byte-identical;
+# a v0.98.2 binary is proven (strace) to open this file during prompt assembly.
+CRUSH_MD="$HOME/.config/crush/CRUSH.md"
+printf 'user own rule\n' > "$CRUSH_MD"
+host_fixture setup --agent crush > /dev/null
+if ! grep -q 'agentgear:ez-fixture-plugin@ez-fixture-plugin begin' "$CRUSH_MD"; then
+  echo "FAIL: instructions block missing from CRUSH.md"; cat "$CRUSH_MD"; exit 1
+fi
+grep -q 'user own rule' "$CRUSH_MD" || { echo "FAIL: user CRUSH.md line clobbered on install"; exit 1; }
+host_fixture uninstall > /dev/null
+if grep -q 'agentgear:ez-fixture-plugin' "$CRUSH_MD"; then
+  echo "FAIL: instructions block survived uninstall"; exit 1
+fi
+grep -q 'user own rule' "$CRUSH_MD" || { echo "FAIL: user CRUSH.md line clobbered on uninstall"; exit 1; }
+# Re-install so the leg's own uninstall step below exercises a full teardown.
+host_fixture setup --agent crush > /dev/null
 
 host_fixture uninstall
 

@@ -191,3 +191,135 @@ fn crush_full_lifecycle() {
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.config_json().contains("ez-fixture"), "re-install did not re-add our server");
 }
+
+// --- instructions ------------------------------------------------------------
+
+/// The fixture's `<name>@<marketplace>` plugin id; the derive defaults `marketplace`
+/// to `name` when no attr names it.
+const INSTR_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const INSTR_GUIDANCE: &str = "ez-fixture always-loaded guidance line.\n";
+
+/// The exact tagged block the instructions surface must render into the global
+/// `~/.config/crush/CRUSH.md`: the host guidance between two html-comment markers
+/// naming the plugin id, the whole block replaceable byte-for-byte.
+fn instr_block() -> String {
+    format!("<!-- agentgear:{INSTR_ID} begin -->\n{INSTR_GUIDANCE}<!-- agentgear:{INSTR_ID} end -->\n")
+}
+
+/// The user-scope instructions lifecycle in crush's global `CRUSH.md` beside
+/// `crush.json` (the first default of crush's `global_context_paths`, derived from
+/// `GlobalConfig()`'s dir — under `CRUSH_GLOBAL_CONFIG` the same dir we write to):
+/// install appends our block after the user's content with one blank separator
+/// line; a drifted or deleted block is repaired by self-heal; uninstall strips
+/// exactly our block and the separator.
+#[test]
+fn crush_instructions_block_lifecycle() {
+    let env = Env::new("instr-lifecycle");
+    let crush_md = env.crush.join("CRUSH.md");
+    let seed = "user rule one\nuser rule two\n";
+    fs::write(&crush_md, seed).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "crush"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+    let installed = format!("{seed}\n{}", instr_block());
+    assert_eq!(fs::read_to_string(&crush_md).unwrap(), installed, "install must append exactly our block after a blank line");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "crush"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(fs::read_to_string(&crush_md).unwrap(), installed, "a no-op setup must not rewrite CRUSH.md");
+
+    let tampered = format!("{seed}\n<!-- agentgear:{INSTR_ID} begin -->\ntampered\n<!-- agentgear:{INSTR_ID} end -->\n");
+    fs::write(&crush_md, &tampered).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the drifted block: {out}");
+    assert_eq!(fs::read_to_string(&crush_md).unwrap(), installed, "self-heal must restore the exact block bytes");
+
+    fs::write(&crush_md, seed).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted block: {out}");
+    assert_eq!(fs::read_to_string(&crush_md).unwrap(), installed, "self-heal must re-add the block");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&crush_md).unwrap(), seed, "uninstall must restore the user's file byte-for-byte");
+}
+
+/// With no pre-existing CRUSH.md, install creates the file holding only our block,
+/// and uninstall — our removal being what emptied it — takes the file with it.
+#[test]
+fn crush_instructions_owns_only_its_file() {
+    let env = Env::new("instr-owned-file");
+    let crush_md = env.crush.join("CRUSH.md");
+    assert!(!crush_md.exists(), "precondition: no CRUSH.md seeded");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "crush"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(fs::read_to_string(&crush_md).unwrap(), instr_block(), "a file we created holds exactly our block, no leading blank line");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!crush_md.exists(), "uninstall must remove the file our removal emptied");
+}
+
+/// A rival agentgear host's block (different plugin id in the markers) and the user's
+/// own lines must survive our install and uninstall byte-identical: the marker id
+/// scopes ownership, so two agentgear plugins coexist in one CRUSH.md.
+#[test]
+fn crush_never_clobbers_a_rival_instructions_block() {
+    let env = Env::new("instr-rival");
+    let crush_md = env.crush.join("CRUSH.md");
+    let rival =
+        "user line\n<!-- agentgear:rival-plugin@rival-mkt begin -->\nrival guidance\n<!-- agentgear:rival-plugin@rival-mkt end -->\n";
+    fs::write(&crush_md, rival).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "crush"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(
+        fs::read_to_string(&crush_md).unwrap(),
+        format!("{rival}\n{}", instr_block()),
+        "install must append our block, leaving the rival's untouched"
+    );
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&crush_md).unwrap(), rival, "uninstall must strip only our block, keeping the rival's and the user's");
+}
+
+/// Every file named `CRUSH.md` (case-insensitive) under `dir`, recursively — the
+/// project-scope absence pin: crush's project context paths are cwd-relative
+/// filenames, so the surface must not exist at any spelling in any subdir.
+fn find_crush_md(dir: &Path) -> Vec<PathBuf> {
+    let mut hits = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&d) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if entry.file_name().to_str().is_some_and(|n| n.eq_ignore_ascii_case("crush.md")) {
+                hits.push(path);
+            }
+        }
+    }
+    hits
+}
+
+/// Project scope has no instructions surface: crush's project context paths are
+/// cwd-relative files at the project root (a file the user owns), and only the
+/// derived global `CRUSH.md` beside `crush.json` is this backend's channel — so a
+/// `--project` install must leave no CRUSH.md anywhere under the project or the
+/// user's global config dir.
+#[test]
+fn crush_instructions_user_scope_only() {
+    let env = Env::new("instr-user-scope-only");
+    let proj = env.root.join("proj");
+    let (ok, out) = env.fixture(&["setup", "--agent", "crush", "--project", proj.to_str().unwrap()]);
+    assert!(ok, "setup failed: {out}");
+    assert!(proj.join("crush.json").exists(), "precondition: project install ran");
+    let project_hits = find_crush_md(&proj);
+    assert!(project_hits.is_empty(), "project scope must leave no CRUSH.md anywhere: {project_hits:?}");
+    let user_hits = find_crush_md(&env.crush);
+    assert!(user_hits.is_empty(), "a project install must not touch the user's global config dir: {user_hits:?}");
+}

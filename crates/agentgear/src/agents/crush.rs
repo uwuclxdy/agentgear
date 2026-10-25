@@ -18,6 +18,11 @@
 //!   dirs). The loader does **not** strip YAML frontmatter, so we write the parsed
 //!   `body` only — a verbatim copy would leak CC frontmatter into the prompt text.
 //!
+//! - **instructions**: the host's always-loaded guidance lands as a tagged block in
+//!   the global `CRUSH.md` beside `crush.json`, the first default of crush's
+//!   `global_context_paths` (user scope only — see `instructions_file`). marker-id-
+//!   scoped so the user's lines and a rival plugin's block survive byte-identical.
+//!
 //! Skipped surfaces (see `docs/harness/crush.md`):
 //! - **agents**: no file-writable subagent surface (issue #1807 open), so `agents`
 //!   is still dropped, not guessed.
@@ -36,6 +41,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
+use super::agentsmd;
 use super::cchooks::hook_is_portable;
 use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, write_file_idem};
 use super::mcpjson::{self, ServerShape};
@@ -67,8 +73,8 @@ impl AgentBackend for CrushBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // mcp + hooks (PreToolUse) + commands + skills translate; agents have no
-        // file-writable subagent surface (issue #1807).
+        // mcp + hooks (PreToolUse) + commands + skills + instructions translate;
+        // agents have no file-writable subagent surface (issue #1807).
         Capabilities {
             plugins: false,
             mcp: true,
@@ -76,7 +82,7 @@ impl AgentBackend for CrushBackend {
             commands: true,
             agents: false,
             skills: true,
-            instructions: false,
+            instructions: true,
             scopes: &["user", "project"],
         }
     }
@@ -94,7 +100,11 @@ impl AgentBackend for CrushBackend {
         let skills = skillsdir::probe(&skills_root(scope)?, plugin, &comp.skills)?;
         let cmd_root = commands_root(scope)?.join(plugin.name);
         let commands = report::probe_files(&expected_commands(&cmd_root, &comp.commands), |_, _| true)?;
-        Ok(report::compose([mcp, hooks, skills, commands].into_iter().flatten()))
+        let instructions = match instructions_file(scope)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([mcp, hooks, skills, commands, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -104,6 +114,9 @@ impl AgentBackend for CrushBackend {
         let cmd_root = commands_root(scope)?.join(plugin.name);
         for doc in &comp.commands {
             changed |= write_file_idem(&cmd_root.join(command_rel(doc)), render_command(doc).as_bytes())?;
+        }
+        if let Some(path) = instructions_file(scope)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
         }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
@@ -118,6 +131,9 @@ impl AgentBackend for CrushBackend {
         if cmd_root.exists() {
             fs::remove_dir_all(&cmd_root).io_ctx(|| format!("removing {}", cmd_root.display()))?;
             changed = true;
+        }
+        if let Some(path) = instructions_file(scope)? {
+            changed |= agentsmd::remove(&path, plugin)?;
         }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
@@ -178,6 +194,21 @@ fn commands_root(scope: &Scope) -> Result<PathBuf> {
     match scope {
         Scope::User => Ok(crush_config_dir()?.join("commands")),
         Scope::Project { path } => Ok(path.join(".crush").join("commands")),
+    }
+}
+
+/// The user-scope global `CRUSH.md` beside `crush.json` carrying the host's
+/// always-loaded guidance: crush derives it as the first default of
+/// `global_context_paths` from `GlobalConfig()`'s dir (`setDefaults`,
+/// `internal/config/load.go` — under `CRUSH_GLOBAL_CONFIG` that is the same dir this
+/// backend resolves), and its prompt assembly loads every path in that list
+/// unconditionally, raw bytes, html comments preserved. `None` at project scope:
+/// the project context paths are cwd-relative files at the project root, files the
+/// user owns — never a surface this backend writes.
+fn instructions_file(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(crush_config_dir()?.join("CRUSH.md"))),
+        Scope::Project { .. } => Ok(None),
     }
 }
 
@@ -375,6 +406,10 @@ fn report_checks(backend: &CrushBackend, plugin: &Plugin, source: &Source) -> Ve
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_hooks_present(&comp.hooks, root.as_ref()));
     checks.push(check_commands_present(&comp.commands, &base.join("commands").join(plugin.name)));
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(instructions_file(&Scope::User), plugin));
+    }
 
     checks
 }
