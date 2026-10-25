@@ -58,7 +58,7 @@ copy of `hooks/hooks.json` fires at all is unconfirmed.
 Two more surfaces sit outside these five, both declared by the host rather than shipped in the
 tree, so neither rides the components IR:
 
-- **instructions** (`PluginHost::instructions`, always-loaded guidance text). `opencode` writes a dedicated file registered in its `instructions[]` array; `zed`, `codex`, `kilo` and `kimi` write a tagged block in the harness's own global `AGENTS.md` (user scope); `gemini` and `qwen-code` write the same block in each harness's own global context file (`GEMINI.md`, `QWEN.md`); `cursor` writes a tag-owned `alwaysApply: true` rule in `.cursor/rules/` at both scopes; `claude` receives the same text through the MCP `initialize.instructions` field instead.
+- **instructions** (`PluginHost::instructions`, always-loaded guidance text). `opencode` writes a dedicated file registered in its `instructions[]` array; `zed`, `codex`, `kilo` and `kimi` write a tagged block in the harness's own global `AGENTS.md` (user scope); `gemini` and `qwen-code` write the same block in each harness's own global context file (`GEMINI.md`, `QWEN.md`); `crush` writes the same block in the global `CRUSH.md` beside `crush.json`, the first default of its `global_context_paths` (user scope); `cursor` writes a tag-owned `alwaysApply: true` rule in `.cursor/rules/` at both scopes; `claude` receives the same text through the MCP `initialize.instructions` field instead.
 - **status line** (retired automatic wiring). Five backends used to write a host-declared line into their tool's own single
   slot: `claude`, `copilot-cli` (user scope only), `qwen-code`, `antigravity-cli` (user scope only),
   `droid`. That slot holds one value, so writing it displaced whatever the user had — which is why

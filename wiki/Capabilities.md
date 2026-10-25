@@ -35,7 +35,7 @@ The plugin surfaces, most-to-least widely hosted. "Hosts" counts backends that l
 | Commands | `commands/**/*.md` | 14 | [Commands](Capability-Commands) |
 | Agents | `agents/**/*.md` | 13 | [Agents](Capability-Agents) |
 | Skills | `skills/<name>/SKILL.md` | 13 | [Skills](Capability-Skills) |
-| Instructions | `PluginHost::instructions` (not a tree file) | 9 | [Instructions](Capability-Instructions) |
+| Instructions | `PluginHost::instructions` (not a tree file) | 10 | [Instructions](Capability-Instructions) |
 
 
 Counts move as coverage lands; the linked page carries the exact per-harness list and the reason
