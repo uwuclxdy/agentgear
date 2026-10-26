@@ -1,6 +1,6 @@
 {
   "name": "multi-installer",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "agentgear example plugin: setup picker demonstrating the backend enumeration API.",
   "author": { "name": "agentgear examples" },
   "mcpServers": {
