@@ -16,6 +16,14 @@
 //! Skills land as bare `<base>/skills/<name>/SKILL.md` (droid's first-class skill
 //! surface, both scopes), tagged for ownership. See `docs/harness/droid.md` for the
 //! full mapping.
+//!
+//! - **instructions**: the host's always-loaded guidance lands as a tagged block in
+//!   droid's user-scope `~/.factory/AGENTS.md` through the shared `agentsmd`
+//!   renderer — one of the personal global instruction files droid reads at session
+//!   bootstrap, html comments intact (user scope only — see `instructions_file`).
+//!   The marker id scopes ownership, so the user's lines and a rival plugin's block
+//!   survive byte-identical. droid also loads the cross-tool `~/.agents/AGENTS.md`
+//!   and `~/.agent/AGENTS.md` tiers; both are shared, never written.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -23,6 +31,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::agentsmd;
 use super::cchooks::{hook_is_portable, remove_hook_groups, render_hook_group};
 use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem, yaml_scalar};
 use super::mcpjson::{self, ServerShape};
@@ -50,7 +59,8 @@ impl AgentBackend for DroidBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // Full surface: mcp + hooks + commands + agents (custom droids) + skills.
+        // Full surface: mcp + hooks + commands + agents (custom droids) + skills +
+        // instructions.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -58,17 +68,17 @@ impl AgentBackend for DroidBackend {
             commands: true,
             agents: true,
             skills: true,
-            instructions: false,
+            instructions: true,
             scopes: &["user", "project"],
         }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
-        // Compose every surface (mcp.json, hooks.json, command + custom-droid files), so
-        // a dropped hook group or missing command/droid behind a healthy mcp.json reads
-        // NeedsRepair. `source` is the one self_heal resolved for this agent (rehydrated
-        // `--path`, else the compile-time default), so probe and reconcile render
-        // identical bytes.
+        // Compose every surface (mcp.json, hooks.json, command + custom-droid files,
+        // skills, the guidance block), so a dropped hook group or missing command/droid
+        // behind a healthy mcp.json reads NeedsRepair. `source` is the one self_heal
+        // resolved for this agent (rehydrated `--path`, else the compile-time default),
+        // so probe and reconcile render identical bytes.
         let comp = plugin.components(source)?.with_client(self.id());
         let base = factory_dir(scope)?;
         let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
@@ -84,7 +94,11 @@ impl AgentBackend for DroidBackend {
             |_, _| true,
         )?;
         let skills = skillsdir::probe(&base.join("skills"), plugin, &comp.skills)?;
-        Ok(report::compose([mcp, hooks, commands, droids, skills].into_iter().flatten()))
+        let instructions = match instructions_file(scope)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([mcp, hooks, commands, droids, skills, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -107,6 +121,9 @@ impl AgentBackend for DroidBackend {
             changed |= write_file_idem(&path, render_droid(plugin.name, &doc.rel, doc).as_bytes())?;
         }
         changed |= skillsdir::reconcile(&base.join("skills"), plugin, &comp.skills)?;
+        if let Some(path) = instructions_file(scope)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -127,6 +144,9 @@ impl AgentBackend for DroidBackend {
             }
         }
         changed |= skillsdir::remove(&base.join("skills"), plugin, &comp.skills)?;
+        if let Some(path) = instructions_file(scope)? {
+            changed |= agentsmd::remove(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
@@ -146,6 +166,21 @@ fn factory_dir(scope: &Scope) -> Result<PathBuf> {
             .map(|h| h.join(".factory"))
             .ok_or_else(|| Error::Tree("no home directory (HOME unset); cannot locate ~/.factory".into())),
         Scope::Project { path } => Ok(path.join(".factory")),
+    }
+}
+
+/// The user-scope `~/.factory/AGENTS.md` carrying the host's always-loaded
+/// guidance: one of droid's personal global instruction files, read at session
+/// bootstrap with html comments passed through raw. `None` at project scope: droid's
+/// project tiers (`<repo>/.factory`, `<repo>/.agents`, `<repo>/.agent`) are files in
+/// the user's repo, never a surface this backend writes. Derived from `factory_dir`,
+/// so the resolver stays the single source of the path. droid's two shared
+/// cross-tool tiers (`~/.agents/AGENTS.md`, `~/.agent/AGENTS.md`) are deliberately
+/// never written.
+fn instructions_file(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(factory_dir(scope)?.join("AGENTS.md"))),
+        Scope::Project { .. } => Ok(None),
     }
 }
 
@@ -323,6 +358,10 @@ fn report_checks(backend: &DroidBackend, plugin: &Plugin, source: &Source) -> Ve
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_docs_present("commands", "commands/", &comp.commands, plugin.name, &base));
     checks.push(check_docs_present("droids", "agents/", &comp.agents, plugin.name, &base));
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(instructions_file(&Scope::User), plugin));
+    }
 
     checks
 }

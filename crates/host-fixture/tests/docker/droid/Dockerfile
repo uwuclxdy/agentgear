@@ -137,6 +137,25 @@ cmp -s "$SETTINGS" /tmp/settings-seed || { echo "FAIL: settings.json changed acr
 # model-facing work and documents no auth-free `mcp list`, so the file asserts above are
 # authoritative and the version call is only a liveness + file-inertness check.
 
+# Instructions surface: the tagged block in droid's global ~/.factory/AGENTS.md (a
+# personal global instruction tier loaded at session bootstrap). The user's own line
+# is seeded before setup and must survive both install and uninstall byte-identical.
+AGENTS_MD="$BASE/AGENTS.md"
+mkdir -p "$(dirname "$AGENTS_MD")"
+printf 'user own rule\n' > "$AGENTS_MD"
+host_fixture setup --agent droid > /dev/null
+if ! grep -q 'agentgear:ez-fixture-plugin@ez-fixture-plugin begin' "$AGENTS_MD"; then
+  echo "FAIL: instructions block missing from AGENTS.md"; cat "$AGENTS_MD"; exit 1
+fi
+grep -q 'user own rule' "$AGENTS_MD" || { echo "FAIL: user AGENTS.md line clobbered on install"; exit 1; }
+host_fixture uninstall > /dev/null
+if grep -q 'agentgear:ez-fixture-plugin' "$AGENTS_MD"; then
+  echo "FAIL: instructions block survived uninstall"; exit 1
+fi
+grep -q 'user own rule' "$AGENTS_MD" || { echo "FAIL: user AGENTS.md line clobbered on uninstall"; exit 1; }
+# Re-install so the leg's own uninstall step below exercises a full teardown.
+host_fixture setup --agent droid > /dev/null
+
 host_fixture uninstall
 
 if grep -q 'ez-fixture' "$MCP"; then echo "FAIL: our server survived uninstall"; exit 1; fi

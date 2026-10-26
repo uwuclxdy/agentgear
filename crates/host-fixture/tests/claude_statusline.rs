@@ -210,7 +210,7 @@ fn claude_errors_only_plugin_entry_heals_and_converges() {
 /// No errors ride the plugin entry, so only `structural_ok`'s divergence check
 /// can see the break; the marker is intact here, so without that check the heal
 /// takes its owned-and-healthy row, no-ops, and the registration never converges.
-/// This is the case the clauth start pre-flight gate keys on.
+/// This is the case a host's pre-flight gate keys on.
 #[test]
 fn claude_divergent_but_loading_marketplace_heals_and_repoints() {
     let env = Env::new("divergent-loading");

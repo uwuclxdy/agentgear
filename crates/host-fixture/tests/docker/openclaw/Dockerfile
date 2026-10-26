@@ -68,6 +68,26 @@ else
   echo "note: openclaw mcp list unavailable; relied on config-file assert"
 fi
 
+# Instructions surface: the tagged block in the default-agent workspace AGENTS.md
+# (the first of openclaw's six bootstrap files injected into every session). The
+# user's own line is seeded before setup and must survive both install and uninstall
+# byte-identical.
+AGENTS_MD="$HOME/.openclaw/workspace/AGENTS.md"
+mkdir -p "$(dirname "$AGENTS_MD")"
+printf 'user own rule\n' > "$AGENTS_MD"
+host_fixture setup --agent openclaw > /dev/null
+if ! grep -q 'agentgear:ez-fixture-plugin@ez-fixture-plugin begin' "$AGENTS_MD"; then
+  echo "FAIL: instructions block missing from workspace AGENTS.md"; cat "$AGENTS_MD"; exit 1
+fi
+grep -q 'user own rule' "$AGENTS_MD" || { echo "FAIL: user workspace AGENTS.md line clobbered on install"; exit 1; }
+host_fixture uninstall > /dev/null
+if grep -q 'agentgear:ez-fixture-plugin' "$AGENTS_MD"; then
+  echo "FAIL: instructions block survived uninstall"; exit 1
+fi
+grep -q 'user own rule' "$AGENTS_MD" || { echo "FAIL: user workspace AGENTS.md line clobbered on uninstall"; exit 1; }
+# Re-install so the leg's own uninstall step below exercises a full teardown.
+host_fixture setup --agent openclaw > /dev/null
+
 host_fixture uninstall
 
 if grep -q 'ez-fixture'       "$CONFIG"; then echo "FAIL: our server survived uninstall"; exit 1; fi

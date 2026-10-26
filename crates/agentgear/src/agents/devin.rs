@@ -16,6 +16,12 @@
 //! `skills/` IR is a DISTINCT surface: it lands as bare `<name>/SKILL.md` in devin's
 //! `.agents/skills` scan root (tagged for ownership), never colliding with the
 //! commands-as-skills dirs above. See `docs/harness/devin.md` for the full mapping.
+//!
+//! - **instructions**: the host's always-loaded guidance lands as a tagged block in
+//!   devin's global `AGENTS.md` beside `config.json`, the user-scope file devin loads
+//!   as an always-on `[Standard]` rule (user scope only — see `instructions_file`).
+//!   marker-id-scoped, so the user's lines and a rival plugin's block survive
+//!   byte-identical.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -24,6 +30,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::agentsmd;
 use super::cchooks::{hook_is_portable, remove_hook_groups, render_hook_group};
 use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, write_file_idem, yaml_scalar};
 use super::mcpjson::{self, RemoteShape, ServerShape};
@@ -54,7 +61,8 @@ impl AgentBackend for DevinBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // Full surface: mcp + hooks + commands (as skills) + agents (subagents) + skills.
+        // Full surface: mcp + hooks + commands (as skills) + agents (subagents) +
+        // skills + instructions.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -62,7 +70,7 @@ impl AgentBackend for DevinBackend {
             commands: true,
             agents: true,
             skills: true,
-            instructions: false,
+            instructions: true,
             scopes: &["user", "project"],
         }
     }
@@ -85,7 +93,11 @@ impl AgentBackend for DevinBackend {
         // devin-skills above: it lands in devin's `.agents/skills` scan root, not the
         // `<config_base>/skills` dir the commands own.
         let skills = skillsdir::probe(&skillsdir::agents_skills_root(scope)?, plugin, &comp.skills)?;
-        Ok(report::compose([mcp, hooks, commands, agents, skills].into_iter().flatten()))
+        let instructions = match instructions_file(scope)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([mcp, hooks, commands, agents, skills, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -110,6 +122,9 @@ impl AgentBackend for DevinBackend {
         // Plugin skills land in the `.agents/skills` scan root (bare `<name>/`), kept
         // distinct from the `skills/<plugin>-<stem>/` dirs the CC commands own above.
         changed |= skillsdir::reconcile(&skillsdir::agents_skills_root(scope)?, plugin, &comp.skills)?;
+        if let Some(path) = instructions_file(scope)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -134,6 +149,9 @@ impl AgentBackend for DevinBackend {
             }
         }
         changed |= skillsdir::remove(&skillsdir::agents_skills_root(scope)?, plugin, &comp.skills)?;
+        if let Some(path) = instructions_file(scope)? {
+            changed |= agentsmd::remove(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
@@ -173,6 +191,18 @@ fn config_base(scope: &Scope) -> Result<PathBuf> {
         Scope::User => user_config_base()
             .ok_or_else(|| Error::Tree("no config directory (XDG_CONFIG_HOME and HOME both unset); cannot locate ~/.config/devin".into())),
         Scope::Project { path } => Ok(path.join(".devin")),
+    }
+}
+
+/// The user-scope global `AGENTS.md` beside `config.json` carrying the host's
+/// always-loaded guidance: devin lists it as an always-on `[Standard]` rule (its
+/// doc-canonical "Global Rules" file) and passes html comments through raw. `None`
+/// at project scope: devin's project rule files are the user's repo files
+/// (`./AGENTS.md`, `./CLAUDE.md`), never a surface this backend writes.
+fn instructions_file(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(config_base(scope)?.join("AGENTS.md"))),
+        Scope::Project { .. } => Ok(None),
     }
 }
 
@@ -351,6 +381,10 @@ fn report_checks(backend: &DevinBackend, plugin: &Plugin, source: &Source) -> Ve
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_docs_present("skills", "SKILL.md", "commands/", &comp.commands, plugin.name, &base));
     checks.push(check_docs_present("agents", "AGENT.md", "agents/", &comp.agents, plugin.name, &base));
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(instructions_file(&Scope::User), plugin));
+    }
 
     checks
 }

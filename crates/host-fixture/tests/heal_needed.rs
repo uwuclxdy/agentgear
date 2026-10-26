@@ -2,7 +2,7 @@
 //! `claude` verdict it should, ends a lingering reinstall on the healthy row, and
 //! mirrors self_heal's skip gates.
 //!
-//! The host's hot-path gate (clauth's SessionStart hook) wants to run the heal
+//! The host's hot-path gate (a SessionStart hook) wants to run the heal
 //! only when it would act, because a heal pays two `claude` spawns on every
 //! session event. The pre-check must answer from files alone, so the spawn test
 //! runs a real `setup` through the `fake_claude` double, then calls the

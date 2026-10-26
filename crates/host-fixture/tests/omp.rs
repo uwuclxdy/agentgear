@@ -291,3 +291,128 @@ fn omp_full_lifecycle() {
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.mcp().contains("ez-fixture"), "re-install did not re-add our server");
 }
+
+// --- instructions ------------------------------------------------------------
+
+const INSTR_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const INSTR_GUIDANCE: &str = "ez-fixture always-loaded guidance line.\n";
+
+fn instr_block() -> String {
+    format!("<!-- agentgear:{INSTR_ID} begin -->\n{INSTR_GUIDANCE}<!-- agentgear:{INSTR_ID} end -->\n")
+}
+
+/// The user-scope instructions lifecycle in omp's `~/.omp/agent/AGENTS.md` (the
+/// `native` provider loads it into every request, raw text with html comments intact):
+/// install appends our block after the user's content with one blank separator line;
+/// a drifted or deleted block is repaired by self-heal; uninstall strips exactly our
+/// block and the separator.
+#[test]
+fn omp_instructions_block_lifecycle() {
+    let env = Env::new("instr-lifecycle");
+    let agents = env.base.join("AGENTS.md");
+    let seed = "user rule one\nuser rule two\n";
+    fs::write(&agents, seed).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "omp"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+    let installed = format!("{seed}\n{}", instr_block());
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "install must append exactly our block after a blank line");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "omp"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "a no-op setup must not rewrite AGENTS.md");
+
+    let tampered = format!("{seed}\n<!-- agentgear:{INSTR_ID} begin -->\ntampered\n<!-- agentgear:{INSTR_ID} end -->\n");
+    fs::write(&agents, &tampered).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the drifted block: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "self-heal must restore the exact block bytes");
+
+    fs::write(&agents, seed).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted block: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "self-heal must re-add the block");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), seed, "uninstall must restore the user's file byte-for-byte");
+}
+
+/// With no pre-existing `AGENTS.md`, install creates the file holding only our block,
+/// and uninstall — our removal being what emptied it — takes it with it.
+#[test]
+fn omp_instructions_owns_only_its_file() {
+    let env = Env::new("instr-owned-file");
+    let agents = env.base.join("AGENTS.md");
+    assert!(!agents.exists(), "precondition: no AGENTS.md seeded");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "omp"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), instr_block(), "a file we created holds exactly our block, no leading blank line");
+
+    // The doctor arm is wired, not merely declared: a full report names our block.
+    // Without this, dropping the check or inverting its `instructions.is_some()` gate
+    // leaves the whole suite green.
+    let (ok, out) = env.fixture(&["doctor"]);
+    assert!(ok, "doctor failed over a healthy install: {out}");
+    assert!(out.contains("guidance block present"), "the doctor report never checks the guidance block:\n{out}");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!agents.exists(), "uninstall must remove the file our removal emptied");
+}
+
+/// A rival agentgear host's block (different plugin id in the markers) and the user's
+/// own lines must survive our install and uninstall byte-identical: the marker id
+/// scopes ownership, so two agentgear plugins coexist in one AGENTS.md.
+#[test]
+fn omp_never_clobbers_a_rival_instructions_block() {
+    let env = Env::new("instr-rival");
+    let agents = env.base.join("AGENTS.md");
+    let rival =
+        "user line\n<!-- agentgear:rival-plugin@rival-mkt begin -->\nrival guidance\n<!-- agentgear:rival-plugin@rival-mkt end -->\n";
+    fs::write(&agents, rival).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "omp"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(
+        fs::read_to_string(&agents).unwrap(),
+        format!("{rival}\n{}", instr_block()),
+        "install must append our block, leaving the rival's untouched"
+    );
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), rival, "uninstall must strip only our block, keeping the rival's and the user's");
+}
+
+/// omp also reads the cross-tool `~/.agents/` directory, but that is shared with other
+/// harnesses — never ours to write. Install must leave it untouched.
+#[test]
+fn omp_instructions_leaves_the_cross_tool_dir_unwritten() {
+    let env = Env::new("instr-cross-tool");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "omp"]);
+    assert!(ok, "setup failed: {out}");
+    assert!(env.base.join("AGENTS.md").exists(), "precondition: our block landed");
+
+    let shared = env.root.join(".agents");
+    assert!(!shared.exists(), "the cross-tool ~/.agents tree is never ours to create here: {}", shared.display());
+}
+
+/// Project scope has no instructions surface: omp's project context file is
+/// `<repo>/.omp/AGENTS.md`, a file in the user's own repo, never one this backend
+/// writes — so a `--project` install must leave both the repo and the user's agent dir
+/// untouched, while still writing its project config.
+#[test]
+fn omp_instructions_user_scope_only() {
+    let env = Env::new("instr-user-scope-only");
+    let proj = env.root.join("proj");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "omp", "--project", proj.to_str().unwrap()]);
+    assert!(ok, "setup failed: {out}");
+    assert!(proj.join(".omp").exists(), "precondition: the project install ran");
+    assert!(!proj.join(".omp").join("AGENTS.md").exists(), "project scope must not write the repo's .omp/AGENTS.md");
+    assert!(!env.base.join("AGENTS.md").exists(), "a project install must not touch the user's agent dir");
+}

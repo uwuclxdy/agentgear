@@ -22,6 +22,15 @@
 //! (`~/.agents/plugins/<plugin>/skills/<name>/SKILL.md`), tagged for ownership;
 //! `remove` drops the whole plugin dir so they need no separate removal.
 //!
+//! Instructions land as a marker-tagged block in the user-scope
+//! `<config-dir>/.goosehints` (goose's own hints file, the first default of its
+//! `CONTEXT_FILE_NAMES` list, loaded raw at every session start), through the shared
+//! `agentsmd` renderer. The path derives from `config_yaml()`, so `GOOSE_PATH_ROOT`
+//! relocates it too; ownership is the marker id, so the user's hints and a rival
+//! plugin's block survive byte-identical. Project scope has no instructions surface,
+//! and goose's two shared `AGENTS.md` defaults (`<config-dir>/AGENTS.md`,
+//! `~/.agents/AGENTS.md`) are never written.
+//!
 //! Skipped surfaces (see `docs/harness/goose.md`): commands + agents (both would
 //! translate into goose's single `recipe` YAML format — a command also needs a
 //! `slash_commands:` config.yaml entry, an agent a `sub_recipes:`/by-name
@@ -36,6 +45,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use serde_norway::{Mapping, Value as Yaml};
 
+use super::agentsmd;
 use super::cchooks::{hook_is_portable, render_hook_group};
 use super::confedit::{write_file_idem, yaml_edit, yaml_prune_map, yaml_remove};
 use super::report;
@@ -68,8 +78,8 @@ impl AgentBackend for GooseBackend {
         // user-only: MCP (the ownership anchor) lives in the single user
         // `config.yaml`; goose has no project-level extensions file. Hooks do have a
         // project variant, but v1 stays user-scope-primary so probe/remove key on
-        // one coherent surface. mcp + hooks + skills translate; commands/agents are
-        // skipped (goose's recipe format, module doc).
+        // one coherent surface. mcp + hooks + skills + instructions translate;
+        // commands/agents are skipped (goose's recipe format, module doc).
         Capabilities {
             plugins: false,
             mcp: true,
@@ -77,22 +87,27 @@ impl AgentBackend for GooseBackend {
             commands: false,
             agents: false,
             skills: true,
-            instructions: false,
+            instructions: true,
             scopes: &["user"],
         }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
-        // Compose the two surfaces (mcp extensions + the plugin-owned hooks.json), so
-        // a missing hooks file behind healthy extensions reads NeedsRepair. `probe_mcp`
-        // still carries the Disabled classification for a user-flipped `enabled:false`.
-        // `source` is the one self_heal resolved for this agent (rehydrated `--path`,
-        // else the compile-time default), so probe and reconcile render identical bytes.
+        // Compose every surface (mcp extensions, the plugin-owned hooks.json, skills, the
+        // guidance block), so a missing hooks file behind healthy extensions reads
+        // NeedsRepair. `probe_mcp` still carries the Disabled classification for a
+        // user-flipped `enabled:false`. `source` is the one self_heal resolved for this
+        // agent (rehydrated `--path`, else the compile-time default), so probe and
+        // reconcile render identical bytes.
         let comp = plugin.components(source)?.with_client(self.id());
         let mcp = if comp.mcp_servers.iter().any(is_writable) { Some(probe_mcp(&config_yaml()?, &comp.mcp_servers)?) } else { None };
         let hooks = probe_hooks(&hooks_json_path(scope, plugin.name)?, &comp.hooks)?;
         let skills = skillsdir::probe(&skills_dir(scope, plugin.name)?, plugin, &comp.skills)?;
-        Ok(report::compose([mcp, hooks, skills].into_iter().flatten()))
+        let instructions = match instructions_file(scope)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([mcp, hooks, skills, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -102,6 +117,9 @@ impl AgentBackend for GooseBackend {
         changed |= reconcile_mcp(&config_yaml()?, &comp.mcp_servers, desired.reenable)?;
         changed |= reconcile_hooks(&hooks_json_path(scope, plugin.name)?, &comp.hooks)?;
         changed |= skillsdir::reconcile(&skills_dir(scope, plugin.name)?, plugin, &comp.skills)?;
+        if let Some(path) = instructions_file(scope)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -113,6 +131,9 @@ impl AgentBackend for GooseBackend {
         // The whole plugin dir under `~/.agents/plugins/<plugin>/` is ours (keyed by
         // our plugin name), so a wholesale drop removes only what we wrote.
         changed |= remove_plugin_dir(&plugin_dir(scope, plugin.name)?)?;
+        if let Some(path) = instructions_file(scope)? {
+            changed |= agentsmd::remove(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
@@ -126,10 +147,11 @@ impl AgentBackend for GooseBackend {
 /// `GOOSE_PATH_ROOT`, goose's own path-root override: it wins unconditionally over
 /// `XDG_CONFIG_HOME`/`HOME` (checked first, no merge) and relocates both the config
 /// file and the plugins/hooks dir (`docs/harness/goose.md` gotcha 3). An unset or
-/// empty value is ignored; goose treats it as an absolute root, so we don't
-/// second-guess it here.
+/// empty value is ignored, and a relative one is dropped: goose keeps only an absolute
+/// root (`config/paths.rs::validated_path_root`) and falls back otherwise, so honoring
+/// a relative root here would write files goose never reads.
 fn goose_path_root() -> Option<PathBuf> {
-    std::env::var_os("GOOSE_PATH_ROOT").filter(|v| !v.is_empty()).map(PathBuf::from)
+    std::env::var_os("GOOSE_PATH_ROOT").filter(|v| !v.is_empty()).map(PathBuf::from).filter(|p| p.is_absolute())
 }
 
 /// The user-scope `~/.config/goose` dir (XDG-honoring), used only when
@@ -151,6 +173,19 @@ fn config_yaml() -> Result<PathBuf> {
     goose_config_dir()
         .map(|d| d.join("config.yaml"))
         .ok_or_else(|| Error::Tree("no config directory (HOME and XDG_CONFIG_HOME unset); cannot locate ~/.config/goose".into()))
+}
+
+/// The user-scope `.goosehints` beside `config.yaml` — goose's own always-loaded
+/// hints file, the first default of its `CONTEXT_FILE_NAMES` list (the other two,
+/// `<config-dir>/AGENTS.md` and `~/.agents/AGENTS.md`, are shared cross-tool files
+/// this backend never writes). Derived from `config_yaml()` so `GOOSE_PATH_ROOT`
+/// relocates it exactly as goose does. `None` at project scope: goose's project tier
+/// is cwd-relative files in the user's repo, never a surface this backend writes.
+fn instructions_file(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(config_yaml()?.with_file_name(".goosehints"))),
+        Scope::Project { .. } => Ok(None),
+    }
 }
 
 /// The plugin-owned dir under the Open Plugins hooks spec: `~/.agents/plugins/
@@ -503,6 +538,10 @@ fn report_checks(backend: &GooseBackend, plugin: &Plugin, source: &Source) -> Ve
     match hooks_json_path(&Scope::User, plugin.name) {
         Ok(hooks_json) => checks.push(check_hooks_present(&comp.hooks, &hooks_json)),
         Err(e) => checks.push(DoctorCheck { name: "translated hooks present", status: CheckStatus::Warn(e.to_string()) }),
+    }
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(instructions_file(&Scope::User), plugin));
     }
 
     checks

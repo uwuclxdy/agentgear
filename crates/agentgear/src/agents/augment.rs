@@ -7,6 +7,15 @@
 //! commands/<plugin>-<name>.md` and CC agents `~/.augment/agents/<plugin>-<name>.md`,
 //! both markdown + YAML frontmatter (augment reads the same shape as CC).
 //!
+//! Instructions land as a marker-tagged block in the user-scope
+//! `~/.augment/rules/agentgear-<plugin>.md`: auggie recursively loads every
+//! `*.md`/`*.mdc` under `~/.augment/rules/` as an always-apply rule, stripping only
+//! a leading YAML block (html comments and every other byte survive verbatim), so
+//! one plugin-named file in augment's own rules dir is the whole surface. Ownership
+//! is the marker id, so the user's own rule files are never touched. Project scope
+//! has no instructions surface, and augment's shared cross-tool guideline files are
+//! never written.
+//!
 //! Ownership: mcp servers are keyed by our server names; command/agent files are
 //! plugin-prefixed, so `remove` is exact and a second reconcile is a true `NoOp`.
 //! `PreCompact`/`SubagentStop` are absent from augment's event set and skipped
@@ -19,6 +28,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::agentsmd;
 use super::cchooks::{hook_is_portable, remove_hook_groups, render_hook_group};
 use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem, yaml_scalar};
 use super::mcpjson::{self, ServerShape};
@@ -53,7 +63,7 @@ impl AgentBackend for AugmentBackend {
         // Scope is user-only: augment documents `mcpServers` only at `~/.augment/
         // settings.json` (workspace `.augment/` is documented for hooks/commands but
         // not confirmed to honor mcp), and we write the whole config into one file.
-        // mcp + hooks + commands + agents translate; skills are skipped.
+        // mcp + hooks + commands + agents + instructions translate; skills are skipped.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -61,17 +71,17 @@ impl AgentBackend for AugmentBackend {
             commands: true,
             agents: true,
             skills: false,
-            instructions: false,
+            instructions: true,
             scopes: &["user"],
         }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
-        // Compose every surface (mcp + hooks in settings.json, command + agent files),
-        // so a dropped hook group or missing command/agent behind healthy mcp keys reads
-        // NeedsRepair. `source` is the one self_heal resolved for this agent (rehydrated
-        // `--path`, else the compile-time default), so probe and reconcile render
-        // identical bytes.
+        // Compose every surface (mcp + hooks in settings.json, command + agent files,
+        // and the rule-file guidance block), so a dropped hook group or missing
+        // command/agent/block behind healthy mcp keys reads NeedsRepair. `source` is the
+        // one self_heal resolved for this agent (rehydrated `--path`, else the
+        // compile-time default), so probe and reconcile render identical bytes.
         let comp = plugin.components(source)?.with_client(self.id());
         let base = augment_dir(scope)?;
         let settings = base.join("settings.json");
@@ -88,7 +98,11 @@ impl AgentBackend for AugmentBackend {
             }),
             |_, _| true,
         )?;
-        Ok(report::compose([mcp, hooks, commands, agents].into_iter().flatten()))
+        let instructions = match instructions_file(scope, plugin.name)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([mcp, hooks, commands, agents, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -106,6 +120,9 @@ impl AgentBackend for AugmentBackend {
         for doc in &comp.agents {
             let name = format!("{}-{}", plugin.name, flat_stem(&doc.rel, "agents/"));
             changed |= write_file_idem(&agent_root.join(doc_file(plugin.name, &doc.rel, "agents/")), render_agent(&name, doc).as_bytes())?;
+        }
+        if let Some(path) = instructions_file(scope, plugin.name)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
         }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
@@ -126,6 +143,11 @@ impl AgentBackend for AugmentBackend {
         let agent_root = base.join("agents");
         for doc in &comp.agents {
             changed |= remove_file_idem(&agent_root.join(doc_file(plugin.name, &doc.rel, "agents/")))?;
+        }
+        // Our rule file is named for the plugin, so the removal is exact and a
+        // user's own rule files under `rules/` are never touched.
+        if let Some(path) = instructions_file(scope, plugin.name)? {
+            changed |= agentsmd::remove(&path, plugin)?;
         }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
@@ -169,6 +191,20 @@ fn flat_stem(rel: &str, prefix: &str) -> String {
     let stripped = rel.strip_prefix(prefix).unwrap_or(rel);
     let stem = stripped.strip_suffix(".md").unwrap_or(stripped);
     stem.replace(['/', '\\'], "-")
+}
+
+/// The user-scope `~/.augment/rules/agentgear-<plugin>.md` rule file carrying the
+/// host's always-loaded guidance: auggie recursively loads every `*.md`/`*.mdc`
+/// under `~/.augment/rules/` as an always-apply rule and strips only a leading YAML
+/// block (html comments and every other byte survive), so one plugin-named file in
+/// augment's own rules dir is the whole surface. `None` at project scope: augment's
+/// workspace guidelines are the user's own repo files, never a surface this backend
+/// writes.
+fn instructions_file(scope: &Scope, plugin: &str) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(augment_dir(scope)?.join("rules").join(format!("agentgear-{plugin}.md")))),
+        Scope::Project { .. } => Ok(None),
+    }
 }
 
 // --- settings (mcp + hooks, one file) ----------------------------------------
@@ -357,6 +393,10 @@ fn report_checks(backend: &AugmentBackend, plugin: &Plugin, source: &Source) -> 
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_docs_present("translated commands present", &comp.commands, &base.join("commands"), plugin.name, "commands/"));
     checks.push(check_docs_present("translated agents present", &comp.agents, &base.join("agents"), plugin.name, "agents/"));
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(instructions_file(&Scope::User, plugin.name), plugin));
+    }
 
     checks
 }

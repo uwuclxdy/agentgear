@@ -120,7 +120,13 @@ cfg_config_backends! {
     #[allow(dead_code)]
     pub(crate) mod cchooks;
 }
+// `report` and `agentsmd` serve every config-writing backend, plus copilot-cli: it is
+// plugin-native for its tree surfaces but owns one instructions file of its own.
+#[cfg(feature = "copilot-cli")]
+#[allow(dead_code)]
+pub(crate) mod report;
 cfg_config_backends! {
+    #[cfg(not(feature = "copilot-cli"))]
     #[allow(dead_code)]
     pub(crate) mod report;
 }
@@ -128,7 +134,11 @@ cfg_config_backends! {
     #[allow(dead_code)]
     pub(crate) mod skillsdir;
 }
+#[cfg(feature = "copilot-cli")]
+#[allow(dead_code)]
+pub(crate) mod agentsmd;
 cfg_config_backends! {
+    #[cfg(not(feature = "copilot-cli"))]
     #[allow(dead_code)]
     pub(crate) mod agentsmd;
 }

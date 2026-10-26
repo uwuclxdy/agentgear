@@ -56,6 +56,27 @@ else
   echo "note: auggie mcp list unavailable (likely needs login); relied on config-file assert"
 fi
 
+# Instructions surface: auggie loads every rule under ~/.augment/rules recursively,
+# so the whole plugin-named file is ours. Seed a user-owned rule in the same scanned
+# dir: uninstall must remove exactly our file and leave theirs byte-identical.
+RULES="$HOME/.augment/rules"
+OURS="$RULES/agentgear-ez-fixture-plugin.md"
+THEIRS="$RULES/their-own.md"
+mkdir -p "$RULES"
+printf 'their own rule\n' > "$THEIRS"
+cp "$THEIRS" /tmp/augment-theirs-seed
+host_fixture setup --agent augment > /dev/null
+if ! grep -q 'agentgear:ez-fixture-plugin@ez-fixture-plugin begin' "$OURS"; then
+  echo "FAIL: our rule file or instructions block missing"; cat "$OURS"; exit 1
+fi
+host_fixture uninstall > /dev/null
+if [ -e "$OURS" ]; then echo "FAIL: our rule file survived uninstall"; exit 1; fi
+if ! cmp -s "$THEIRS" /tmp/augment-theirs-seed; then
+  echo "FAIL: uninstall rewrote the user's own rule file"; diff /tmp/augment-theirs-seed "$THEIRS"; exit 1
+fi
+# Re-install so the leg's own uninstall step below exercises a full teardown.
+host_fixture setup --agent augment > /dev/null
+
 host_fixture uninstall
 
 if grep -q 'ez-fixture' "$SETTINGS"; then echo "FAIL: our server survived uninstall"; exit 1; fi

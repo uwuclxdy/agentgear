@@ -114,11 +114,7 @@ pub(crate) fn note_skipped(check: DoctorCheck, skipped: &[Skipped<'_>]) -> Docto
 /// event with no analog on this harness is a documented per-backend skip, so it
 /// is deliberately not in here.
 pub(crate) fn skipped_hooks(hooks: &[HookBinding]) -> Vec<Skipped<'_>> {
-    hooks
-        .iter()
-        .filter(|h| !h.is_portable())
-        .map(|h| Skipped { name: h.event.as_str(), why: NON_PORTABLE })
-        .collect()
+    hooks.iter().filter(|h| !h.is_portable()).map(|h| Skipped { name: h.event.as_str(), why: NON_PORTABLE }).collect()
 }
 
 /// "mcp server registered": every portable server is present under `key_path`.
@@ -126,13 +122,7 @@ pub(crate) fn skipped_hooks(hooks: &[HookBinding]) -> Vec<Skipped<'_>> {
 /// `"not under `mcp` in opencode.json"`) and `fix` its remediation, so each harness
 /// keeps its exact wording. Never a failure for an entry that was never written:
 /// those are the `Warn` [`registered_status`] renders.
-pub(crate) fn check_mcp_registered(
-    servers: &[McpServer],
-    root: Option<&Value>,
-    key_path: &[&str],
-    where_: &str,
-    fix: &str,
-) -> DoctorCheck {
+pub(crate) fn check_mcp_registered(servers: &[McpServer], root: Option<&Value>, key_path: &[&str], where_: &str, fix: &str) -> DoctorCheck {
     let name = "mcp server registered";
     let portable: Vec<&str> = servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect();
     let skipped = skipped_mcp(servers, &portable);
@@ -146,10 +136,7 @@ pub(crate) fn check_mcp_registered(
     } else {
         DoctorCheck {
             name,
-            status: CheckStatus::Fail {
-                problem: format!("mcp server(s) {where_}: {}", missing.join(", ")),
-                fix: fix.into(),
-            },
+            status: CheckStatus::Fail { problem: format!("mcp server(s) {where_}: {}", missing.join(", ")), fix: fix.into() },
         }
     };
     note_skipped(check, &skipped)

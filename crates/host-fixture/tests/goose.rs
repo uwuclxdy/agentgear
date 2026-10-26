@@ -91,6 +91,17 @@ impl Env {
         (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
+    /// Like [`Env::fixture`], but runs from `dir`: for the probes whose resolution
+    /// depends on the working directory (a relative path root).
+    fn fixture_in(&self, dir: &Path, args: &[&str]) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args);
+        cmd.current_dir(dir);
+        self.apply(&mut cmd);
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
     fn config_yaml(&self) -> String {
         fs::read_to_string(self.goose.join("config.yaml")).unwrap()
     }
@@ -202,6 +213,27 @@ fn goose_full_lifecycle() {
     assert!(env.config_yaml().contains("ez-fixture"), "re-install did not re-add our extension");
 }
 
+/// goose keeps only an ABSOLUTE `GOOSE_PATH_ROOT` (`config/paths.rs::validated_path_root`
+/// at v1.56.0) and falls back to XDG/HOME otherwise; the backend must agree, or a
+/// relative root scatters config where goose never loads it. Runs from a scratch cwd so
+/// a regression cannot write into the repo.
+#[test]
+fn goose_ignores_a_relative_goose_path_root() {
+    let mut env = Env::new("path-root-relative");
+    let cwd = env.root.join("cwd");
+    fs::create_dir_all(&cwd).unwrap();
+    env.path_root = Some(PathBuf::from("relroot"));
+
+    let (ok, out) = env.fixture_in(&cwd, &["setup", "--agent", "goose"]);
+    assert!(ok, "setup failed: {out}");
+    assert!(!cwd.join("relroot").exists(), "a relative GOOSE_PATH_ROOT must be ignored, never resolved against cwd");
+    assert!(
+        env.config_yaml().contains("ez-fixture"),
+        "an ignored relative root must fall back to the XDG config dir:\n{}",
+        env.config_yaml()
+    );
+}
+
 /// The `extensions` mapping is ours to take back only when our own removal is what
 /// emptied it. Phase 1 pins the drop end to end (install creates the mapping,
 /// uninstall takes it); phase 2 pins the guard on the other side, where the user is
@@ -309,6 +341,14 @@ fn goose_honors_goose_path_root() {
         env.hooks_json().display()
     );
 
+    // .goosehints follows the same relocated config dir (goose derives it from
+    // `Paths::config_dir()`): a block at the XDG path would be one goose never loads.
+    let relocated_hints = path_root.join("config").join(".goosehints");
+    assert!(relocated_hints.is_file(), ".goosehints not written under GOOSE_PATH_ROOT: {}", relocated_hints.display());
+    let hints = fs::read_to_string(&relocated_hints).unwrap();
+    assert!(hints.contains("agentgear:ez-fixture-plugin"), "our block missing from the relocated .goosehints:\n{hints}");
+    assert!(!env.goose.join(".goosehints").exists(), "the XDG-path .goosehints must stay unwritten when GOOSE_PATH_ROOT is set");
+
     // idempotent: a second identical reconcile under the same root no-ops.
     let (ok, out) = env.fixture(&["setup", "--agent", "goose"]);
     assert!(ok && out == "NoOp", "second setup under GOOSE_PATH_ROOT should no-op, got {out}");
@@ -318,8 +358,120 @@ fn goose_honors_goose_path_root() {
     assert!(ok && out == "Removed", "uninstall under GOOSE_PATH_ROOT failed: {out}");
     // The relocated config held nothing but our extension, so it goes with it.
     assert!(!relocated_config.exists(), "our extension survived uninstall under GOOSE_PATH_ROOT: {}", relocated_config.display());
+    assert!(!relocated_hints.exists(), "our block survived uninstall under GOOSE_PATH_ROOT: {}", relocated_hints.display());
     let relocated_plugin_dir = path_root.join(".agents").join("plugins").join("ez-fixture-plugin");
     assert!(!relocated_plugin_dir.exists(), "the relocated plugin hooks dir survived uninstall: {}", relocated_plugin_dir.display());
+}
+
+// --- instructions ------------------------------------------------------------
+
+/// The fixture's `<name>@<marketplace>` plugin id; the derive defaults `marketplace`
+/// to `name` when no attr names it.
+const INSTR_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const INSTR_GUIDANCE: &str = "ez-fixture always-loaded guidance line.\n";
+
+/// The exact tagged block the instructions surface must render into the global
+/// `<config-dir>/.goosehints`: the host guidance between two html-comment markers
+/// naming the plugin id, the whole block replaceable byte-for-byte.
+fn instr_block() -> String {
+    format!("<!-- agentgear:{INSTR_ID} begin -->\n{INSTR_GUIDANCE}<!-- agentgear:{INSTR_ID} end -->\n")
+}
+
+/// The user-scope instructions lifecycle in goose's global `<config-dir>/.goosehints`
+/// (`hints/load_hints.rs` builds the file list from `Paths::in_config_dir(name)` over
+/// the `CONTEXT_FILE_NAMES` defaults `[.goosehints, AGENTS.md]`, and prompt assembly
+/// loads every entry unconditionally): install appends our block after the user's
+/// content with one blank separator line; a drifted or deleted block is repaired by
+/// self-heal; uninstall strips exactly our block and the separator.
+#[test]
+fn goose_instructions_block_lifecycle() {
+    let env = Env::new("instr-lifecycle");
+    let hints = env.goose.join(".goosehints");
+    let seed = "user hint one\nuser hint two\n";
+    fs::write(&hints, seed).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "goose"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+    let installed = format!("{seed}\n{}", instr_block());
+    assert_eq!(fs::read_to_string(&hints).unwrap(), installed, "install must append exactly our block after a blank line");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "goose"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(fs::read_to_string(&hints).unwrap(), installed, "a no-op setup must not rewrite .goosehints");
+
+    let tampered = format!("{seed}\n<!-- agentgear:{INSTR_ID} begin -->\ntampered\n<!-- agentgear:{INSTR_ID} end -->\n");
+    fs::write(&hints, &tampered).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the drifted block: {out}");
+    assert_eq!(fs::read_to_string(&hints).unwrap(), installed, "self-heal must restore the exact block bytes");
+
+    fs::write(&hints, seed).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted block: {out}");
+    assert_eq!(fs::read_to_string(&hints).unwrap(), installed, "self-heal must re-add the block");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&hints).unwrap(), seed, "uninstall must restore the user's file byte-for-byte");
+}
+
+/// With no pre-existing `.goosehints`, install creates the file holding only our
+/// block, and uninstall — our removal being what emptied it — takes the file with it.
+#[test]
+fn goose_instructions_owns_only_its_file() {
+    let env = Env::new("instr-owned-file");
+    let hints = env.goose.join(".goosehints");
+    assert!(!hints.exists(), "precondition: no .goosehints seeded");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "goose"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(fs::read_to_string(&hints).unwrap(), instr_block(), "a file we created holds exactly our block, no leading blank line");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!hints.exists(), "uninstall must remove the file our removal emptied");
+}
+
+/// A rival agentgear host's block (different plugin id in the markers) and the user's
+/// own lines must survive our install and uninstall byte-identical: the marker id
+/// scopes ownership, so two agentgear plugins coexist in one `.goosehints`.
+#[test]
+fn goose_never_clobbers_a_rival_instructions_block() {
+    let env = Env::new("instr-rival");
+    let hints = env.goose.join(".goosehints");
+    let rival =
+        "user line\n<!-- agentgear:rival-plugin@rival-mkt begin -->\nrival guidance\n<!-- agentgear:rival-plugin@rival-mkt end -->\n";
+    fs::write(&hints, rival).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "goose"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(
+        fs::read_to_string(&hints).unwrap(),
+        format!("{rival}\n{}", instr_block()),
+        "install must append our block, leaving the rival's untouched"
+    );
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&hints).unwrap(), rival, "uninstall must strip only our block, keeping the rival's and the user's");
+}
+
+/// goose also loads `<config-dir>/AGENTS.md` and `~/.agents/AGENTS.md`, but both are
+/// files the user and every other AGENTS.md reader own — never a surface we write.
+/// After a full install the block exists in `.goosehints` alone.
+#[test]
+fn goose_instructions_leaves_shared_agents_md_unwritten() {
+    let env = Env::new("instr-shared-agents-md");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "goose"]);
+    assert!(ok, "setup failed: {out}");
+    assert!(env.goose.join(".goosehints").exists(), "precondition: our block landed");
+
+    let config_agents = env.goose.join("AGENTS.md");
+    let shared_agents = env.root.join(".agents").join("AGENTS.md");
+    assert!(!config_agents.exists(), "the config-dir AGENTS.md is a shared context file, never ours to write: {}", config_agents.display());
+    assert!(!shared_agents.exists(), "the cross-tool ~/.agents/AGENTS.md is never ours to write: {}", shared_agents.display());
 }
 
 /// The uninstall inverse at file level, the arm

@@ -57,6 +57,26 @@ else
   echo "note: amp mcp list unavailable (likely needs login); relied on config-file assert"
 fi
 
+# Instructions surface: the tagged block in amp's user-scope AGENTS.md beside
+# settings.json (one of the guidance files amp always includes from its config dir).
+# The user's own line is seeded before setup and must survive both install and
+# uninstall byte-identical; the shared home-level ~/.config/AGENTS.md is never ours.
+AGENTS_MD="$HOME/.config/amp/AGENTS.md"
+printf 'user own rule\n' > "$AGENTS_MD"
+host_fixture setup --agent amp > /dev/null
+if ! grep -q 'agentgear:ez-fixture-plugin@ez-fixture-plugin begin' "$AGENTS_MD"; then
+  echo "FAIL: instructions block missing from AGENTS.md"; cat "$AGENTS_MD"; exit 1
+fi
+grep -q 'user own rule' "$AGENTS_MD" || { echo "FAIL: user AGENTS.md line clobbered on install"; exit 1; }
+if [ -f "$HOME/.config/AGENTS.md" ]; then echo "FAIL: the shared home-level AGENTS.md must stay unwritten"; exit 1; fi
+host_fixture uninstall > /dev/null
+if grep -q 'agentgear:ez-fixture-plugin' "$AGENTS_MD"; then
+  echo "FAIL: instructions block survived uninstall"; exit 1
+fi
+grep -q 'user own rule' "$AGENTS_MD" || { echo "FAIL: user AGENTS.md line clobbered on uninstall"; exit 1; }
+# Re-install so the leg's own uninstall step below exercises a full teardown.
+host_fixture setup --agent amp > /dev/null
+
 host_fixture uninstall
 
 if grep -q 'ez-fixture' "$SETTINGS"; then echo "FAIL: our server survived uninstall"; exit 1; fi

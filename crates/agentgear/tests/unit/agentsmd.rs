@@ -19,7 +19,14 @@ const RIVAL_ID: &str = "rival-plugin@rival-mkt";
 const GUIDANCE: &str = "always-loaded line.";
 
 fn plugin(instructions: Option<&str>) -> Plugin {
-    Plugin { name: "ez-plugin", marketplace: "ez-mkt", version: "0.0.0", agents: &[], instructions: instructions.map(str::to_string), blob: &[] }
+    Plugin {
+        name: "ez-plugin",
+        marketplace: "ez-mkt",
+        version: "0.0.0",
+        agents: &[],
+        instructions: instructions.map(str::to_string),
+        blob: &[],
+    }
 }
 
 fn block(id: &str) -> Vec<u8> {
@@ -144,10 +151,42 @@ fn a_plugin_without_instructions_owns_no_surface() {
 }
 
 #[test]
+fn withdrawing_the_guidance_reconciles_the_block_away() {
+    let path = scratch("withdraw-AGENTS.md");
+    std::fs::write(&path, b"user notes\n").unwrap();
+    assert!(reconcile(&path, &plugin(Some(GUIDANCE))).unwrap());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        format!("user notes\n\n{}", String::from_utf8(block(ID)).unwrap()),
+        "precondition: the block landed after the user's content"
+    );
+
+    // The host ships a version that declares no guidance: the next reconcile must take
+    // the block back out rather than strand the previous text in an always-loaded file.
+    assert!(reconcile(&path, &plugin(None)).unwrap(), "withdrawing the guidance must strip the block");
+    assert_eq!(std::fs::read(&path).unwrap(), b"user notes\n", "the user's bytes survive the withdrawal byte-identical");
+}
+
+#[test]
+fn a_stranded_block_reads_needs_repair_when_the_guidance_is_withdrawn() {
+    let path = scratch("stranded-AGENTS.md");
+    std::fs::write(&path, block(ID)).unwrap();
+    assert!(
+        matches!(probe(&path, &plugin(None)).unwrap(), Some(BackendState::NeedsRepair)),
+        "a block left by withdrawn guidance is stale state a heal must clear"
+    );
+    assert!(remove(&path, &plugin(None)).unwrap(), "the markers, not the declared text, decide what remove takes");
+    assert!(!path.exists(), "removing the only content takes the file our own removal emptied");
+}
+
+#[test]
 fn a_file_without_our_markers_probes_absent_and_removes_nothing() {
     let path = scratch("absent-AGENTS.md");
     std::fs::write(&path, b"just user notes\n").unwrap();
-    assert!(matches!(probe(&path, &plugin(Some(GUIDANCE))).unwrap(), Some(BackendState::Absent)), "a hand-deleted block must read Absent so self-heal repairs it");
+    assert!(
+        matches!(probe(&path, &plugin(Some(GUIDANCE))).unwrap(), Some(BackendState::Absent)),
+        "a hand-deleted block must read Absent so self-heal repairs it"
+    );
     assert!(!remove(&path, &plugin(Some(GUIDANCE))).unwrap(), "remove over a marker-less file is a no-op");
     assert_eq!(std::fs::read(&path).unwrap(), b"just user notes\n", "a marker-less remove must not touch the file");
 }
@@ -158,7 +197,10 @@ fn probe_reads_healthy_and_needs_repair_directly() {
     std::fs::write(&path, block(ID)).unwrap();
     assert!(matches!(probe(&path, &plugin(Some(GUIDANCE))).unwrap(), Some(BackendState::Healthy)), "an exact render must read Healthy");
     std::fs::write(&path, format!("<!-- agentgear:{ID} begin -->\nedited\n<!-- agentgear:{ID} end -->\n")).unwrap();
-    assert!(matches!(probe(&path, &plugin(Some(GUIDANCE))).unwrap(), Some(BackendState::NeedsRepair)), "drifted marker content must read NeedsRepair");
+    assert!(
+        matches!(probe(&path, &plugin(Some(GUIDANCE))).unwrap(), Some(BackendState::NeedsRepair)),
+        "drifted marker content must read NeedsRepair"
+    );
 }
 
 #[test]
@@ -197,7 +239,11 @@ fn marker_lines_with_crlf_terminators_round_trip() {
     want.extend_from_slice(b"tail\r\n");
     assert_eq!(std::fs::read(&path).unwrap(), want, "repair re-renders the span in our canonical LF form, outside bytes untouched");
     assert!(remove(&path, &plugin(Some(GUIDANCE))).unwrap());
-    assert_eq!(std::fs::read(&path).unwrap(), b"user line\ntail\r\n", "remove strips the CRLF span and its separator, keeping both user lines");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        b"user line\ntail\r\n",
+        "remove strips the CRLF span and its separator, keeping both user lines"
+    );
 }
 
 #[test]
@@ -223,8 +269,14 @@ fn only_the_first_span_is_ours_a_hand_duplicated_second_block_survives() {
     seed.extend_from_slice(&block(ID));
     seed.extend_from_slice(&block(ID));
     std::fs::write(&path, &seed).unwrap();
-    assert!(matches!(probe(&path, &plugin(Some(GUIDANCE))).unwrap(), Some(BackendState::Healthy)), "the first span matches, so the surface reads Healthy");
-    assert!(!reconcile(&path, &plugin(Some(GUIDANCE))).unwrap(), "a converged first span means no write, the duplicate is not ours to touch");
+    assert!(
+        matches!(probe(&path, &plugin(Some(GUIDANCE))).unwrap(), Some(BackendState::Healthy)),
+        "the first span matches, so the surface reads Healthy"
+    );
+    assert!(
+        !reconcile(&path, &plugin(Some(GUIDANCE))).unwrap(),
+        "a converged first span means no write, the duplicate is not ours to touch"
+    );
     assert!(remove(&path, &plugin(Some(GUIDANCE))).unwrap());
     let mut want = b"user line\n".to_vec();
     want.extend_from_slice(&block(ID));
@@ -236,7 +288,10 @@ fn a_begin_marker_without_its_end_is_user_content() {
     let path = scratch("orphan-begin-AGENTS.md");
     let seed = format!("user line\n<!-- agentgear:{ID} begin -->\n");
     std::fs::write(&path, seed.as_bytes()).unwrap();
-    assert!(matches!(probe(&path, &plugin(Some(GUIDANCE))).unwrap(), Some(BackendState::Absent)), "an unterminated begin is no block of ours");
+    assert!(
+        matches!(probe(&path, &plugin(Some(GUIDANCE))).unwrap(), Some(BackendState::Absent)),
+        "an unterminated begin is no block of ours"
+    );
     assert!(reconcile(&path, &plugin(Some(GUIDANCE))).unwrap());
     let mut want = seed.into_bytes();
     want.push(b'\n');

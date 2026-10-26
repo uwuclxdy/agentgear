@@ -68,6 +68,25 @@ else
   echo "note: goose info unavailable (likely container keyring/provider gap); relied on config-file assert"
 fi
 
+# Instructions surface: the tagged block in goose's global .goosehints beside
+# config.yaml (the first default of goose's CONTEXT_FILE_NAMES). The user's own line
+# is seeded before setup and must survive both install and uninstall byte-identical.
+HINTS="$HOME/.config/goose/.goosehints"
+mkdir -p "$(dirname "$HINTS")"
+printf 'user own rule\n' > "$HINTS"
+host_fixture setup --agent goose > /dev/null
+if ! grep -q 'agentgear:ez-fixture-plugin@ez-fixture-plugin begin' "$HINTS"; then
+  echo "FAIL: instructions block missing from .goosehints"; cat "$HINTS"; exit 1
+fi
+grep -q 'user own rule' "$HINTS" || { echo "FAIL: user .goosehints line clobbered on install"; exit 1; }
+host_fixture uninstall > /dev/null
+if grep -q 'agentgear:ez-fixture-plugin' "$HINTS"; then
+  echo "FAIL: instructions block survived uninstall"; exit 1
+fi
+grep -q 'user own rule' "$HINTS" || { echo "FAIL: user .goosehints line clobbered on uninstall"; exit 1; }
+# Re-install so the leg's own uninstall step below exercises a full teardown.
+host_fixture setup --agent goose > /dev/null
+
 host_fixture uninstall
 
 if grep -q 'ez-fixture'   "$CONFIG"; then echo "FAIL: our extension survived uninstall"; exit 1; fi

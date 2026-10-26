@@ -10,6 +10,14 @@
 //! agent already has. Every file is plugin-name-prefixed and every mcp key is our
 //! own server name, so `remove` is exact and a second reconcile is a true `NoOp`.
 //!
+//! **Always-loaded guidance lands in omp's own `~/.omp/agent/AGENTS.md`.** omp's
+//! default-on `native` provider loads that file into every request as raw text — html
+//! comments included — so the host's guidance is rendered there as a marker-tagged
+//! block through the shared `agentsmd` renderer (user scope only; omp's project
+//! counterpart is `<cwd>/.omp/AGENTS.md` in the user's checkout, and the cross-tool
+//! `~/.agents` tree is shared with other harnesses, never ours). The path derives from
+//! the same `PI_CONFIG_DIR`-honoring root as the rest of the backend.
+//!
 //! **Agent translation is retired when omp already surfaces the agents itself.** omp's
 //! default-on `claude-plugins` provider walks CC's own on-disk registry (`$HOME/.claude/
 //! plugins/installed_plugins.json`, HOME-based per `src/discovery/helpers.ts:895`) and
@@ -45,6 +53,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 
+use super::agentsmd;
 use super::ccregistry::registry_lists_plugin;
 use super::confedit::{remove_file_idem, write_file_idem, yaml_scalar};
 use super::mcpjson::{self, ServerShape};
@@ -71,9 +80,9 @@ impl AgentBackend for OmpBackend {
 
     fn capabilities(&self) -> Capabilities {
         // `hooks:false` — omp has no declarative shell-hook config, only an
-        // in-process TS plugin API (see the module doc). mcp + commands + agents
-        // translate; the agent-retire on cc-registry coverage is a runtime gate, not
-        // a capability absence. No skills surface.
+        // in-process TS plugin API (see the module doc). mcp + commands + agents +
+        // instructions translate; the agent-retire on cc-registry coverage is a runtime
+        // gate, not a capability absence. No skills surface.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -81,16 +90,17 @@ impl AgentBackend for OmpBackend {
             commands: true,
             agents: true,
             skills: false,
-            instructions: false,
+            instructions: true,
             scopes: &["user", "project"],
         }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
-        // Compose every surface (mcp + the command/agent markdown files), so a missing
-        // command or agent file behind a healthy mcp.json reads NeedsRepair. `source`
-        // is the one self_heal resolved for this agent (rehydrated `--path`, else the
-        // compile-time default), so probe and reconcile render identical bytes.
+        // Compose every surface (mcp + the command/agent markdown files + the guidance
+        // block), so a missing command, agent or guidance file behind a healthy mcp.json
+        // reads NeedsRepair. `source` is the one self_heal resolved for this agent
+        // (rehydrated `--path`, else the compile-time default), so probe and reconcile
+        // render identical bytes.
         let comp = plugin.components(source)?.with_client(self.id());
         let base = surface_base(scope)?;
         let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
@@ -111,7 +121,11 @@ impl AgentBackend for OmpBackend {
                 |_, _| true,
             )?
         };
-        Ok(report::compose([mcp, commands, agents].into_iter().flatten()))
+        let instructions = match instructions_file(scope)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([mcp, commands, agents, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -139,6 +153,9 @@ impl AgentBackend for OmpBackend {
                 )?;
             }
         }
+        if let Some(path) = instructions_file(scope)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
@@ -159,6 +176,9 @@ impl AgentBackend for OmpBackend {
         let agent_root = base.join("agents");
         for doc in &comp.agents {
             changed |= remove_file_idem(&agent_root.join(doc_file(plugin.name, &doc.rel, "agents/")))?;
+        }
+        if let Some(path) = instructions_file(scope)? {
+            changed |= agentsmd::remove(&path, plugin)?;
         }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
@@ -204,6 +224,20 @@ fn surface_base(scope: &Scope) -> Result<PathBuf> {
             .map(|r| r.join("agent"))
             .ok_or_else(|| Error::Tree("no home directory (HOME unset); cannot locate ~/.omp/agent".into())),
         Scope::Project { path } => Ok(path.join(".omp")),
+    }
+}
+
+/// The user-scope `AGENTS.md` under omp's own agent dir carrying the host's
+/// always-loaded guidance: omp's default-on `native` provider loads it raw into every
+/// request (html comments intact) and parses no frontmatter, so the shared
+/// [`agentsmd`] tagged block is exactly its shape. Derived from [`surface_base`], so
+/// `PI_CONFIG_DIR` relocates it with the rest of omp's config. `None` at project
+/// scope: omp's project counterpart is `<cwd>/.omp/AGENTS.md` in the user's checkout,
+/// never a file this backend writes.
+fn instructions_file(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(surface_base(scope)?.join("AGENTS.md"))),
+        Scope::Project { .. } => Ok(None),
     }
 }
 
@@ -357,6 +391,10 @@ fn report_checks(backend: &OmpBackend, plugin: &Plugin, source: &Source) -> Vec<
     } else {
         check_docs_present("translated agents present", &comp.agents, &base.join("agents"), plugin.name, "agents/")
     });
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(instructions_file(&Scope::User), plugin));
+    }
 
     checks
 }

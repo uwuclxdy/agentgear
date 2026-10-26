@@ -13,7 +13,7 @@ use super::{MarketplaceHealth, MarketplaceOp, github_source, marketplace_health,
 use crate::host::{Scope, Source};
 use crate::manifest::MarketplaceEntry;
 
-const EXPECTED: &str = "/data/root/clauth/current@claude";
+const EXPECTED: &str = "/data/root/host/current@claude";
 
 fn github(ref_: &'static str) -> Source {
     Source::GitHub { repo: "owner/repo", ref_ }
@@ -189,7 +189,7 @@ fn marketplace_health_manifest_missing_dangles() {
 
 fn entry_at(scope: &str) -> crate::manifest::PluginEntry {
     crate::manifest::PluginEntry {
-        id: "clauth@clauth".into(),
+        id: "host@host".into(),
         version: Some("0.14.1".into()),
         enabled: None,
         install_path: None,

@@ -245,3 +245,120 @@ fn copilot_cli_re_hands_the_tree_to_an_unowned_install() {
     assert!(ok, "the settling heal failed: {out}");
     assert_eq!(out, "NoOp", "a recorded takeover must converge to a no-op");
 }
+
+// --- instructions ------------------------------------------------------------
+
+/// The fixture's `<name>@<marketplace>` plugin id; the derive defaults `marketplace`
+/// to `name` when no attr names it.
+const INSTR_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const INSTR_GUIDANCE: &str = "ez-fixture always-loaded guidance line.\n";
+
+/// The exact tagged block the instructions surface must render into
+/// `$COPILOT_HOME/copilot-instructions.md`: the host guidance between two html-comment
+/// markers naming the plugin id, the whole block replaceable byte-for-byte.
+fn instr_block() -> String {
+    format!("<!-- agentgear:{INSTR_ID} begin -->\n{INSTR_GUIDANCE}<!-- agentgear:{INSTR_ID} end -->\n")
+}
+
+/// The user-scope instructions lifecycle in copilot's `copilot-instructions.md` (the
+/// CLI lists it as a `home` custom-instruction file and ships it in the system prompt
+/// with html comments intact): install appends our block after the user's content with
+/// one blank separator line; a drifted or deleted block is repaired by self-heal;
+/// uninstall strips exactly our block and the separator.
+#[test]
+fn copilot_cli_instructions_block_lifecycle() {
+    let env = Env::new("instr-lifecycle");
+    let instructions = env.copilot_home.join("copilot-instructions.md");
+    let seed = "user instruction one\nuser instruction two\n";
+    fs::write(&instructions, seed).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "copilot-cli"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+    let installed = format!("{seed}\n{}", instr_block());
+    assert_eq!(fs::read_to_string(&instructions).unwrap(), installed, "install must append exactly our block after a blank line");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "copilot-cli"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(fs::read_to_string(&instructions).unwrap(), installed, "a no-op setup must not rewrite copilot-instructions.md");
+
+    let tampered = format!("{seed}\n<!-- agentgear:{INSTR_ID} begin -->\ntampered\n<!-- agentgear:{INSTR_ID} end -->\n");
+    fs::write(&instructions, &tampered).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the drifted block: {out}");
+    assert_eq!(fs::read_to_string(&instructions).unwrap(), installed, "self-heal must restore the exact block bytes");
+
+    fs::write(&instructions, seed).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted block: {out}");
+    assert_eq!(fs::read_to_string(&instructions).unwrap(), installed, "self-heal must re-add the block");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&instructions).unwrap(), seed, "uninstall must restore the user's file byte-for-byte");
+}
+
+/// With no pre-existing `copilot-instructions.md`, install creates the file holding
+/// only our block, and uninstall — our removal being what emptied it — takes the file
+/// with it.
+#[test]
+fn copilot_cli_instructions_owns_only_its_file() {
+    let env = Env::new("instr-owned-file");
+    let instructions = env.copilot_home.join("copilot-instructions.md");
+    assert!(!instructions.exists(), "precondition: no copilot-instructions.md seeded");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "copilot-cli"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(
+        fs::read_to_string(&instructions).unwrap(),
+        instr_block(),
+        "a file we created holds exactly our block, no leading blank line"
+    );
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!instructions.exists(), "uninstall must remove the file our removal emptied");
+}
+
+/// A rival agentgear host's block (different plugin id in the markers) and the user's
+/// own lines must survive our install and uninstall byte-identical: the marker id
+/// scopes ownership, so two agentgear plugins coexist in one instructions file.
+#[test]
+fn copilot_cli_never_clobbers_a_rival_instructions_block() {
+    let env = Env::new("instr-rival");
+    let instructions = env.copilot_home.join("copilot-instructions.md");
+    let rival =
+        "user line\n<!-- agentgear:rival-plugin@rival-mkt begin -->\nrival guidance\n<!-- agentgear:rival-plugin@rival-mkt end -->\n";
+    fs::write(&instructions, rival).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "copilot-cli"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(
+        fs::read_to_string(&instructions).unwrap(),
+        format!("{rival}\n{}", instr_block()),
+        "install must append our block, leaving the rival's untouched"
+    );
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(
+        fs::read_to_string(&instructions).unwrap(),
+        rival,
+        "uninstall must strip only our block, keeping the rival's and the user's"
+    );
+}
+
+/// copilot also loads the modular `instructions/**/*.instructions.md` tree, but that is
+/// the user's own layout — we own one block in the single home file, never a file the
+/// user may be hand-managing. Install must leave that tree unwritten.
+#[test]
+fn copilot_cli_instructions_leaves_the_modular_tree_unwritten() {
+    let env = Env::new("instr-modular");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "copilot-cli"]);
+    assert!(ok, "setup failed: {out}");
+    assert!(env.copilot_home.join("copilot-instructions.md").exists(), "precondition: our block landed");
+
+    let modular = env.copilot_home.join("instructions");
+    assert!(!modular.exists(), "the modular instructions tree is the user's, never ours to create: {}", modular.display());
+}

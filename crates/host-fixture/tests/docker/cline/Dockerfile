@@ -66,6 +66,28 @@ else
   echo "note: cline config mcp unavailable (likely needs auth); relied on config-file assert"
 fi
 
+# Instructions surface: cline loads every loose .md under ~/.cline/rules as an
+# always-on rule, so the whole plugin-named file is ours. Seed a user-owned rule in
+# the same scanned dir: uninstall must remove exactly our file and leave theirs
+# byte-identical.
+RULES="$HOME/.cline/rules"
+OURS="$RULES/agentgear-ez-fixture-plugin.md"
+THEIRS="$RULES/their-own.md"
+mkdir -p "$RULES"
+printf 'their own rule\n' > "$THEIRS"
+cp "$THEIRS" /tmp/cline-theirs-seed
+host_fixture setup --agent cline > /dev/null
+if ! grep -q 'agentgear:ez-fixture-plugin@ez-fixture-plugin begin' "$OURS"; then
+  echo "FAIL: our rule file or instructions block missing"; cat "$OURS"; exit 1
+fi
+host_fixture uninstall > /dev/null
+if [ -e "$OURS" ]; then echo "FAIL: our rule file survived uninstall"; exit 1; fi
+if ! cmp -s "$THEIRS" /tmp/cline-theirs-seed; then
+  echo "FAIL: uninstall rewrote the user's own rule file"; diff /tmp/cline-theirs-seed "$THEIRS"; exit 1
+fi
+# Re-install so the leg's own uninstall step below exercises a full teardown.
+host_fixture setup --agent cline > /dev/null
+
 host_fixture uninstall
 
 if grep -q 'ez-fixture' "$SETTINGS"; then echo "FAIL: our server survived uninstall"; exit 1; fi

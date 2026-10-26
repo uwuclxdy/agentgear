@@ -18,6 +18,14 @@
 //! Subagents have no cline file surface and are skipped. See `docs/harness/cline.md`
 //! for the full mapping.
 //!
+//! Instructions land as one plugin-named rule file in cline's own user-scope rules
+//! dir, `<CLINE_DIR|~/.cline>/rules/agentgear-<plugin>.md`, through the shared
+//! `agentsmd` renderer: cline scans that dir for loose `.md`/`.markdown`/`.txt`
+//! files and loads every one as an always-on rule, html comments intact, so a
+//! tagged block is the whole surface. User scope only — cline's project rules are
+//! files in the user's own repo — and the other scanned dirs (`~/Cline/Rules`,
+//! `~/Documents/Cline/Rules`, the shared `~/.agents/AGENTS.md`) are never written.
+//!
 //! Ownership: mcp servers are keyed by our server names; workflows are
 //! plugin-prefixed files; hook scripts (whose filename cline forces to the bare
 //! event name, so we cannot prefix them) carry an in-file ownership tag and we
@@ -29,6 +37,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::agentsmd;
 use super::cchooks::hook_is_portable;
 use super::confedit::{remove_file_idem, write_file_idem};
 use super::mcpjson::{self, RemoteShape, ServerShape};
@@ -60,7 +69,8 @@ impl AgentBackend for ClineBackend {
 
     fn capabilities(&self) -> Capabilities {
         // `project` covers workflows/hooks (`.clinerules/`); MCP is global-only.
-        // Commands land as workflows; subagents + skills have no cline file surface.
+        // Commands land as workflows; subagents + skills have no cline file surface,
+        // and instructions is user-scope only (`<store>/rules/`).
         Capabilities {
             plugins: false,
             mcp: true,
@@ -68,22 +78,27 @@ impl AgentBackend for ClineBackend {
             commands: true,
             agents: false,
             skills: false,
-            instructions: false,
+            instructions: true,
             scopes: &["user", "project"],
         }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
-        // Compose every surface (global mcp, scope-aware file hooks + workflows), so a
-        // deleted hook script or workflow behind a healthy mcp file reads NeedsRepair.
-        // MCP is global regardless of scope; hooks/workflows are scope-aware. `source`
-        // is the one self_heal resolved for this agent (rehydrated `--path`, else the
-        // compile-time default), so probe and reconcile render identical bytes.
+        // Compose every surface (global mcp, scope-aware file hooks + workflows, the
+        // user-scope rule file), so a deleted hook script or workflow behind a healthy
+        // mcp file reads NeedsRepair. MCP is global regardless of scope; hooks/workflows
+        // are scope-aware. `source` is the one self_heal resolved for this agent
+        // (rehydrated `--path`, else the compile-time default), so probe and reconcile
+        // render identical bytes.
         let comp = plugin.components(source)?.with_client(self.id());
         let mcp = mcpjson::probe_surface(&mcp_settings_path()?, &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let hooks = probe_hooks(&hooks_dir(scope)?, plugin.name, &comp.hooks)?;
         let commands = probe_workflows(&workflows_dir(scope)?, plugin.name, &comp.commands)?;
-        Ok(report::compose([mcp, hooks, commands].into_iter().flatten()))
+        let instructions = match instructions_file(scope, plugin.name)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([mcp, hooks, commands, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -100,6 +115,9 @@ impl AgentBackend for ClineBackend {
         let wf_root = workflows_dir(scope)?;
         for doc in &comp.commands {
             changed |= write_file_idem(&wf_root.join(workflow_file(plugin.name, doc)), workflow_body(doc).as_bytes())?;
+        }
+        if let Some(path) = instructions_file(scope, plugin.name)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
         }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
@@ -118,6 +136,9 @@ impl AgentBackend for ClineBackend {
         for doc in &comp.commands {
             changed |= remove_file_idem(&wf_root.join(workflow_file(plugin.name, doc)))?;
         }
+        if let Some(path) = instructions_file(scope, plugin.name)? {
+            changed |= agentsmd::remove(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
@@ -131,7 +152,10 @@ impl AgentBackend for ClineBackend {
 /// A cline path override, honored only when non-empty: the CLI itself falls back to
 /// its default on an empty value rather than resolving a relative path.
 fn env_path(var: &str) -> Option<PathBuf> {
-    std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from)
+    // cline's own resolver trims the override and falls back when nothing is left
+    // (`process.env.CLINE_DIR?.trim()`), so a padded value must not become a path the
+    // harness never scans.
+    std::env::var_os(var).map(|v| PathBuf::from(v.to_string_lossy().trim())).filter(|p| !p.as_os_str().is_empty())
 }
 
 /// cline's unified store root: `$CLINE_DIR`, else `~/.cline`.
@@ -243,6 +267,28 @@ fn global_store() -> Result<PathBuf> {
     dirs::home_dir()
         .map(|h| h.join("Documents").join("Cline"))
         .ok_or_else(|| Error::Tree("no home directory (HOME unset); cannot locate ~/Documents/Cline".into()))
+}
+
+/// The user-scope rule file carrying the host's always-loaded guidance:
+/// `<CLINE_DIR|~/.cline>/rules/agentgear-<plugin>.md`. cline scans that dir for
+/// loose `.md`/`.markdown`/`.txt` files and loads every one as an always-on rule,
+/// html comments intact, so one tagged block is the whole surface. Plugin-prefixed
+/// so a user's own rule file is never our path.
+///
+/// Derived from `store_root()` so `CLINE_DIR` relocates it exactly as cline's own
+/// resolver does. The other dirs cline also scans (`~/Cline/Rules`,
+/// `~/Documents/Cline/Rules`, the shared `~/.agents/AGENTS.md`) are HOME-derived or
+/// cross-tool and are never written. `None` at project scope: cline's project
+/// rules are files in the user's own repo.
+fn instructions_file(scope: &Scope, plugin: &str) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => {
+            let root = store_root()
+                .ok_or_else(|| Error::Tree("no home directory (HOME unset) and no CLINE_DIR; cannot locate ~/.cline/rules".into()))?;
+            Ok(Some(root.join("rules").join(format!("agentgear-{plugin}.md"))))
+        }
+        Scope::Project { .. } => Ok(None),
+    }
 }
 
 // --- hooks -------------------------------------------------------------------
@@ -484,6 +530,10 @@ fn report_checks(backend: &ClineBackend, plugin: &Plugin, source: &Source) -> Ve
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_workflows_present(&comp.commands, plugin.name));
     checks.push(check_hooks_present(&comp.hooks));
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(instructions_file(&Scope::User, plugin.name), plugin));
+    }
 
     checks
 }

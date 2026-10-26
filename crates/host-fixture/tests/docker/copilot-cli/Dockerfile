@@ -96,6 +96,25 @@ if (!Object.hasOwn(settings, "theirSetting")) {
 # a second setup must be a true NoOp (present + current version).
 if [ "$(host_fixture setup --agent copilot-cli)" != "NoOp" ]; then echo "FAIL: second setup was not NoOp"; exit 1; fi
 
+# Instructions surface: the tagged block in copilot's user-scope
+# copilot-instructions.md. The user's own line is seeded before setup and must
+# survive both install and uninstall byte-identical.
+INSTRUCTIONS="$COPILOT_HOME/copilot-instructions.md"
+mkdir -p "$(dirname "$INSTRUCTIONS")"
+printf 'user own rule\n' > "$INSTRUCTIONS"
+host_fixture setup --agent copilot-cli > /dev/null
+if ! grep -q 'agentgear:ez-fixture-plugin@ez-fixture-plugin begin' "$INSTRUCTIONS"; then
+  echo "FAIL: instructions block missing from copilot-instructions.md"; cat "$INSTRUCTIONS"; exit 1
+fi
+grep -q 'user own rule' "$INSTRUCTIONS" || { echo "FAIL: user copilot-instructions.md line clobbered on install"; exit 1; }
+host_fixture uninstall > /dev/null
+if grep -q 'agentgear:ez-fixture-plugin' "$INSTRUCTIONS"; then
+  echo "FAIL: instructions block survived uninstall"; exit 1
+fi
+grep -q 'user own rule' "$INSTRUCTIONS" || { echo "FAIL: user copilot-instructions.md line clobbered on uninstall"; exit 1; }
+# Re-install so the leg's own uninstall step below exercises a full teardown.
+host_fixture setup --agent copilot-cli > /dev/null
+
 host_fixture uninstall
 
 if copilot plugin list | grep -q 'ez-fixture-plugin@ez-fixture'; then echo "FAIL: our plugin survived uninstall"; exit 1; fi

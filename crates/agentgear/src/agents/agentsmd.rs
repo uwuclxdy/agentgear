@@ -1,24 +1,26 @@
-//! Shared tagged-block surface for the backends whose harness loads always-loaded
-//! guidance from a global context file the user also owns (zed, codex, kilo and
-//! kimi write each harness's own `AGENTS.md`; gemini writes `GEMINI.md`, qwen-code
-//! `QWEN.md` and crush `CRUSH.md` — user scope only). The host's [`Plugin::instructions`] text is
-//! rendered between two html-comment markers naming the plugin id, so the block
-//! is invisible in rendered markdown — and the id in the markers, not the file,
-//! carries ownership: the user's own lines and a rival plugin's block are never
-//! touched by a reconcile or a remove, and two agentgear hosts coexist in one
-//! file (the same tag-scoped ownership discipline as `skillsdir`).
+//! Shared tagged-block surface for the backends whose harness always-loads a guidance
+//! file: either a global context file the user also owns (each harness's own
+//! `AGENTS.md`, `GEMINI.md`, `CRUSH.md`, `.goosehints`, …) or a whole plugin-owned file
+//! inside a directory the harness scans (cline's `rules/`, kiro's `steering/`, augment's
+//! `rules/`) — user scope only. The host's [`Plugin::instructions`] text is rendered
+//! between two html-comment markers naming the plugin id, so the id in the markers, not
+//! the file, carries ownership: the user's own lines and a rival plugin's block are never
+//! touched by a reconcile or a remove, and two agentgear hosts coexist in one file (the
+//! same tag-scoped ownership discipline as `skillsdir`).
 //!
 //! Reconcile appends the block after existing content with one blank separator
 //! line, or repairs the content between our markers in place; every byte outside
 //! the block survives verbatim (CRLF included), and a converged file is not
 //! rewritten. Remove strips the block and the separator line an append added,
 //! taking the file only when our own removal emptied it (the accepted cost
-//! `confedit`'s `*_remove` root rule already pays).
+//! `confedit`'s `*_remove` root rule already pays). The markers, never the declared
+//! text, decide what remove takes, so a host that withdraws its guidance converges to
+//! "block gone" instead of stranding the previous text.
 
 use std::path::{Path, PathBuf};
 
-use super::confedit::{remove_file_idem, write_file_idem};
 use super::BackendState;
+use super::confedit::{remove_file_idem, write_file_idem};
 use crate::doctor::{CheckStatus, DoctorCheck};
 use crate::error::{Error, Result};
 use crate::host::Plugin;
@@ -33,7 +35,9 @@ use crate::host::Plugin;
 /// instructions -> no-op. Returns whether anything changed (a converged file
 /// writes zero bytes).
 pub(crate) fn reconcile(path: &Path, plugin: &Plugin) -> Result<bool> {
-    let Some(text) = &plugin.instructions else { return Ok(false) };
+    // A host that withdrew its guidance converges to "block gone" instead of stranding
+    // the previous text in an always-loaded file no later arm could remove.
+    let Some(text) = &plugin.instructions else { return remove(path, plugin) };
     let id = plugin.id();
     let existing = read(path)?;
     let new = match existing.as_deref() {
@@ -65,12 +69,9 @@ pub(crate) fn reconcile(path: &Path, plugin: &Plugin) -> Result<bool> {
 /// Strip our block (markers inclusive) plus the one blank separator line an
 /// append added; every other byte stays identical. The file goes only when our
 /// own removal emptied it (an empty or whitespace-only remainder). No file, no
-/// our markers, or `None` instructions -> no-op. Returns whether anything
-/// changed.
+/// our markers -> no-op. The markers decide, never `Plugin::instructions`: a
+/// host that withdrew its guidance still has the block taken back.
 pub(crate) fn remove(path: &Path, plugin: &Plugin) -> Result<bool> {
-    if plugin.instructions.is_none() {
-        return Ok(false);
-    }
     let id = plugin.id();
     let Some(bytes) = read(path)? else { return Ok(false) };
     let Some((start, end)) = block_span(&bytes, &id) else { return Ok(false) };
@@ -97,9 +98,15 @@ pub(crate) fn remove(path: &Path, plugin: &Plugin) -> Result<bool> {
 /// drifted. Keys off the same [`block_span`] + [`render_block`] reconcile uses,
 /// so probe never demands bytes reconcile did not write.
 pub(crate) fn probe(path: &Path, plugin: &Plugin) -> Result<Option<BackendState>> {
-    let Some(text) = &plugin.instructions else { return Ok(None) };
     let id = plugin.id();
-    let Some(bytes) = read(path)? else { return Ok(Some(BackendState::Absent)) };
+    let bytes = read(path)?;
+    let Some(text) = &plugin.instructions else {
+        // Nothing declared: a leftover span is stale state the next heal must clear,
+        // and no span means this surface contributes nothing.
+        let stranded = bytes.as_deref().is_some_and(|b| block_span(b, &id).is_some());
+        return Ok(stranded.then_some(BackendState::NeedsRepair));
+    };
+    let Some(bytes) = bytes else { return Ok(Some(BackendState::Absent)) };
     let Some((start, end)) = block_span(&bytes, &id) else { return Ok(Some(BackendState::Absent)) };
     let expected = render_block(&id, text);
     Ok(Some(if bytes[start..end] == expected { BackendState::Healthy } else { BackendState::NeedsRepair }))
@@ -114,10 +121,15 @@ pub(crate) fn guidance_check(path: Result<Option<PathBuf>>, plugin: &Plugin) -> 
     const NAME: &str = "guidance block present";
     match path {
         Ok(Some(file)) => match probe(&file, plugin) {
-            Ok(Some(BackendState::Healthy)) => DoctorCheck { name: NAME, status: CheckStatus::Ok(format!("block present in {}", file.display())) },
+            Ok(Some(BackendState::Healthy)) => {
+                DoctorCheck { name: NAME, status: CheckStatus::Ok(format!("block present in {}", file.display())) }
+            }
             Ok(_) => DoctorCheck {
                 name: NAME,
-                status: CheckStatus::Fail { problem: format!("our guidance block missing or drifted in {}", file.display()), fix: "run the host's `setup`".into() },
+                status: CheckStatus::Fail {
+                    problem: format!("our guidance block missing or drifted in {}", file.display()),
+                    fix: "run the host's `setup`".into(),
+                },
             },
             Err(e) => DoctorCheck { name: NAME, status: CheckStatus::Warn(e.to_string()) },
         },

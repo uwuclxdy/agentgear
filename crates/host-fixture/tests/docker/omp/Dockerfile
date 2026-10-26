@@ -66,6 +66,25 @@ else
   echo "note: omp install unavailable; relied on config-file assert"
 fi
 
+# Instructions surface: the tagged block in omp's ~/.omp/agent/AGENTS.md (the
+# always-loaded native-provider guidance file). The user's own line is seeded before
+# setup and must survive both install and uninstall byte-identical.
+AGENTS_MD="$BASE/AGENTS.md"
+mkdir -p "$(dirname "$AGENTS_MD")"
+printf 'user own rule\n' > "$AGENTS_MD"
+host_fixture setup --agent omp > /dev/null
+if ! grep -q 'agentgear:ez-fixture-plugin@ez-fixture-plugin begin' "$AGENTS_MD"; then
+  echo "FAIL: instructions block missing from AGENTS.md"; cat "$AGENTS_MD"; exit 1
+fi
+grep -q 'user own rule' "$AGENTS_MD" || { echo "FAIL: user AGENTS.md line clobbered on install"; exit 1; }
+host_fixture uninstall > /dev/null
+if grep -q 'agentgear:ez-fixture-plugin' "$AGENTS_MD"; then
+  echo "FAIL: instructions block survived uninstall"; exit 1
+fi
+grep -q 'user own rule' "$AGENTS_MD" || { echo "FAIL: user AGENTS.md line clobbered on uninstall"; exit 1; }
+# Re-install so the leg's own uninstall step below exercises a full teardown.
+host_fixture setup --agent omp > /dev/null
+
 host_fixture uninstall
 
 if grep -q 'ez-fixture' "$MCP"; then echo "FAIL: our server survived uninstall"; exit 1; fi

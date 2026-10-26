@@ -210,3 +210,131 @@ fn devin_full_lifecycle() {
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.config().contains("ez-fixture"), "re-install did not re-add our server");
 }
+
+// --- instructions ------------------------------------------------------------
+
+/// The fixture's `<name>@<marketplace>` plugin id; the derive defaults `marketplace`
+/// to `name` when no attr names it.
+const INSTR_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const INSTR_GUIDANCE: &str = "ez-fixture always-loaded guidance line.\n";
+
+/// The exact tagged block the instructions surface must render into devin's global
+/// `~/.config/devin/AGENTS.md`: the host guidance between two html-comment markers
+/// naming the plugin id, the whole block replaceable byte-for-byte.
+fn instr_block() -> String {
+    format!("<!-- agentgear:{INSTR_ID} begin -->\n{INSTR_GUIDANCE}<!-- agentgear:{INSTR_ID} end -->\n")
+}
+
+/// The user-scope instructions lifecycle in devin's global `AGENTS.md` (devin loads
+/// it as an always-on `[Standard]` rule — `devin rules list` names the row): install
+/// appends our block after the user's content with one blank separator line; a
+/// drifted or deleted block is repaired by self-heal; uninstall strips exactly our
+/// block and the separator.
+#[test]
+fn devin_instructions_block_lifecycle() {
+    let env = Env::new("instr-lifecycle");
+    let agents = env.base.join("AGENTS.md");
+    let seed = "user rule one\nuser rule two\n";
+    fs::write(&agents, seed).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "devin"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+    let installed = format!("{seed}\n{}", instr_block());
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "install must append exactly our block after a blank line");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "devin"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "a no-op setup must not rewrite AGENTS.md");
+
+    let tampered = format!("{seed}\n<!-- agentgear:{INSTR_ID} begin -->\ntampered\n<!-- agentgear:{INSTR_ID} end -->\n");
+    fs::write(&agents, &tampered).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the drifted block: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "self-heal must restore the exact block bytes");
+
+    fs::write(&agents, seed).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted block: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "self-heal must re-add the block");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), seed, "uninstall must restore the user's file byte-for-byte");
+}
+
+/// With no pre-existing `AGENTS.md`, install creates the file holding only our
+/// block, and uninstall — our removal being what emptied it — takes the file with it.
+#[test]
+fn devin_instructions_owns_only_its_file() {
+    let env = Env::new("instr-owned-file");
+    let agents = env.base.join("AGENTS.md");
+    assert!(!agents.exists(), "precondition: no AGENTS.md seeded");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "devin"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), instr_block(), "a file we created holds exactly our block, no leading blank line");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!agents.exists(), "uninstall must remove the file our removal emptied");
+}
+
+/// A rival agentgear host's block (different plugin id in the markers) and the user's
+/// own lines must survive our install and uninstall byte-identical: the marker id
+/// scopes ownership, so two agentgear plugins coexist in one AGENTS.md.
+#[test]
+fn devin_never_clobbers_a_rival_instructions_block() {
+    let env = Env::new("instr-rival");
+    let agents = env.base.join("AGENTS.md");
+    let rival =
+        "user line\n<!-- agentgear:rival-plugin@rival-mkt begin -->\nrival guidance\n<!-- agentgear:rival-plugin@rival-mkt end -->\n";
+    fs::write(&agents, rival).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "devin"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(
+        fs::read_to_string(&agents).unwrap(),
+        format!("{rival}\n{}", instr_block()),
+        "install must append our block, leaving the rival's untouched"
+    );
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), rival, "uninstall must strip only our block, keeping the rival's and the user's");
+}
+
+/// The spellings devin loads but does not own — `~/.claude/CLAUDE.md` (claude's own
+/// file, imported), and the home-root `AGENTS.md`/`CLAUDE.md` it does not read at all
+/// — must never be written: devin's own config-dir `AGENTS.md` is the only surface.
+/// The residual this enumeration cannot see: the kill-immune `~/.devin/global_rules.md`
+/// and `~/.devin/rules/*.md` tiers, and the `AGENT.md`/`AGENTS.local.md` siblings.
+#[test]
+fn devin_instructions_leaves_foreign_rule_files_unwritten() {
+    let env = Env::new("instr-foreign-rules");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "devin"]);
+    assert!(ok, "setup failed: {out}");
+    assert!(env.base.join("AGENTS.md").exists(), "precondition: our block landed");
+
+    for foreign in [env.root.join(".claude").join("CLAUDE.md"), env.root.join("AGENTS.md"), env.root.join("CLAUDE.md")] {
+        assert!(!foreign.exists(), "a rule file devin does not own must stay unwritten: {}", foreign.display());
+    }
+}
+
+/// Project scope has no instructions surface: devin's project rules are files in the
+/// user's own repo (`./AGENTS.md`, `./CLAUDE.md`), never a file this backend writes —
+/// so a `--project` install must leave both the repo root and the user's config-dir
+/// `AGENTS.md` untouched, while still writing its project config.
+#[test]
+fn devin_instructions_user_scope_only() {
+    let env = Env::new("instr-user-scope-only");
+    let proj = env.root.join("proj");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "devin", "--project", proj.to_str().unwrap()]);
+    assert!(ok, "setup failed: {out}");
+    assert!(proj.join(".devin").exists(), "precondition: the project install ran");
+    assert!(!proj.join(".devin").join("AGENTS.md").exists(), "project scope must not write an instructions file");
+    assert!(!proj.join("AGENTS.md").exists(), "project scope must not write the repo's AGENTS.md");
+    assert!(!env.base.join("AGENTS.md").exists(), "a project install must not touch the user's config dir");
+}

@@ -5,10 +5,19 @@
 //! state.
 //!
 //! copilot 1.0.71+ copies the CC tree **verbatim** into
-//! `~/.copilot/installed-plugins/<marketplace>/<plugin>/`, so every surface (mcp,
-//! hooks, agents, skills) renders exactly as CC intends — there is no per-surface
-//! translation here (the pre-1.0.71 backend hand-rendered copilot config files;
-//! `docs/harness/copilot-cli.md` covers the switch to native ingestion).
+//! `~/.copilot/installed-plugins/<marketplace>/<plugin>/`, so every tree surface
+//! (mcp, hooks, agents, skills) renders exactly as CC intends — there is no
+//! per-surface translation (the pre-1.0.71 backend hand-rendered copilot config
+//! files; `docs/harness/copilot-cli.md` covers the switch to native ingestion).
+//!
+//! - **instructions**: the host's always-loaded guidance lands as a marker-tagged
+//!   block in copilot's user-scope `copilot-instructions.md` — the one surface
+//!   outside the ingested tree: the CLI lists that file as a `home`
+//!   custom-instruction file and ships it into the system prompt with html comments
+//!   intact. User scope only (see `instructions_file`); the marker id scopes
+//!   ownership, so the user's lines and a rival plugin's block survive
+//!   byte-identical, and the modular `instructions/` tree stays the user's own
+//!   layout, never written.
 //!
 //! Constraints that shape the flow, all copilot-specific (see
 //! `docs/research/verify-copilot-cli.md`): version floor 1.0.71 (the `plugin`
@@ -27,6 +36,10 @@
 //! `Healthy`, reconcile `NoOp`) rather than churned toward the baked version. This is
 //! a copilot CLI limitation, not an agentgear bug.
 
+use std::path::PathBuf;
+
+use super::agentsmd;
+use super::report;
 use super::{AgentBackend, BackendState};
 use crate::cli::{CopilotCli, CopilotPlugin, MIN_COPILOT_VERSION, copilot_meets_floor, version_lt};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
@@ -50,7 +63,9 @@ impl AgentBackend for CopilotCliBackend {
 
     fn capabilities(&self) -> Capabilities {
         // Plugin-native like claude: copilot ingests the CC tree wholesale, so every
-        // surface (mcp + hooks + commands + agents + skills) is served natively. User
+        // tree surface (mcp + hooks + commands + agents + skills) is served natively.
+        // `instructions` is the one surface outside the tree: the shared tagged-block
+        // renderer writes copilot's own user-scope `copilot-instructions.md`. User
         // scope only — copilot installs are user-global with no `--scope`.
         Capabilities {
             plugins: true,
@@ -59,7 +74,7 @@ impl AgentBackend for CopilotCliBackend {
             commands: true,
             agents: true,
             skills: true,
-            instructions: false,
+            instructions: true,
             scopes: &["user"],
         }
     }
@@ -80,11 +95,20 @@ impl AgentBackend for CopilotCliBackend {
         }
         let tree_current = tree_is_current(plugin, scope, staged_tree_hash(plugin, source).as_deref())?;
         let registry = classify(source, entry.as_ref(), plugin.version, tree_current);
-        if matches!(registry, BackendState::Absent) {
-            return Ok(BackendState::Absent);
+        // A frozen install — strictly newer than this binary — is left alone by
+        // `present_action`, so no surface this binary would write may classify it
+        // NeedsRepair: doing so spawns a heal every session for a no-op to throw away.
+        if install_is_frozen(entry.as_ref(), plugin.version) {
+            return Ok(registry);
         }
-        // The registry alone decides presence.
-        Ok(registry)
+        // The registry alone decides presence; the guidance block folds in as one more
+        // surface, so a deleted or drifted block reads NeedsRepair and the heal's
+        // `(marker present, Healthy)` row cannot no-op over it.
+        let instructions = match instructions_file(scope)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([Some(registry), instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -99,6 +123,33 @@ impl AgentBackend for CopilotCliBackend {
         // The copilot-specific checks only; the doctor fan-out owns the shared
         // host-binary check (calling `doctor` here would recurse through `report`).
         DoctorReport::from_checks(report_checks(plugin))
+    }
+}
+
+// --- paths -------------------------------------------------------------------
+
+/// copilot's config dir: a non-empty `COPILOT_HOME`, else `~/.copilot`. An empty
+/// override reads as unset, the same reading every other harness-home override in
+/// this crate takes (`CODEX_HOME`, `KIRO_HOME`, `KIMI_CODE_HOME`, …).
+fn copilot_home() -> Result<PathBuf> {
+    if let Some(dir) = std::env::var_os("COPILOT_HOME").filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(dir));
+    }
+    dirs::home_dir()
+        .map(|home| home.join(".copilot"))
+        .ok_or_else(|| Error::Tree("no home directory (HOME unset); cannot locate ~/.copilot".into()))
+}
+
+/// The user-scope `copilot-instructions.md` under copilot's config dir, the
+/// always-loaded instructions channel the CLI lists as a `home` custom-instruction
+/// file and ships into the system prompt with html comments intact. `None` at
+/// project scope: copilot's repo-scope files (`.github/copilot-instructions.md`,
+/// `AGENTS.md`, `CLAUDE.md`) are the user's repo files, never a surface this
+/// backend writes.
+fn instructions_file(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(copilot_home()?.join("copilot-instructions.md"))),
+        Scope::Project { .. } => Ok(None),
     }
 }
 
@@ -205,6 +256,18 @@ fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcom
         },
     };
 
+    // The guidance block lands only after the registry op above succeeded (or read
+    // converged): a failed install returns before this, so it can never leave
+    // guidance behind for a plugin copilot never got. A block this pass repaired is
+    // itself a repair, so a registry `NoOp` does not swallow it.
+    if let Some(path) = instructions_file(scope)?
+        && agentsmd::reconcile(&path, plugin)?
+    {
+        return Ok(match registry {
+            Outcome::NoOp => Outcome::Repaired,
+            other => other,
+        });
+    }
     Ok(registry)
 }
 
@@ -351,22 +414,34 @@ fn classify(source: &Source, entry: Option<&CopilotPlugin>, embedded: &str, tree
         // a strictly-newer install holds a newer binary's tree, which never matches our
         // hash, so classifying it NeedsRepair would spawn a reconcile every session for
         // the `Frozen` no-op to throw away.
-        Some(e) if e.version.as_deref().is_some_and(|v| version_lt(Some(embedded), v)) => BackendState::Healthy,
+        Some(_) if install_is_frozen(entry, embedded) => BackendState::Healthy,
         Some(_) if !tree_current => BackendState::NeedsRepair,
         Some(_) => BackendState::Healthy,
     }
+}
+
+/// Is the registered install strictly newer than this binary? `present_action` returns
+/// `Frozen` for exactly this state, leaving the install to the binary that owns it.
+fn install_is_frozen(entry: Option<&CopilotPlugin>, embedded: &str) -> bool {
+    entry.and_then(|e| e.version.as_deref()).is_some_and(|v| version_lt(Some(embedded), v))
 }
 
 // --- remove ------------------------------------------------------------------
 
 /// Uninstall our plugin. copilot exposes no `marketplace remove`, so the local
 /// marketplace stays registered (a harmless dangling entry pointing at `current@copilot-cli`).
-fn remove(plugin: &Plugin, _scope: &Scope) -> Result<Outcome> {
+fn remove(plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
     let cli = CopilotCli::locate()?;
     let mut changed = false;
     if find_plugin(&cli, plugin)?.is_some() {
         plugin_uninstall(&cli, &plugin.id())?;
         changed = true;
+    }
+    // The block is ours by marker, whatever the registry says: strip it on every
+    // teardown, so a by-hand `copilot plugin uninstall` — or a strip that failed after a
+    // successful one — cannot strand always-loaded guidance in the user's config.
+    if let Some(path) = instructions_file(scope)? {
+        changed |= agentsmd::remove(&path, plugin)?;
     }
     Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
 }
@@ -390,6 +465,9 @@ fn report_checks(plugin: &Plugin) -> Vec<DoctorCheck> {
     };
     checks.push(check_version(&cli));
     check_registered(&cli, plugin, &mut checks);
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(instructions_file(&Scope::User), plugin));
+    }
     checks
 }
 

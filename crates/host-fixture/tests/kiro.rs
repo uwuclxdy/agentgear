@@ -189,3 +189,67 @@ fn kiro_full_lifecycle() {
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.mcp().contains("ez-fixture"), "re-install did not re-add our server");
 }
+
+// --- instructions ------------------------------------------------------------
+
+const INSTR_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const INSTR_GUIDANCE: &str = "ez-fixture always-loaded guidance line.\n";
+/// Our one steering file in `~/.kiro/steering/`; the plugin prefix keeps it
+/// unambiguous beside the steering documents a user drops there themselves.
+const INSTR_FILE: &str = "agentgear-ez-fixture-plugin.md";
+
+fn instr_block() -> String {
+    format!("<!-- agentgear:{INSTR_ID} begin -->\n{INSTR_GUIDANCE}<!-- agentgear:{INSTR_ID} end -->\n")
+}
+
+/// The user-scope instructions lifecycle: kiro's built-in agent loads every
+/// `~/.kiro/steering/**/*.md` unconditionally, html comments intact and no frontmatter
+/// required, so the surface is one plugin-named file holding our tagged block. Install
+/// creates it; a drifted block is repaired by self-heal; uninstall removes exactly our
+/// file, leaving a user's own steering document beside it untouched.
+#[test]
+fn kiro_instructions_steering_file_lifecycle() {
+    let env = Env::new("instr-lifecycle");
+    let steering = env.kiro.join("steering");
+    let ours = steering.join(INSTR_FILE);
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "kiro"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+    assert_eq!(fs::read_to_string(&ours).unwrap(), instr_block(), "install must write exactly our tagged block");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "kiro"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(fs::read_to_string(&ours).unwrap(), instr_block(), "a no-op setup must not rewrite the steering file");
+
+    let tampered = format!("<!-- agentgear:{INSTR_ID} begin -->\ntampered\n<!-- agentgear:{INSTR_ID} end -->\n");
+    fs::write(&ours, &tampered).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the drifted block: {out}");
+    assert_eq!(fs::read_to_string(&ours).unwrap(), instr_block(), "self-heal must restore the exact block bytes");
+
+    fs::remove_file(&ours).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted steering file: {out}");
+    assert_eq!(fs::read_to_string(&ours).unwrap(), instr_block(), "self-heal must re-create our steering file");
+
+    let theirs = steering.join("their-own-steering.md");
+    fs::write(&theirs, "their steering body\n").unwrap();
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!ours.exists(), "uninstall must remove our steering file");
+    assert_eq!(fs::read_to_string(&theirs).unwrap(), "their steering body\n", "uninstall rewrote a user steering document");
+}
+
+/// Project scope has no instructions surface: kiro's project steering lives in the
+/// user's own repo, so a `--project` install must write no steering file on either side.
+#[test]
+fn kiro_instructions_user_scope_only() {
+    let env = Env::new("instr-user-scope-only");
+    let proj = env.root.join("proj");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "kiro", "--project", proj.to_str().unwrap()]);
+    assert!(ok, "setup failed: {out}");
+    assert!(!proj.join(".kiro").join("steering").exists(), "project scope must not create a steering dir");
+    assert!(!env.kiro.join("steering").join(INSTR_FILE).exists(), "a project install must not touch the user's steering dir");
+}

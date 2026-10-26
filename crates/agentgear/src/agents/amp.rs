@@ -1,4 +1,5 @@
-//! The amp (Sourcegraph Amp) backend: mcp-only, into amp's own `settings.json`.
+//! The amp (Sourcegraph Amp) backend: mcp into amp's own `settings.json`, plus a
+//! marker-tagged instructions block in amp's user `AGENTS.md`.
 //! Amp keys its servers under a single VS-Code-style flat key `"amp.mcpServers"`
 //! — a literal dotted string, not a nested `amp` object — so the shared json
 //! renderer targets a one-segment key path of exactly that string. Amp's stdio
@@ -19,12 +20,29 @@
 //! (http/sse) form omits the `type` discriminator the shared renderer emits,
 //! inferring transport from `url`, a redundant-but-harmless field on the untested
 //! remote path.
+//!
+//! Instructions land as a marker-tagged block in the user-scope
+//! `$XDG_CONFIG_HOME/amp/AGENTS.md` (else `~/.config/amp/AGENTS.md`), through the
+//! shared `agentsmd` renderer. The path derives from the same config-dir resolver as
+//! `settings.json`, so `XDG_CONFIG_HOME` relocates both together; ownership is the
+//! marker id, so the user's lines and a rival plugin's block survive byte-identical.
+//! Amp's docs list `$HOME/.config/amp/AGENTS.md` (and the shared
+//! `$HOME/.config/AGENTS.md`) among the guidance files it always includes, and the
+//! shipped binary carries a full guidance-file subsystem; prompt assembly itself was
+//! not live-observed (amp's executor handshake gates it), nor was `$XDG_CONFIG_HOME`
+//! resolution of the guidance path specifically, so whether the html-comment markers
+//! survive into the assembled context is unproven. The markers are file-level
+//! ownership bookkeeping either way. The shared home-level `~/.config/AGENTS.md`,
+//! which amp also always includes, is never written: it belongs to the user and every
+//! AGENTS.md reader on the box. `AMP_IGNORE_GUIDANCE_FILES` is a user-side unload
+//! lever that can unload our block too.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::agentsmd;
 use super::mcpjson::{self, ServerShape};
 use super::report;
 use super::{AgentBackend, BackendState};
@@ -54,9 +72,9 @@ impl AgentBackend for AmpBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // mcp-only — amp's only hook/command/agent surface is an in-process TS plugin
-        // API, not the declarative config a backend can write (module doc); skills are
-        // out of v1 scope.
+        // mcp + instructions; hooks/commands/agents stay amp's in-process TS plugin API,
+        // not the declarative config a backend can write (module doc); skills are out of
+        // v1 scope.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -64,31 +82,45 @@ impl AgentBackend for AmpBackend {
             commands: false,
             agents: false,
             skills: false,
-            instructions: false,
+            instructions: true,
             scopes: &["user"],
         }
     }
 
     fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
-        // Ownership is defined by our mcp server keys (the canonical "are we here"
-        // signal); the shared probe returns Healthy — never Absent — for an mcp-less
-        // plugin, so a present marker is never dropped. `source` is the one self_heal
-        // resolved for this agent (rehydrated `--path`, else the compile-time default),
-        // so probe and reconcile render identical bytes.
+        // Compose both surfaces (our mcp server keys and the guidance block), so a
+        // missing or drifted block behind healthy mcp keys reads NeedsRepair; the shared
+        // mcp probe returns Healthy — never Absent — for an mcp-less plugin, so a present
+        // marker is never dropped. `source` is the one self_heal resolved for this agent
+        // (rehydrated `--path`, else the compile-time default), so probe and reconcile
+        // render identical bytes.
         let comp = plugin.components(source)?.with_client(self.id());
-        probe_mcp(&settings_path(scope)?, &comp.mcp_servers)
+        let mcp = probe_mcp(&settings_path(scope)?, &comp.mcp_servers)?;
+        let instructions = match instructions_file(scope)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([Some(mcp), instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         // `reenable` is unused: amp's mcp entry has no per-server disable flag (the
         // Plain shape carries none), so there is nothing self_heal could re-enable.
         let comp = plugin.components(&desired.source)?.with_client(self.id());
-        reconcile_mcp(&settings_path(scope)?, &comp.mcp_servers)
+        let mut changed = reconcile_mcp(&settings_path(scope)?, &comp.mcp_servers)? != Outcome::NoOp;
+        if let Some(path) = instructions_file(scope)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
+        }
+        Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
         let comp = plugin.components(source)?.with_client(self.id());
-        remove_mcp(&settings_path(scope)?, &comp.mcp_servers)
+        let mut changed = remove_mcp(&settings_path(scope)?, &comp.mcp_servers)? != Outcome::NoOp;
+        if let Some(path) = instructions_file(scope)? {
+            changed |= agentsmd::remove(&path, plugin)?;
+        }
+        Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
     fn report(&self, plugin: &Plugin, source: &Source) -> DoctorReport {
@@ -124,6 +156,19 @@ fn amp_dir(scope: &Scope) -> Result<PathBuf> {
 
 fn settings_path(scope: &Scope) -> Result<PathBuf> {
     Ok(amp_dir(scope)?.join("settings.json"))
+}
+
+/// The user-scope `AGENTS.md` in amp's own config dir carrying the host's
+/// always-loaded guidance: amp's docs list it among the personal guidance files it
+/// always includes. Derived from [`amp_dir`], so `XDG_CONFIG_HOME` relocates it exactly
+/// as it relocates `settings.json`. `None` at project scope: amp's project guidance is
+/// the user's repo files (`AGENTS.md`, `AGENT.md`, `CLAUDE.md`), never a surface this
+/// backend writes.
+fn instructions_file(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(amp_dir(scope)?.join("AGENTS.md"))),
+        Scope::Project { .. } => Ok(None),
+    }
 }
 
 /// A sibling `settings.jsonc` amp also reads. `json_edit` cannot parse or merge
@@ -238,6 +283,10 @@ fn report_checks(backend: &AmpBackend, plugin: &Plugin, source: &Source) -> Vec<
         "run the host's `setup`",
     ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(instructions_file(&Scope::User), plugin));
+    }
 
     checks
 }

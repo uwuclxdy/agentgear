@@ -153,3 +153,104 @@ fn amp_full_lifecycle() {
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.config_json().contains("ez-fixture"), "re-install did not re-add our server");
 }
+
+// --- instructions ------------------------------------------------------------
+
+const INSTR_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const INSTR_GUIDANCE: &str = "ez-fixture always-loaded guidance line.\n";
+
+fn instr_block() -> String {
+    format!("<!-- agentgear:{INSTR_ID} begin -->\n{INSTR_GUIDANCE}<!-- agentgear:{INSTR_ID} end -->\n")
+}
+
+/// The user-scope instructions lifecycle in amp's `$XDG_CONFIG_HOME/amp/AGENTS.md`
+/// (one of the guidance files amp always includes from its user config dir): install
+/// appends our block after the user's content with one blank separator line; a drifted
+/// or deleted block is repaired by self-heal; uninstall strips exactly our block.
+#[test]
+fn amp_instructions_block_lifecycle() {
+    let env = Env::new("instr-lifecycle");
+    let agents = env.amp.join("AGENTS.md");
+    let seed = "user rule one\nuser rule two\n";
+    fs::write(&agents, seed).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "amp"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+    let installed = format!("{seed}\n{}", instr_block());
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "install must append exactly our block after a blank line");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "amp"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "a no-op setup must not rewrite AGENTS.md");
+
+    let tampered = format!("{seed}\n<!-- agentgear:{INSTR_ID} begin -->\ntampered\n<!-- agentgear:{INSTR_ID} end -->\n");
+    fs::write(&agents, &tampered).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the drifted block: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "self-heal must restore the exact block bytes");
+
+    fs::write(&agents, seed).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted block: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "self-heal must re-add the block");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), seed, "uninstall must restore the user's file byte-for-byte");
+}
+
+/// With no pre-existing `AGENTS.md`, install creates the file holding only our block,
+/// and uninstall — our removal being what emptied it — takes it with it.
+#[test]
+fn amp_instructions_owns_only_its_file() {
+    let env = Env::new("instr-owned-file");
+    let agents = env.amp.join("AGENTS.md");
+    assert!(!agents.exists(), "precondition: no AGENTS.md seeded");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "amp"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), instr_block(), "a file we created holds exactly our block, no leading blank line");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!agents.exists(), "uninstall must remove the file our removal emptied");
+}
+
+/// A rival agentgear host's block (different plugin id in the markers) and the user's
+/// own lines must survive our install and uninstall byte-identical: the marker id
+/// scopes ownership, so two agentgear plugins coexist in one AGENTS.md.
+#[test]
+fn amp_never_clobbers_a_rival_instructions_block() {
+    let env = Env::new("instr-rival");
+    let agents = env.amp.join("AGENTS.md");
+    let rival =
+        "user line\n<!-- agentgear:rival-plugin@rival-mkt begin -->\nrival guidance\n<!-- agentgear:rival-plugin@rival-mkt end -->\n";
+    fs::write(&agents, rival).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "amp"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(
+        fs::read_to_string(&agents).unwrap(),
+        format!("{rival}\n{}", instr_block()),
+        "install must append our block, leaving the rival's untouched"
+    );
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), rival, "uninstall must strip only our block, keeping the rival's and the user's");
+}
+
+/// amp also always-includes the SHARED home-level `~/.config/AGENTS.md`, which belongs
+/// to the user and every other AGENTS.md reader — never ours to write.
+#[test]
+fn amp_instructions_leave_the_shared_home_agents_md_unwritten() {
+    let env = Env::new("instr-shared-agents");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "amp"]);
+    assert!(ok, "setup failed: {out}");
+    assert!(env.amp.join("AGENTS.md").exists(), "precondition: our block landed");
+
+    let shared = env.root.join(".config").join("AGENTS.md");
+    assert!(!shared.exists(), "the shared home-level AGENTS.md is never ours to write: {}", shared.display());
+}

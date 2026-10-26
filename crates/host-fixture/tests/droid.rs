@@ -260,3 +260,129 @@ fn droid_teardown_with_nothing_installed_writes_nothing() {
     assert_eq!(out, "NoOp", "a teardown with nothing of ours to undo must report no change, got {out}");
     assert_eq!(fs::read_to_string(env.settings()).unwrap(), before, "teardown wrote into a file it had nothing to undo in");
 }
+
+// --- instructions ------------------------------------------------------------
+
+/// The fixture's `<name>@<marketplace>` plugin id; the derive defaults `marketplace`
+/// to `name` when no attr names it.
+const INSTR_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const INSTR_GUIDANCE: &str = "ez-fixture always-loaded guidance line.\n";
+
+/// The exact tagged block the instructions surface must render into droid's
+/// `~/.factory/AGENTS.md`: the host guidance between two html-comment markers naming
+/// the plugin id, the whole block replaceable byte-for-byte.
+fn instr_block() -> String {
+    format!("<!-- agentgear:{INSTR_ID} begin -->\n{INSTR_GUIDANCE}<!-- agentgear:{INSTR_ID} end -->\n")
+}
+
+/// The user-scope instructions lifecycle in droid's `~/.factory/AGENTS.md` (a personal
+/// global instruction tier droid loads at session bootstrap, html comments intact):
+/// install appends our block after the user's content with one blank separator line;
+/// a drifted or deleted block is repaired by self-heal; uninstall strips exactly our
+/// block and the separator.
+#[test]
+fn droid_instructions_block_lifecycle() {
+    let env = Env::new("instr-lifecycle");
+    let agents = env.factory.join("AGENTS.md");
+    let seed = "user rule one\nuser rule two\n";
+    fs::write(&agents, seed).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "droid"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+    let installed = format!("{seed}\n{}", instr_block());
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "install must append exactly our block after a blank line");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "droid"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "a no-op setup must not rewrite AGENTS.md");
+
+    let tampered = format!("{seed}\n<!-- agentgear:{INSTR_ID} begin -->\ntampered\n<!-- agentgear:{INSTR_ID} end -->\n");
+    fs::write(&agents, &tampered).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the drifted block: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "self-heal must restore the exact block bytes");
+
+    fs::write(&agents, seed).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted block: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "self-heal must re-add the block");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), seed, "uninstall must restore the user's file byte-for-byte");
+}
+
+/// With no pre-existing `~/.factory/AGENTS.md`, install creates the file holding only
+/// our block, and uninstall — our removal being what emptied it — takes it with it.
+#[test]
+fn droid_instructions_owns_only_its_file() {
+    let env = Env::new("instr-owned-file");
+    let agents = env.factory.join("AGENTS.md");
+    assert!(!agents.exists(), "precondition: no AGENTS.md seeded");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "droid"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), instr_block(), "a file we created holds exactly our block, no leading blank line");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!agents.exists(), "uninstall must remove the file our removal emptied");
+}
+
+/// A rival agentgear host's block (different plugin id in the markers) and the user's
+/// own lines must survive our install and uninstall byte-identical: the marker id
+/// scopes ownership, so two agentgear plugins coexist in one AGENTS.md.
+#[test]
+fn droid_never_clobbers_a_rival_instructions_block() {
+    let env = Env::new("instr-rival");
+    let agents = env.factory.join("AGENTS.md");
+    let rival =
+        "user line\n<!-- agentgear:rival-plugin@rival-mkt begin -->\nrival guidance\n<!-- agentgear:rival-plugin@rival-mkt end -->\n";
+    fs::write(&agents, rival).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "droid"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(
+        fs::read_to_string(&agents).unwrap(),
+        format!("{rival}\n{}", instr_block()),
+        "install must append our block, leaving the rival's untouched"
+    );
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), rival, "uninstall must strip only our block, keeping the rival's and the user's");
+}
+
+/// droid also loads the cross-tool `~/.agents/AGENTS.md` and `~/.agent/AGENTS.md`
+/// tiers, but both are shared compatibility dirs every AGENTS.md reader owns — never
+/// a surface we write. After a full install the block exists in `~/.factory` alone.
+#[test]
+fn droid_instructions_leaves_shared_tiers_unwritten() {
+    let env = Env::new("instr-shared-tiers");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "droid"]);
+    assert!(ok, "setup failed: {out}");
+    assert!(env.factory.join("AGENTS.md").exists(), "precondition: our block landed");
+
+    for shared in [env.root.join(".agents").join("AGENTS.md"), env.root.join(".agent").join("AGENTS.md")] {
+        assert!(!shared.exists(), "a cross-tool compatibility tier is never ours to write: {}", shared.display());
+    }
+}
+
+/// Project scope has no instructions surface: droid's project instructions are the
+/// repo's own `AGENTS.md`, never a file this backend writes — so a `--project` install
+/// must leave both the repo root and the user's `~/.factory/AGENTS.md` untouched, while
+/// still writing its project config.
+#[test]
+fn droid_instructions_user_scope_only() {
+    let env = Env::new("instr-user-scope-only");
+    let proj = env.root.join("proj");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "droid", "--project", proj.to_str().unwrap()]);
+    assert!(ok, "setup failed: {out}");
+    assert!(proj.join(".factory").exists(), "precondition: the project install ran");
+    assert!(!proj.join(".factory").join("AGENTS.md").exists(), "project scope must not write an instructions file");
+    assert!(!proj.join("AGENTS.md").exists(), "project scope must not write the repo's AGENTS.md");
+    assert!(!env.factory.join("AGENTS.md").exists(), "a project install must not touch the user's config dir");
+}

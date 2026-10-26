@@ -1,4 +1,4 @@
-//! The openclaw backend: mcp + skills, into openclaw's single user-level config
+//! The openclaw backend: mcp + skills + instructions, into openclaw's single user-level config
 //! `~/.openclaw/openclaw.json` plus its global managed skill dir `~/.openclaw/skills`.
 //! MCP goes through the shared json renderer under the two-segment key path
 //! `mcp.servers.<name>` with `SHAPE` (`ServerShape::plain()`, openclaw's stdio body
@@ -20,12 +20,26 @@
 //! JSON5 (comments + trailing commas
 //! legal), but we parse it as strict JSON: a JSON5-only file surfaces as
 //! `Error::Config` (the never-clobber path) rather than being silently rewritten.
+//!
+//! Instructions land as a marker-tagged block in the default-agent workspace
+//! `AGENTS.md` (`~/.openclaw/workspace/AGENTS.md` by default), the first of the six
+//! bootstrap files openclaw injects into every session with html comments intact,
+//! through the shared `agentsmd` renderer. The path follows openclaw's own workspace
+//! chain — `OPENCLAW_WORKSPACE_DIR`, else `OPENCLAW_STATE_DIR`'s `workspace`, else a
+//! non-default `OPENCLAW_PROFILE`'s `~/.openclaw-<profile>/workspace`, else
+//! `~/.openclaw/workspace`. `OPENCLAW_CONFIG_PATH` is deliberately NOT in it: openclaw's
+//! resolver never reads that variable for the workspace, so deriving from it would land
+//! the block in a file openclaw never opens. `agents.defaults.workspace` and a
+//! `~`-relative override are accepted limits. Ownership is the marker id, so openclaw's
+//! seeded content and the user's own lines survive byte-identical. The shared cross-tool
+//! `~/AGENTS.md` is never written, and project scope has no instructions surface.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::agentsmd;
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
 use super::skillsdir;
@@ -61,8 +75,8 @@ impl AgentBackend for OpenclawBackend {
     fn capabilities(&self) -> Capabilities {
         // `hooks:false` — openclaw's only hook surface is JS/TS plugin code toggled by
         // a config flag, not a shell command we can write. User scope only: the brief
-        // documents no project-level config file. mcp + skills translate; hooks/
-        // commands/subagents have no config-writable surface.
+        // documents no project-level config file. mcp + skills + instructions
+        // translate; hooks/commands/subagents have no config-writable surface.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -70,34 +84,45 @@ impl AgentBackend for OpenclawBackend {
             commands: false,
             agents: false,
             skills: true,
-            instructions: false,
+            instructions: true,
             scopes: &["user"],
         }
     }
 
-    fn probe(&self, plugin: &Plugin, _scope: &Scope, source: &Source) -> Result<BackendState> {
+    fn probe(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<BackendState> {
         // Compose the mcp-server keys (the canonical "are we here" signal, Healthy —
         // never Absent — for an mcp-less plugin so a present marker is never dropped)
-        // with the skills surface, so a deleted skill behind healthy mcp reads
-        // NeedsRepair. `source` is the one self_heal resolved for this agent (rehydrated
-        // `--path`, else the compile-time default), so probe/reconcile render identical bytes.
+        // with the skills and instructions surfaces, so a deleted skill or block behind
+        // healthy mcp reads NeedsRepair. `source` is the one self_heal resolved for this
+        // agent (rehydrated `--path`, else the compile-time default), so probe/reconcile
+        // render identical bytes.
         let comp = plugin.components(source)?.with_client(self.id());
         let mcp = mcpjson::probe(&config_path()?, MCP_KEY, &comp.mcp_servers, SHAPE)?;
         let skills = skillsdir::probe(&skills_root()?, plugin, &comp.skills)?;
-        Ok(report::compose([Some(mcp), skills].into_iter().flatten()))
+        let instructions = match instructions_file(scope)? {
+            Some(path) => agentsmd::probe(&path, plugin)?,
+            None => None,
+        };
+        Ok(report::compose([Some(mcp), skills, instructions].into_iter().flatten()))
     }
 
-    fn reconcile(&self, plugin: &Plugin, desired: &Desired, _scope: &Scope) -> Result<Outcome> {
+    fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?.with_client(self.id());
         let mut changed = mcpjson::reconcile(&config_path()?, MCP_KEY, &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= skillsdir::reconcile(&skills_root()?, plugin, &comp.skills)?;
+        if let Some(path) = instructions_file(scope)? {
+            changed |= agentsmd::reconcile(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Installed } else { Outcome::NoOp })
     }
 
-    fn remove(&self, plugin: &Plugin, _scope: &Scope, source: &Source) -> Result<Outcome> {
+    fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
         let comp = plugin.components(source)?.with_client(self.id());
         let mut changed = mcpjson::remove(&config_path()?, MCP_KEY, &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= skillsdir::remove(&skills_root()?, plugin, &comp.skills)?;
+        if let Some(path) = instructions_file(scope)? {
+            changed |= agentsmd::remove(&path, plugin)?;
+        }
         Ok(if changed { Outcome::Removed } else { Outcome::NoOp })
     }
 
@@ -155,6 +180,57 @@ fn skills_root() -> Result<PathBuf> {
     let config = config_path()?;
     let base = config.parent().ok_or_else(|| Error::Tree("openclaw config path has no parent dir".into()))?;
     Ok(base.join("skills"))
+}
+
+/// The user-scope default-agent workspace `AGENTS.md`, the first of openclaw's six
+/// bootstrap files injected into every session. Mirrors openclaw's own
+/// `resolveDefaultAgentWorkspaceDir`: `OPENCLAW_WORKSPACE_DIR` (an explicit workspace),
+/// else `OPENCLAW_STATE_DIR`'s `workspace`, else a non-default `OPENCLAW_PROFILE`'s
+/// `~/.openclaw-<profile>/workspace`, else `<home>/.openclaw/workspace` where `home` is
+/// `OPENCLAW_HOME` or the OS home. `OPENCLAW_CONFIG_PATH` is NOT part of that chain.
+/// Accepted limits: an `agents.defaults.workspace` repoint and a `~`-relative override
+/// (openclaw expands those; this resolver does not). `None` at project scope.
+fn instructions_file(scope: &Scope) -> Result<Option<PathBuf>> {
+    match scope {
+        Scope::User => Ok(Some(workspace_dir()?.join("AGENTS.md"))),
+        Scope::Project { .. } => Ok(None),
+    }
+}
+
+/// openclaw's default-agent workspace dir, resolved in the harness's own precedence.
+fn workspace_dir() -> Result<PathBuf> {
+    let trimmed = |var: &str| env_trimmed(var);
+    if let Some(explicit) = trimmed("OPENCLAW_WORKSPACE_DIR") {
+        return Ok(PathBuf::from(explicit));
+    }
+    if let Some(state) = trimmed("OPENCLAW_STATE_DIR") {
+        return Ok(PathBuf::from(state).join("workspace"));
+    }
+    let home = env_nonempty("OPENCLAW_HOME")
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| Error::Tree("no home dir (HOME/OPENCLAW_HOME unset); cannot locate ~/.openclaw".into()))?;
+    // openclaw treats `default` as "no profile" and validates the name; an invalid one
+    // makes its own resolver throw, so we fall back rather than guess a directory.
+    let profile = trimmed("OPENCLAW_PROFILE").filter(|p| !p.eq_ignore_ascii_case("default")).filter(|p| valid_profile(p));
+    Ok(match profile {
+        Some(profile) => home.join(format!(".openclaw-{profile}")).join("workspace"),
+        None => home.join(".openclaw").join("workspace"),
+    })
+}
+
+/// openclaw's profile-name rule (`/^[a-z0-9][a-z0-9_-]{0,63}$/i`).
+fn valid_profile(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphanumeric())
+        && name.len() <= 64
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// A non-empty, whitespace-trimmed env value, as the harness itself reads its own
+/// path overrides (`env.OPENCLAW_*.trim()`).
+fn env_trimmed(var: &str) -> Option<String> {
+    std::env::var_os(var).map(|v| v.to_string_lossy().trim().to_string()).filter(|v| !v.is_empty())
 }
 
 fn env_nonempty(var: &str) -> Option<std::ffi::OsString> {
@@ -231,6 +307,10 @@ fn report_checks(backend: &OpenclawBackend, plugin: &Plugin, source: &Source) ->
         "run the host's `setup`",
     ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
+
+    if plugin.instructions.is_some() {
+        checks.push(agentsmd::guidance_check(instructions_file(&Scope::User), plugin));
+    }
 
     checks
 }

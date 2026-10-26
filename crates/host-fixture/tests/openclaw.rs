@@ -42,6 +42,9 @@ struct Env {
     /// PATH holding only the fixture binary's dir, so `which("openclaw")` (and every
     /// other backend's PATH probe) stays false and detection rides on `~/.openclaw`.
     path: OsString,
+    /// openclaw's own path overrides. Unset by default — `apply` clears every one so a
+    /// stray value on the dev box cannot relocate another test's paths.
+    overrides: Vec<(&'static str, OsString)>,
 }
 
 impl Env {
@@ -57,6 +60,7 @@ impl Env {
             data: root.join("data"),
             run: root.join("run"),
             path: fixture_dir(),
+            overrides: Vec::new(),
             root,
         };
         // Pre-create ~/.openclaw so detect() passes with no `openclaw` on PATH, and
@@ -75,6 +79,12 @@ impl Env {
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_RUNTIME_DIR", &self.run)
             .env("PATH", &self.path);
+        for var in ["OPENCLAW_CONFIG_PATH", "OPENCLAW_STATE_DIR", "OPENCLAW_HOME", "OPENCLAW_WORKSPACE_DIR", "OPENCLAW_PROFILE"] {
+            cmd.env_remove(var);
+        }
+        for (var, value) in &self.overrides {
+            cmd.env(var, value);
+        }
     }
 
     fn fixture(&self, args: &[&str]) -> (bool, String) {
@@ -169,4 +179,104 @@ fn openclaw_full_lifecycle() {
     let (ok, out) = env.fixture(&["setup", "--agent", "openclaw"]);
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.config_json().contains("ez-fixture"), "re-install did not re-add our server");
+}
+
+// --- instructions ------------------------------------------------------------
+
+const INSTR_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
+const INSTR_GUIDANCE: &str = "ez-fixture always-loaded guidance line.\n";
+
+fn instr_block() -> String {
+    format!("<!-- agentgear:{INSTR_ID} begin -->\n{INSTR_GUIDANCE}<!-- agentgear:{INSTR_ID} end -->\n")
+}
+
+/// The user-scope instructions lifecycle in openclaw's default-agent workspace
+/// `AGENTS.md` (the first of the six bootstrap files it injects into every session,
+/// html comments intact): install appends our block after the user's content with one
+/// blank separator line; a drifted or deleted block is repaired by self-heal; uninstall
+/// strips exactly our block and the separator.
+#[test]
+fn openclaw_instructions_block_lifecycle() {
+    let env = Env::new("instr-lifecycle");
+    let agents = env.openclaw.join("workspace").join("AGENTS.md");
+    let seed = "# their workspace\nuser rule one\n";
+    fs::create_dir_all(agents.parent().unwrap()).unwrap();
+    fs::write(&agents, seed).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "openclaw"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+    let installed = format!("{seed}\n{}", instr_block());
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "install must append exactly our block after a blank line");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "openclaw"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "a no-op setup must not rewrite the workspace AGENTS.md");
+
+    let tampered = format!("{seed}\n<!-- agentgear:{INSTR_ID} begin -->\ntampered\n<!-- agentgear:{INSTR_ID} end -->\n");
+    fs::write(&agents, &tampered).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the drifted block: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "self-heal must restore the exact block bytes");
+
+    fs::write(&agents, seed).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok && out != "NoOp", "self-heal ignored the deleted block: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "self-heal must re-add the block");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert_eq!(fs::read_to_string(&agents).unwrap(), seed, "uninstall must restore the user's workspace file byte-for-byte");
+}
+
+/// The cross-tool `~/AGENTS.md` is not an openclaw channel (it opens nothing there) and
+/// is owned by every other AGENTS.md reader: install must never write it.
+#[test]
+fn openclaw_instructions_leaves_the_home_agents_md_unwritten() {
+    let env = Env::new("instr-home-agents");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "openclaw"]);
+    assert!(ok, "setup failed: {out}");
+    assert!(env.openclaw.join("workspace").join("AGENTS.md").exists(), "precondition: our block landed");
+
+    let home_agents = env.root.join("AGENTS.md");
+    assert!(!home_agents.exists(), "the cross-tool ~/AGENTS.md is never ours to write: {}", home_agents.display());
+}
+
+/// openclaw's workspace chain starts with `OPENCLAW_WORKSPACE_DIR`; an explicit
+/// workspace must take the block, and the default `~/.openclaw/workspace` must then
+/// stay untouched.
+#[test]
+fn openclaw_instructions_follow_the_workspace_override() {
+    let mut env = Env::new("instr-workspace-dir");
+    let ws = env.root.join("custom-ws");
+    fs::create_dir_all(&ws).unwrap();
+    env.overrides.push(("OPENCLAW_WORKSPACE_DIR", ws.as_os_str().to_os_string()));
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "openclaw"]);
+    assert!(ok, "setup failed: {out}");
+    assert!(ws.join("AGENTS.md").exists(), "the block must land in the overridden workspace: {}", ws.display());
+    assert!(
+        !env.openclaw.join("workspace").join("AGENTS.md").exists(),
+        "the default workspace must stay untouched when the override is set"
+    );
+}
+
+/// `OPENCLAW_CONFIG_PATH` relocates the config FILE only — openclaw's workspace
+/// resolver never reads it — so deriving the block from it would write a file openclaw
+/// never opens. The block must follow the workspace chain instead.
+#[test]
+fn openclaw_instructions_ignore_the_config_path_override() {
+    let mut env = Env::new("instr-config-path");
+    let custom = env.root.join("custom-config");
+    fs::create_dir_all(&custom).unwrap();
+    env.overrides.push(("OPENCLAW_CONFIG_PATH", custom.join("openclaw.json").into_os_string()));
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "openclaw"]);
+    assert!(ok, "setup failed: {out}");
+    assert!(
+        env.openclaw.join("workspace").join("AGENTS.md").exists(),
+        "the block must land in the default workspace, not beside the config file"
+    );
+    assert!(!custom.join("workspace").join("AGENTS.md").exists(), "the config path's parent is not a workspace root");
 }
