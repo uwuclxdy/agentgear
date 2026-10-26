@@ -3,7 +3,7 @@
 # by tests/docker/run.sh kimi (context = repo root). The config-file parse is the
 # auth-free source of truth; `kimi doctor` (validates config.toml without auth) is a
 # best-effort native second opinion. `kimi mcp list` does not exist as a subcommand
-# (confirmed at both 0.23.5 and 0.26.0, see docs/harness/kimi.md gotcha 6), so there
+# (confirmed at both 0.23.5 and 0.26.0), so there
 # is no native second opinion for mcp — the config-file parse above is authoritative.
 
 # Stage 1: build the fixture host (all backends) from the workspace.
@@ -16,7 +16,7 @@ RUN cargo build -p host-fixture --release
 # kimi-code's declared engine floor is >=22.19.0 (npm `engines.node`); node:20 sits
 # below it, so bump to a current LTS that clears the floor.
 FROM node:22-slim
-# Pin the CLI for reproducibility; bump alongside docs/harness/kimi.md. The scoped
+# Pin the CLI for reproducibility. The scoped
 # `@moonshot-ai/kimi-code` is the official package (bin `kimi`); the unscoped
 # `kimi-code` on npm is NOT it.
 RUN npm install -g @moonshot-ai/kimi-code@0.26.0

@@ -9,8 +9,8 @@
 //! `disable`, `marketplace list`/`add`/`update`/`remove`, `--version`, `validate`)
 //! for those tests to run in the normal `cargo test` job.
 //!
-//! It is a DOUBLE, never a spec: `docs/design.md`'s ground-truth CLI schemas and the
-//! `--ignored` e2e leg against the real binary stay the authority on CC's behavior.
+//! It is a DOUBLE, never a spec: the `--ignored` e2e leg against the real binary
+//! stays the authority on CC's behavior.
 //! It deliberately models the ordering constraint that matters (`plugin install`
 //! fails when the plugin's marketplace is not registered) and deliberately omits
 //! `version`/`installPath` from its entries, which the crate's tolerant serde models
@@ -31,7 +31,7 @@
 //! State lives in `<config-dir>/fake-claude-state.json`, where `<config-dir>` is
 //! `CLAUDE_CONFIG_DIR` (else `$HOME/.claude`). An empty `CLAUDE_CONFIG_DIR` resolves
 //! cwd-relative rather than falling back to `$HOME`, matching real `claude` 2.1.220's
-//! config-dir joins (probed 2026-07-26; see `docs/design.md` § empty `CLAUDE_CONFIG_DIR`).
+//! config-dir joins (probed 2026-07-26).
 //!
 //! It is also SCOPE-BLIND: one flat registry per config dir, with `--scope` and the
 //! process cwd swallowed by the argument rest-patterns. Every test driving it today is

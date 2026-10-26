@@ -172,7 +172,7 @@ fn cursor_reconcile_noops_when_cc_registry_covers() {
 fn cursor_translates_when_cc_registry_relocated() {
     // A relocated `CLAUDE_CONFIG_DIR` moves CC's real registry off cursor's own
     // HARDCODED `join(HOME, ".claude")` read path (cursor's loader ignores
-    // `CLAUDE_CONFIG_DIR` entirely, ground-truth per `docs/harness/cursor.md`). Our gate
+    // `CLAUDE_CONFIG_DIR` entirely). Our gate
     // reads the same HOME-based path, so it must also miss the relocated registry and
     // fall back to full translation — never silently losing cursor's coverage.
     let env = Env::new("relocated");

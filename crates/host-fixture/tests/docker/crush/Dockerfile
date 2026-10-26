@@ -13,9 +13,9 @@ RUN cargo build -p host-fixture --release
 
 # Stage 2: real crush CLI + the fixture binary; assert the lifecycle end-to-end.
 FROM node:20-slim
-# The npm wrapper is auth-free; pin alongside docs/harness/crush.md when a version
-# is chosen. Best-effort: the config-file parse below is authoritative, so a CLI
-# that fails to install must not fail the leg (the hermetic test owns correctness).
+# The npm wrapper is auth-free; pin when a version is chosen. Best-effort: the
+# config-file parse below is authoritative, so a CLI that fails to install must not
+# fail the leg (the hermetic test owns correctness).
 RUN npm install -g @charmland/crush@0.98.2 || echo "note: crush CLI unavailable; relying on config-file assert"
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 

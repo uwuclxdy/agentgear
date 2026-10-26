@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # cursor docker leg: cursor is GUI-first with no reliable auth-free headless CLI,
-# so the file-config parse is the authoritative assert (the brief's recommended
-# zero-binary path). `cursor-agent mcp list` is attempted best-effort only — it
+# so the file-config parse is the authoritative assert.
+# `cursor-agent mcp list` is attempted best-effort only — it
 # reads the same mcp.json but gates on auth, so it never fails the leg. Built + run
 # by tests/docker/run.sh cursor (context = repo root).
 

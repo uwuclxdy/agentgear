@@ -201,8 +201,8 @@ pub(crate) fn clear(plugin: &Plugin, scope: &Scope, agent: &str) -> Result<()> {
 /// agent would let one backend's `--path` install silently re-point a sibling
 /// installed from `Embedded`/`GitHub` (or vice versa) on the next unfiltered
 /// `update`/`self_heal`/`doctor` — the exact per-agent-marker invariant
-/// `docs/design.md` calls out (installing into `[claude, codex]` must never
-/// confuse one backend's marker for another's).
+/// (installing into `[claude, codex]` must never confuse one backend's marker for
+/// another's).
 pub(crate) fn source_from_marker(marker: Option<&Marker>, default: Source) -> Source {
     // "path" and "embedded" markers each rehydrate the source they were stamped
     // with, so an explicit `install(Source::Embedded)` on a `default_source =

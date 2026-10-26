@@ -14,7 +14,7 @@ fn scratch(name: &str) -> std::path::PathBuf {
 
 #[test]
 fn subagent_events_are_unmapped() {
-    // gemini's 11-event HookEventName enum (verify-gemini #19) has no subagent
+    // gemini's 11-event HookEventName enum has no subagent
     // event; the lone agent-lifecycle analog AfterAgent would over-fire on the
     // main agent, so both refuse rather than write a hook that never fires right.
     assert_eq!(super::map_event("SubagentStart"), None);

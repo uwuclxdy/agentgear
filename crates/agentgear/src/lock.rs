@@ -1,6 +1,6 @@
 //! One `flock` at a well-known path, shared across every consumer of this crate.
 //! Held around every mutating CLI sequence so two different tools both healing at
-//! session start serialize instead of racing CC's registry (design §concurrency).
+//! session start serialize instead of racing CC's registry.
 
 use std::fs::{self, File};
 use std::path::PathBuf;

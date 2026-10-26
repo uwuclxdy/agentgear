@@ -11,7 +11,7 @@
 //! Hooks, commands, subagents and skills all have no verified desktop-IDE file
 //! surface and are skipped — the IDE's native events are workflow/git triggers, not
 //! CC-style shell hooks, and its user-scope command surface is the skills dir that no
-//! backend translates in v1. See `docs/harness/antigravity.md` for the full mapping.
+//! backend translates in v1.
 
 use std::path::PathBuf;
 
@@ -46,7 +46,7 @@ impl AgentBackend for AntigravityBackend {
 
     fn capabilities(&self) -> Capabilities {
         // MCP-only, user-scope-only: hooks/commands/agents/skills have no verified
-        // desktop-IDE file surface (see the module doc + `docs/harness/antigravity.md`).
+        // desktop-IDE file surface (see the module doc).
         Capabilities {
             plugins: false,
             mcp: true,

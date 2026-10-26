@@ -10,10 +10,10 @@
 //! key is our own server name, so `remove` is exact and a second reconcile is a
 //! true `NoOp`.
 //!
-//! Skipped surfaces (see `docs/harness/opencode.md`): hooks (opencode has no
+//! Skipped surfaces: hooks (opencode has no
 //! declarative shell-hook config — only an in-process JS/TS plugin API whose
-//! CC-`UserPromptSubmit` analogue is unverified and version-volatile per the
-//! brief), skills, and the CC `model` alias on agents (no reliable map to
+//! CC-`UserPromptSubmit` analogue is unverified and version-volatile), skills, and
+//! the CC `model` alias on agents (no reliable map to
 //! opencode's `provider/model` ids).
 
 use std::fmt::Write as _;
@@ -150,7 +150,7 @@ fn opencode_config_dir() -> Result<PathBuf> {
 
 /// The `opencode.json` we read-modify-write for a scope: `~/.config/opencode/
 /// opencode.json` (user) or `<cwd>/opencode.json` (project — at the project root,
-/// beside the `.opencode/` dir, per the brief).
+/// beside the `.opencode/` dir).
 fn config_file(scope: &Scope) -> Result<PathBuf> {
     match scope {
         Scope::User => Ok(opencode_config_dir()?.join("opencode.json")),
@@ -229,7 +229,7 @@ fn render_mcp_server(server: &McpServer, enabled: bool) -> Value {
 /// plugin declares no portable server. `reenable=false` (self_heal) preserves an
 /// existing explicit `enabled:false` on our own key instead of forcing it back on,
 /// since opencode's `enabled` flag is a real per-server disable a user can set and
-/// the foundation's never-re-enable invariant applies to it exactly like CC's.
+/// the never-re-enable invariant applies to it exactly like CC's.
 /// `reenable=true` (an explicit install/update) always re-enables, mirroring
 /// `claude.rs`'s `entry.enabled == Some(false)` handling.
 fn reconcile_mcp(config: &Path, servers: &[McpServer], reenable: bool) -> Result<bool> {

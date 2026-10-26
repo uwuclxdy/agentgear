@@ -15,7 +15,7 @@
 //! (`subagent_explore`/`subagent_general`) or a user's own. The plugin's own
 //! `skills/` IR is a DISTINCT surface: it lands as bare `<name>/SKILL.md` in devin's
 //! `.agents/skills` scan root (tagged for ownership), never colliding with the
-//! commands-as-skills dirs above. See `docs/harness/devin.md` for the full mapping.
+//! commands-as-skills dirs above.
 //!
 //! - **instructions**: the host's always-loaded guidance lands as a tagged block in
 //!   devin's global `AGENTS.md` beside `config.json`, the user-scope file devin loads
@@ -164,7 +164,7 @@ impl AgentBackend for DevinBackend {
 
 /// The `~/.config/devin` user base. `dirs::config_dir()` honors `XDG_CONFIG_HOME`
 /// (Linux) and is `%APPDATA%` (Windows) — both matching devin. On macOS devin uses
-/// `~/.config/devin` too (documented in `docs/harness/devin.md`), unlike
+/// `~/.config/devin` too, unlike
 /// `dirs::config_dir()`'s platform default of `~/Library/Application Support`; the
 /// macOS arm below replicates dirs' own XDG-or-home-fallback logic instead of that
 /// platform default so the path matches what devin actually reads.

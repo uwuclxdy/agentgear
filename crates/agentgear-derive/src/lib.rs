@@ -3,7 +3,7 @@
 //! the `name` attr), bakes the compressed tree in via `include_bytes!` of the blob
 //! the build.rs produced (`AGENTGEAR_BLOB`), implements the `PluginHost` trait from
 //! the attrs, and emits a const-panic guard that fires if the host forgot its
-//! `build.rs` (design §7, §10). `embed = false` bakes nothing (an empty blob).
+//! `build.rs`. `embed = false` bakes nothing (an empty blob).
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 

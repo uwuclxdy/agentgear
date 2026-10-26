@@ -9,7 +9,7 @@
 use agentgear::{PluginHost, Source};
 
 /// A zero-embed host: no blob, so the lifecycle keys on the GitHub tag instead
-/// (`default_source = "github"`, per the design's zero-embed recipe).
+/// (`default_source = "github"`).
 ///
 /// Compile-and-read-consts only: never call a lifecycle method on it. It reuses
 /// `FixtureHost`'s plugin name (the derive cross-checks the name against

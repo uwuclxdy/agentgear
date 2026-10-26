@@ -1,9 +1,8 @@
 # syntax=docker/dockerfile:1
 # amp docker leg: the real amp CLI ingesting our written config. Built + run by
 # tests/docker/run.sh amp (context = repo root). The config-file parse is the
-# auth-free source of truth; `amp mcp list` is a best-effort native second opinion
-# (a login-free `amp mcp list` is reported but unconfirmed against primary docs —
-# see docs/harness/amp.md), so a native mismatch is a note, not a failure.
+# auth-free source of truth; `amp mcp list` is a best-effort native second opinion,
+# so a native mismatch is a note, not a failure.
 
 # Stage 1: build the fixture host (all backends) from the workspace.
 FROM rust:1-slim-bookworm AS build

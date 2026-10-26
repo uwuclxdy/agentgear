@@ -9,8 +9,8 @@
 //! `plugin marketplace list`/`add`, `--version`) for those tests to run in the
 //! normal `cargo test` job.
 //!
-//! It is a DOUBLE, never a spec: `docs/research/verify-copilot-cli.md`'s live findings
-//! and the docker leg against the real binary stay the authority on copilot's behavior.
+//! It is a DOUBLE, never a spec: the docker leg against the real binary stays the
+//! authority on copilot's behavior.
 //! Its TEXT output is shaped to parse under the real `parse_plugin_list` /
 //! `parse_marketplace_list` (`crates/agentgear/src/cli.rs`), whose fixtures in
 //! `crates/agentgear/tests/unit/copilot_cli.rs` are the ground truth for these shapes.

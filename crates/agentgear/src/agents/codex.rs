@@ -11,7 +11,7 @@
 //! plugin-name-prefixed, so `remove` is exact and a second reconcile is a true
 //! `NoOp`.
 //!
-//! Two load-bearing codex caveats (see `docs/harness/codex.md`):
+//! Two load-bearing codex caveats:
 //! - a hook agentgear writes is INERT until a human runs codex's `/hooks` TUI and
 //!   trusts its content hash — codex never fires an untrusted, non-managed hook.
 //!   We still write it so a user can approve it.
@@ -302,7 +302,7 @@ fn hook_entries(hooks: &[HookBinding]) -> Vec<(Vec<String>, Value)> {
 /// Add-if-absent our hook groups into codex's `hooks.json` (CC's exact shape, event
 /// names identical), leaving the user's own groups. Idempotent: a deep-equal group
 /// is not re-added. LOUD CAVEAT: what we write is inert until a human runs codex's
-/// `/hooks` TUI and trusts it (see the module doc + `docs/harness/codex.md`).
+/// `/hooks` TUI and trusts it (see the module doc).
 fn reconcile_hooks(hooks_json: &Path, hooks: &[HookBinding]) -> Result<bool> {
     let writable: Vec<(&'static str, &HookBinding)> =
         hooks.iter().filter(|h| hook_is_portable(h)).filter_map(|h| map_event(&h.event).map(|e| (e, h))).collect();

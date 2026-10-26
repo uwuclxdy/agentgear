@@ -110,7 +110,7 @@ fn reconcile_agent(plugin: &Plugin, desired: &Desired, scope: &Scope, id: &'stat
         Err(e) => return AgentStatus::Failed(e.to_string()),
     };
     if !backend.detect() {
-        // never forge config for a tool that isn't installed (design §0)
+        // never forge config for a tool that isn't installed
         return AgentStatus::Skipped(SkipReason::NotDetected);
     }
     // No surface at this scope (e.g. a repo-config-only IDE backend at user

@@ -1,6 +1,6 @@
 //! The claude backend's spawn-free heal-needed classifier: file fixtures pin the
-//! verdict against self_heal's state table + probe + reconcile reach (design
-//! §self_heal), using the 2.1.310 registry ground truth. Every fixture seeds CC's
+//! verdict against self_heal's state table + probe + reconcile reach, using CC's
+//! registry shapes (probed 2.1.310). Every fixture seeds CC's
 //! registry files under a scratch config dir and a scratch data root; nothing
 //! touches the real HOME or a real `claude`.
 //!

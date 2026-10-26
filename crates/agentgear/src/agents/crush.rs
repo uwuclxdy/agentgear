@@ -23,7 +23,7 @@
 //!   `global_context_paths` (user scope only — see `instructions_file`). marker-id-
 //!   scoped so the user's lines and a rival plugin's block survive byte-identical.
 //!
-//! Skipped surfaces (see `docs/harness/crush.md`):
+//! Skipped surfaces:
 //! - **agents**: no file-writable subagent surface (issue #1807 open), so `agents`
 //!   is still dropped, not guessed.
 //! - **skills**: bare `~/.config/crush/skills/<name>/SKILL.md` (user) /
@@ -166,7 +166,7 @@ fn crush_config_dir() -> Result<PathBuf> {
 
 /// The single `crush.json` we read-modify-write for a scope: the global
 /// `~/.config/crush/crush.json` (user) or `<cwd>/crush.json` (project — crush lets
-/// a project config override the global, per the brief).
+/// a project config override the global).
 fn config_file(scope: &Scope) -> Result<PathBuf> {
     match scope {
         Scope::User => Ok(crush_config_dir()?.join("crush.json")),

@@ -249,7 +249,7 @@ fn remove_hooks_deletes_only_our_key_and_keeps_a_foreign_plugin() {
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
-// --- enabled:false carry-through (§6) -----------------------------------------
+// --- enabled:false carry-through ----------------------------------------------
 
 #[test]
 fn reconcile_hooks_preserves_a_disable_on_self_heal_but_an_explicit_install_reenables() {

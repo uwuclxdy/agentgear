@@ -17,8 +17,8 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-# pin = the droid CLI version this leg's asserts were last checked against; bump it
-# alongside docs/harness/droid.md. The vendor installer
+# pin = the droid CLI version this leg's asserts were last checked against.
+# The vendor installer
 # (https://app.factory.ai/cli) hardcodes its own version and honours no env or argument
 # override, so there is nothing to pin THROUGH it: this fetches the versioned artifact the
 # script would have fetched, from the same URL, with the same sha256 sibling. Unpinned, an

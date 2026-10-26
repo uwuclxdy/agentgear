@@ -3,8 +3,8 @@
 # tests/docker/run.sh kiro (context = repo root). Config-file parse is the auth-free
 # source of truth (the backend only writes JSON, needs zero kiro auth); the
 # `kiro-cli` install + `kiro-cli mcp list` are a best-effort native second opinion
-# (the installer's real value is at first-use/login, unconfirmed pre-login — see
-# docs/harness/kiro.md). kiro is mcp-only since 2026-07-17 (hooks declared
+# (pre-login, every `kiro-cli mcp` command exits 1: "You are not logged in"). kiro is
+# mcp-only since 2026-07-17 (hooks declared
 # unsupported: kiro's only hook surface is a user-owned per-agent config, and its
 # run-default agent is a setting, not a file); the seeded agent file exists purely
 # to prove the backend never touches it.
@@ -35,9 +35,10 @@ SKILL_DIR="$KIRO_HOME/skills/ez-skill"
 SKILL="$SKILL_DIR/SKILL.md"
 mkdir -p "$KIRO_HOME/settings" "$KIRO_HOME/agents"
 
-# Best-effort real install: its payoff is the first-use login flow (unconfirmed
-# pre-login), so a failure never fails the leg — the config-file assert below is
-# auth-free by construction and detect() rides off the seeded KIRO_HOME dir.
+# Best-effort real install: pre-login, every `kiro-cli` config command exits 1
+# ("You are not logged in"), so a failure never fails the leg — the config-file
+# assert below is auth-free by construction and detect() rides off the seeded
+# KIRO_HOME dir.
 if curl -fsSL https://cli.kiro.dev/install | bash; then
   echo "kiro-cli installed"
 else

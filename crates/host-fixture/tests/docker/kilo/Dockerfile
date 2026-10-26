@@ -2,8 +2,7 @@
 # kilo docker leg: the real Kilo Code CLI (`@kilocode/cli`) ingesting our written
 # config. Built + run by tests/docker/run.sh kilo (context = repo root). Config-file
 # parse is the auth-free source of truth; `kilo mcp list` is a best-effort native
-# second opinion (documented as a local config op, but a login requirement for it is
-# unconfirmed by the docs — see docs/harness/kilo.md).
+# second opinion (a local config op; it runs with no `kilo auth`/login).
 
 # Stage 1: build the fixture host (all backends) from the workspace.
 FROM rust:1-slim-bookworm AS build
@@ -13,8 +12,7 @@ RUN cargo build -p host-fixture --release
 
 # Stage 2: real Kilo Code CLI + the fixture binary; assert the lifecycle end-to-end.
 FROM node:20-slim
-# `@latest` until a version is verified against a live install; pin + bump it
-# alongside docs/harness/kilo.md (the brief could not confirm a released version).
+# `@latest` until a version is verified against a live install.
 RUN npm install -g @kilocode/cli@latest
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 

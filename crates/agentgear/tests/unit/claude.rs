@@ -1,8 +1,7 @@
 //! claude backend pure decisions: the github source string (`owner/repo@ref`),
 //! the present-branch re-point rule (matching ref → update, drifted ref or
 //! diverged local path → re-add), and the marketplace-health classifier the
-//! probe, reconcile, and doctor share. See docs/design.md §ref-pinning ground
-//! truth and §marketplace ground truth.
+//! probe, reconcile, and doctor share.
 //!
 //! No CLI here — the mutating calls are IO-only; these guard the decisions that
 //! pick what they send.
@@ -46,7 +45,7 @@ fn github_entry(ref_: Option<&str>) -> MarketplaceEntry {
 #[test]
 fn github_source_carries_the_ref() {
     // The `@ref` is what makes the CLI check the tag out; a bare `owner/repo` would
-    // silently track the default branch (design §ref-pinning ground truth).
+    // silently track the default branch.
     assert_eq!(github_source("owner/repo", "v0.1.0"), "owner/repo@v0.1.0");
 }
 

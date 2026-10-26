@@ -5,7 +5,7 @@
 //! `detect()` passes off the pre-created `~/.openclaw` dir alone.
 //!
 //! openclaw is mcp-only (hooks/commands/agents/skills have no config-writable
-//! surface — see `docs/harness/openclaw.md`), so this exercises the mcp merge:
+//! surface), so this exercises the mcp merge:
 //! our server lands under `mcp.servers`, the seeded user entries survive, a second
 //! reconcile is a NoOp, and uninstall strips only ours. Every path derives from
 //! `HOME`, pointed at a throwaway temp root, so proving our writes land under that
@@ -136,7 +136,7 @@ fn openclaw_full_lifecycle() {
     // remote mcp: openclaw's canonical `{url,headers,transport}` shape, rendered
     // directly rather than the majority `{type,url,headers}` dialect, so a probe
     // stays Healthy after openclaw's own `doctor --fix`/`mcp set` would otherwise
-    // rewrite it out from under us (docs/research/verify-openclaw.md #2/#4).
+    // rewrite it out from under us.
     assert_eq!(
         root["mcp"]["servers"]["ez-fixture-http"],
         serde_json::json!({"url": "http://127.0.0.1:39621/mcp", "headers": {}, "transport": "streamable-http"}),

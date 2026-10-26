@@ -39,8 +39,7 @@ owned by that harness's workflow, disjoint from every other file:
 - keep the assertion inside the container so the leg is hermetic (no host state).
 - point the harness at a throwaway `$HOME` / config dir inside the image; never the
   builder's real config.
-- CI wires one matrix leg per harness calling `run.sh <harness>` (foundation adds
-  the job; each Dockerfile lands with its backend).
+- CI wires one matrix leg per harness calling `run.sh <harness>`; each Dockerfile lands with its backend.
 - a real tool-call round-trip is out of reach today: every backed CLI routes MCP tool
   invocation through the model in an agent session (auth-gated + non-deterministic),
   and none ships a `mcp call` verb. The native `mcp list` above is the deepest

@@ -7,7 +7,7 @@
 //! For Claude Code the lifecycle orchestrates the `claude` CLI (≥ 2.1.196) as its
 //! transaction boundary; it never forges Claude Code's on-disk registry state,
 //! with one exception: [`repoint_install_paths`] re-spells `installPath` values a
-//! host's own remap targets (design §installPath convergence).
+//! host's own remap targets.
 //! Non-Claude backends need no CLI at all: each translates the plugin's components
 //! (MCP servers, hooks, commands, agents) into that tool's own config files via
 //! atomic read-modify-write merges that leave the user's entries untouched, and

@@ -9,13 +9,12 @@
 //! key is our own server name and every hook is matched by its command string, so
 //! `remove` is exact and a second reconcile is a true `NoOp`. Commands/agents have no
 //! user-level file surface here and are skipped; skills land as bare
-//! `~/.kimi-code/skills/<name>/SKILL.md`, tagged for ownership (see
-//! `docs/harness/kimi.md`).
+//! `~/.kimi-code/skills/<name>/SKILL.md`, tagged for ownership.
 //!
 //! Two products share the `kimi` binary — the legacy python `kimi-cli` (`~/.kimi`)
 //! and the current TypeScript `kimi-code` (`~/.kimi-code`). This backend targets the
 //! CURRENT one, so it detects on the `~/.kimi-code` config dir (not the ambiguous
-//! binary name) and honors `KIMI_CODE_HOME` everywhere (see `docs/harness/kimi.md`).
+//! binary name) and honors `KIMI_CODE_HOME` everywhere.
 
 use std::collections::BTreeSet;
 use std::fs;

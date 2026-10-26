@@ -114,9 +114,9 @@ impl AgentBackend for ClaudeBackend {
 pub(crate) fn find_plugin(cli: &ClaudeCli, scope: &Scope, name: &str, marketplace: &str) -> Result<Option<PluginEntry>> {
     let entries: Vec<PluginEntry> = cli.run_json(&["plugin", "list", "--json"], scope.cwd(), "plugin list --json")?;
     // Scope-filtered: the same id installed at both user and project scope must
-    // not let a user-scope op read the project entry first (design §self_heal's
-    // former scope-blind caveat; the dead-entry shape a per-session config dir
-    // leaves behind makes the wrong first match a standing heal failure).
+    // not let a user-scope op read the project entry first (the dead-entry shape a
+    // per-session config dir leaves behind makes the wrong first match a standing
+    // heal failure).
     Ok(entries.into_iter().find(|e| e.matches(name, marketplace) && e.at_scope(scope)))
 }
 
@@ -257,7 +257,7 @@ fn reconcile_registry(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Resu
         // Structurally broken (registered but files/marketplace gone), or serving a
         // tree this binary no longer ships at a version that will never bump: clean
         // reinstall, the one sequence that re-copies a same-version tree into CC's
-        // own cache (design § marketplace ground truth).
+        // own cache.
         // Marked before the uninstall, never after: a failed `plugin install` or a
         // SessionStart hook killed between the two calls otherwise leaves a marker
         // beside an absent plugin, which self_heal reads as the user's own uninstall
@@ -313,7 +313,7 @@ fn record_staged(plugin: &Plugin, desired: &Desired, scope: &Scope, staged: Opti
 /// Embedded/path: (re)materialize so `current@claude` is fresh, then add-if-absent /
 /// update-if-present. GitHub: send `owner/repo@ref` to pin the ref; when already
 /// present, `update` if the stored ref still matches, else re-`add` to re-point the
-/// pin (`update` never moves one — design §ref-pinning ground truth), after clearing
+/// pin (`update` never moves one), after clearing
 /// the settings declaration 2.1.308+ checks that add against. A present
 /// local-source entry whose registered path diverges from the just-materialized
 /// pointer (an old checkout dir, a github-registered entry, a pre-client-scoping
@@ -349,7 +349,7 @@ fn ensure_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: &Source, scope: 
 }
 
 /// The `marketplace add` source string a github pin sends: `owner/repo@ref`, which
-/// the CLI resolves by checking `ref` out (design §ref-pinning ground truth). A bare
+/// the CLI resolves by checking `ref` out. A bare
 /// `owner/repo` silently tracks the default branch instead.
 fn github_source(repo: &str, ref_: &str) -> String {
     format!("{repo}@{ref_}")
@@ -456,8 +456,8 @@ pub(crate) fn remove(plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
 
 /// Spawn-free pre-check entry: would self_heal mutate or repair this install,
 /// read from CC's registry files + the stamp marker alone (never the marker
-/// alone — the marker says "we installed this", never "it is still installed";
-/// design §self_heal). No CLI spawn; every "cannot tell" answer folds to
+/// alone — the marker says "we installed this", never "it is still installed").
+/// No CLI spawn; every "cannot tell" answer folds to
 /// `Needed`, so a host that trusts this never skips a heal that would have acted.
 /// `retire_notice` is the firing event's gate: a standing restart flag is a
 /// change only when the event began by loading plugin contents.

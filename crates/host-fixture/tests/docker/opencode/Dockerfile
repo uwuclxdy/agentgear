@@ -2,8 +2,7 @@
 # opencode docker leg: the real opencode CLI ingesting our written config. Built +
 # run by tests/docker/run.sh opencode (context = repo root). Config-file parse is
 # the auth-free source of truth; `opencode mcp list` is a best-effort native second
-# opinion (documented as a local, no-API-key op, but first-run auth is unverified
-# in the brief — see docs/harness/opencode.md).
+# opinion (documented as a local, no-API-key op).
 
 # Stage 1: build the fixture host (all backends) from the workspace.
 FROM rust:1-slim-bookworm AS build
@@ -13,8 +12,7 @@ RUN cargo build -p host-fixture --release
 
 # Stage 2: real opencode CLI + the fixture binary; assert the lifecycle end-to-end.
 FROM node:20-slim
-# `@latest` until a version is verified against a live install; pin + bump it
-# alongside docs/harness/opencode.md (the brief could not confirm a version).
+# `@latest` until a version is verified against a live install.
 RUN npm install -g opencode-ai@latest
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 

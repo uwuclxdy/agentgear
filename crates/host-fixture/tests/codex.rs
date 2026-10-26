@@ -246,9 +246,9 @@ fn codex_full_lifecycle() {
 #[test]
 fn codex_project_scope_mcp_is_isolated_from_user_scope() {
     // `codex_base(Scope::Project { path })` resolves to `<path>/.codex`, a live
-    // surface (docs/harness/codex.md gotcha 6): a real codex session run inside a
-    // trusted project directory loads `[mcp_servers]` straight out of that project's
-    // own `.codex/config.toml`, while codex's own `mcp` management CLI never reads it.
+    // surface: a real codex session run inside a trusted project directory loads
+    // `[mcp_servers]` straight out of that project's own `.codex/config.toml`, while
+    // codex's own `mcp` management CLI never reads it.
     // That CLI blindness is what made the write look dead, so this pins it.
     let env = Env::new("project-mcp");
     let project = env.project();

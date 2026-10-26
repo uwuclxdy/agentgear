@@ -39,7 +39,7 @@ struct Env {
     /// backend writes should ever touch it.
     settings: PathBuf,
     /// `~/.gemini/antigravity-cli/hooks.json` — the retired user-scope hooks path
-    /// this backend wrote to until 2026-07-17 (gotcha 1). `agy` never scanned it;
+    /// this backend wrote to until 2026-07-17. `agy` never scanned it;
     /// `reconcile` now sweeps a stray file left there by an old binary.
     retired_hooks: PathBuf,
     config: PathBuf,
@@ -194,7 +194,7 @@ fn antigravity_cli_full_lifecycle() {
     assert!(env.mcp().contains("ez-fixture"), "re-install did not re-add our server");
 }
 
-/// Retired-path sweep (gotcha 1): `reconcile` clears a stray hooks.json an old
+/// Retired-path sweep: `reconcile` clears a stray hooks.json an old
 /// binary left at `~/.gemini/antigravity-cli/hooks.json` — but only the exact
 /// `<plugin>` key it owns there, matching `remove_hooks`'s existing semantics.
 #[test]
@@ -223,7 +223,7 @@ fn reconcile_leaves_a_foreign_key_at_the_retired_hooks_path_untouched() {
     assert_eq!(fs::read_to_string(&env.retired_hooks).unwrap(), FOREIGN, "a foreign key at the retired path was touched by the sweep");
 }
 
-/// §6: `enabled:false` carry-through. self_heal must never re-enable a hook
+/// `enabled:false` carry-through. self_heal must never re-enable a hook
 /// subtree the user disabled by hand, and the composite probe must read it as
 /// `Disabled` (a true no-op, never reaching `reconcile`) even while the marker is
 /// present; an explicit `setup` still honors the user's request to re-enable.

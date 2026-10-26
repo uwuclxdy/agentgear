@@ -14,8 +14,7 @@
 //! file identifiable as ours: `remove` deletes exactly those files, mcp is keyed by our
 //! server names, hooks by our command strings — so a second reconcile is a true `NoOp`.
 //! Skills land as bare `<base>/skills/<name>/SKILL.md` (droid's first-class skill
-//! surface, both scopes), tagged for ownership. See `docs/harness/droid.md` for the
-//! full mapping.
+//! surface, both scopes), tagged for ownership.
 //!
 //! - **instructions**: the host's always-loaded guidance lands as a tagged block in
 //!   droid's user-scope `~/.factory/AGENTS.md` through the shared `agentsmd`
@@ -53,8 +52,8 @@ impl AgentBackend for DroidBackend {
     fn detect(&self) -> bool {
         // `~/.factory` is HOME-based (not XDG), so a test redirecting `HOME` also
         // redirects detection; droid has no user-config-dir override env. FACTORY_API_KEY
-        // is deliberately NOT a detection signal — the brief flags it as an input auth
-        // var (set for CI even where droid isn't installed), not a session-set marker.
+        // is deliberately NOT a detection signal — an input auth var (set for CI even
+        // where droid isn't installed), not a session-set marker.
         which::which("droid").is_ok() || dirs::home_dir().is_some_and(|h| h.join(".factory").is_dir())
     }
 

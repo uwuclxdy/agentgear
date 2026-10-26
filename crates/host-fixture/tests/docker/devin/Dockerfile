@@ -3,8 +3,8 @@
 # tests/docker/run.sh devin (context = repo root). Config-file parse is the auth-free
 # source of truth (agentgear writes `~/.config/devin/config.json` directly, exactly
 # how `devin mcp add` would); `devin mcp list` is a best-effort native second opinion
-# (auth-free per the brief, but its exact behavior headless is unverified). The CLI
-# install is tolerant: a flaky `curl | bash` never fails the leg, the file asserts do.
+# (auth-free). The CLI install is tolerant: a flaky `curl | bash` never fails the leg,
+# the file asserts do.
 
 # Stage 1: build the fixture host (all backends) from the workspace.
 FROM rust:1-slim-bookworm AS build

@@ -34,12 +34,12 @@
 //! `!disabledProviders.has("claude-plugins")` (`src/capability/index.ts:289`),
 //! `disabledProviders` loaded from omp's global `config.yml`, default empty = on. CC's own
 //! enabled/disabled state is NOT consulted: omp surfaces a CC agent from
-//! `installed_plugins.json` regardless of CC's `enabledPlugins` (verify-omp #2/#3), so the
+//! `installed_plugins.json` regardless of CC's `enabledPlugins`, so the
 //! provider toggle is the real signal. mcp + commands always translate. Either condition
 //! false -> translate, so an omp-only install, a relocated `CLAUDE_CONFIG_DIR`, or a
 //! user-disabled provider never loses its agents.
 //!
-//! Skipped surfaces (see `docs/harness/omp.md`): hooks (omp's only hook surface is
+//! Skipped surfaces: hooks (omp's only hook surface is
 //! an in-process TS plugin API registering `pi.on(...)` — there is no config-writable
 //! shell-hook file, same shape of gap as opencode), skills, and the CC `model` alias
 //! on agents (`sonnet`/`opus`/`haiku` are not omp model ids; omp's default applies).
@@ -203,11 +203,10 @@ fn omp_root() -> Option<PathBuf> {
 
 /// Join a config-dir name onto `home` the way omp does: node's
 /// `path.join(os.homedir(), name)` *appends* even an absolute `name`, where Rust's
-/// `Path::join` would instead *replace* the base (verified live,
-/// `docs/harness/omp.md` gotcha 1). Any root component (`/`, a Windows drive
-/// prefix, `\\`) is stripped from `name` first so the join always appends, matching
-/// node. Split from the env/home lookup so a unit test can exercise it without
-/// mutating process-global env.
+/// `Path::join` would instead *replace* the base (verified live). Any root
+/// component (`/`, a Windows drive prefix, `\\`) is stripped from `name` first so
+/// the join always appends, matching node. Split from the env/home lookup so a
+/// unit test can exercise it without mutating process-global env.
 fn resolve_omp_root(name: &OsStr, home: Option<&Path>) -> Option<PathBuf> {
     let relative: PathBuf = Path::new(name).components().filter(|c| !matches!(c, Component::RootDir | Component::Prefix(_))).collect();
     home.map(|h| h.join(relative))

@@ -10,10 +10,10 @@
 //! there is no file agentgear can target without editing user-owned agent configs
 //! (an earlier version merged into a literal `agents/default.json`, which kiro
 //! treats as nothing special, so those hooks never fired). Commands
-//! (`~/.kiro/prompts/`) and agents (kiro's own json agent schema) are skipped — see
-//! `docs/harness/kiro.md` for why. Skills land as bare
-//! `~/.kiro/skills/<name>/SKILL.md` (both scopes), auto-inherited by every kiro agent,
-//! tagged for ownership; kiro requires `name`+`description`, which the renderer ensures.
+//! (`~/.kiro/prompts/`) and agents (kiro's own json agent schema) are skipped. Skills
+//! land as bare `~/.kiro/skills/<name>/SKILL.md` (both scopes), auto-inherited by every
+//! kiro agent, tagged for ownership; kiro requires `name`+`description`, which the
+//! renderer ensures.
 //!
 //! - **instructions**: the host's guidance lands as the one plugin-owned steering
 //!   file `~/.kiro/steering/agentgear-<plugin>.md`, through the shared `agentsmd`

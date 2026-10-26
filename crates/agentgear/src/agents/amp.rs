@@ -8,7 +8,7 @@
 //! our server keys are touched, the user's survive, and a second reconcile is a
 //! true `NoOp`.
 //!
-//! Skipped surfaces (see `docs/harness/amp.md`): hooks, slash-commands, and
+//! Skipped surfaces: hooks, slash-commands, and
 //! subagents have **no file-writable surface** in amp — its only lifecycle /
 //! command / agent mechanism is an in-process TypeScript plugin API
 //! (`~/.config/amp/plugins/*.ts`), an executable program rather than declarative

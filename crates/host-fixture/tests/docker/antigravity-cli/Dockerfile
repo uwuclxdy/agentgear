@@ -16,10 +16,9 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates bash \
     && rm -rf /var/lib/apt/lists/*
 
-# pin = the agy version this leg's asserts were last checked against; bump it alongside
-# docs/harness/antigravity-cli.md. Unpinned, an apt-layer invalidation moves the CLI
-# mid-session with no reviewable change to this file (1.1.3 -> 1.1.7 happened exactly
-# that way).
+# pin = the agy version this leg's asserts were last checked against. Unpinned, an
+# apt-layer invalidation moves the CLI mid-session with no reviewable change to this
+# file (1.1.3 -> 1.1.7 happened exactly that way).
 #
 # The vendor installer (https://antigravity.google/cli/install.sh) resolves its download
 # from a manifest endpoint serving the LATEST build only, and accepts no argument but
@@ -131,7 +130,7 @@ for dead in SessionStart BeforeAgent SessionEnd Notification; do
   if grep -q "$dead" "$HOOKS"; then echo "FAIL: dead hook event $dead written"; cat "$HOOKS"; exit 1; fi
 done
 
-# Native second opinion (best-effort; auth-free per the brief, lists plugins not
+# Native second opinion (best-effort; auth-free, lists plugins not
 # mcp servers, so it can only prove the CLI parses its config tree without erroring).
 if out=$(agy plugin list 2>&1); then
   echo "agy plugin list ran (config tree parsed): $out"

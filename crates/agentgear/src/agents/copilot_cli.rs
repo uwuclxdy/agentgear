@@ -8,7 +8,7 @@
 //! `~/.copilot/installed-plugins/<marketplace>/<plugin>/`, so every tree surface
 //! (mcp, hooks, agents, skills) renders exactly as CC intends — there is no
 //! per-surface translation (the pre-1.0.71 backend hand-rendered copilot config
-//! files; `docs/harness/copilot-cli.md` covers the switch to native ingestion).
+//! files).
 //!
 //! - **instructions**: the host's always-loaded guidance lands as a marker-tagged
 //!   block in copilot's user-scope `copilot-instructions.md` — the one surface
@@ -19,8 +19,7 @@
 //!   byte-identical, and the modular `instructions/` tree stays the user's own
 //!   layout, never written.
 //!
-//! Constraints that shape the flow, all copilot-specific (see
-//! `docs/research/verify-copilot-cli.md`): version floor 1.0.71 (the `plugin`
+//! Constraints that shape the flow, all copilot-specific: version floor 1.0.71 (the `plugin`
 //! lifecycle did not exist at 1.0.70); user-global installs with no `--scope`; no
 //! `plugin enable`/`disable`; no `marketplace update`; `plugin list` carries only a
 //! version column (no install-path/enabled), so probe is presence + monotonic
@@ -145,9 +144,9 @@ fn copilot_home() -> Result<PathBuf> {
 /// The user-scope `copilot-instructions.md` under copilot's config dir, the
 /// always-loaded instructions channel the CLI lists as a `home` custom-instruction
 /// file and ships into the system prompt with html comments intact. `None` at
-/// project scope: copilot's repo-scope files (`.github/copilot-instructions.md`,
-/// `AGENTS.md`, `CLAUDE.md`) are the user's repo files, never a surface this
-/// backend writes.
+/// project scope: copilot's repo-scope files (`<project>/.github/copilot-instructions.md`,
+/// `<project>/AGENTS.md`, `<project>/CLAUDE.md`) are the user's repo files, never a
+/// surface this backend writes.
 fn instructions_file(scope: &Scope) -> Result<Option<PathBuf>> {
     match scope {
         Scope::User => Ok(Some(copilot_home()?.join("copilot-instructions.md"))),
@@ -184,7 +183,7 @@ fn plugin_update(cli: &CopilotCli, id: &str) -> Result<()> {
 
 /// `copilot plugin uninstall`, treating copilot's `... is not installed` text as a
 /// benign already-removed. Its exit code for that case is unconfirmed, so the text
-/// is checked, not the code alone (`docs/research/verify-copilot-cli.md`).
+/// is checked, not the code alone.
 fn plugin_uninstall(cli: &CopilotCli, id: &str) -> Result<()> {
     let out = cli.run_capturing(&["plugin", "uninstall", id], None)?;
     if out.code == 0 {

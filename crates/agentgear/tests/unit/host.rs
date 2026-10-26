@@ -7,8 +7,7 @@ use super::*;
 /// The project-scope stamp key is per-project-PATH, so a project reached via a
 /// symlink and via its realpath must key the SAME marker — an unresolved raw
 /// path would double-install. Built from an explicit symlink (not an assumption
-/// that `TMPDIR` itself is symlinked), per the repo's own realpath-comparison
-/// learning.
+/// that `TMPDIR` itself is symlinked).
 #[cfg(unix)]
 #[test]
 fn project_scope_key_is_stable_through_a_symlink() {

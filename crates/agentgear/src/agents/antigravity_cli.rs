@@ -7,8 +7,7 @@
 //! root (`~/.gemini/config/hooks.json`), keyed by our plugin name at the top
 //! level (`{"<plugin>":{"<Event>":[...]}}`), so we own that whole subtree and
 //! `remove` is an exact single-key delete. Commands/agents/skills/rules are
-//! skipped — MCP is the only surface backed by an official-Google source, so the
-//! rest is left out per the research brief (see `docs/harness/antigravity-cli.md`).
+//! skipped.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -48,7 +47,7 @@ impl AgentBackend for AntigravityCliBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // mcp + hooks only; commands/agents/skills/rules are skipped (research brief).
+        // mcp + hooks only; commands/agents/skills/rules are skipped.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -111,7 +110,7 @@ fn gemini_home() -> Result<PathBuf> {
 /// The MCP config: user scope = the SHARED `~/.gemini/config/mcp_config.json`
 /// (read by both the desktop IDE and `agy`); project scope = Antigravity's native
 /// per-workspace `<root>/.agents/mcp_config.json` (best-effort — the CLI supports
-/// it but IDE parity is contested, see the brief).
+/// it but IDE parity is unconfirmed).
 fn mcp_path(scope: &Scope) -> Result<PathBuf> {
     match scope {
         Scope::User => Ok(gemini_home()?.join("config").join("mcp_config.json")),
@@ -133,7 +132,7 @@ fn hooks_path(scope: &Scope) -> Result<PathBuf> {
 }
 
 /// The dead `~/.gemini/antigravity-cli/hooks.json` this backend wrote user-scope
-/// hooks to until 2026-07-17 (gotcha 1): never a customization root, so `agy` never
+/// hooks to until 2026-07-17: never a customization root, so `agy` never
 /// scanned it and every hook there was silently inert. `None` at project scope,
 /// which never used this path. Swept on every `reconcile` (the retired-path policy
 /// never sweeps on `remove`) so a stray file an old binary left behind eventually
@@ -234,8 +233,8 @@ fn render_hook_tree(hooks: &[HookBinding]) -> Option<Value> {
     Some(Value::Object(events))
 }
 
-/// Whether the on-disk `<plugin>` hook subtree carries an explicit `enabled:false`
-/// (§6). `enabled` sits as a sibling of the per-event arrays inside that subtree,
+/// Whether the on-disk `<plugin>` hook subtree carries an explicit `enabled:false`.
+/// `enabled` sits as a sibling of the per-event arrays inside that subtree,
 /// not nested under one, so this is a narrow targeted read distinct from the
 /// whole-subtree comparison `report::probe_json_subtree` does. Missing file or
 /// missing key both read as "not disabled" — `probe_hooks` below only calls this
@@ -252,7 +251,7 @@ fn subtree_disabled(path: &Path, plugin: &str) -> Result<bool> {
 }
 
 /// Classify the hook subtree for `probe`, folding in the `enabled:false` carry-
-/// through (§6): a subtree we own that carries an explicit disable reads `Disabled`
+/// through: a subtree we own that carries an explicit disable reads `Disabled`
 /// regardless of drift elsewhere in it, so self_heal's (present, Disabled) no-op
 /// preserves the user's deliberate disable even before `reconcile` runs. `None`
 /// when we own nothing here (mirrors `report::probe_json_subtree`); otherwise falls
@@ -273,7 +272,7 @@ fn probe_hooks(path: &Path, plugin: &str, tree: Option<Value>) -> Result<Option<
 /// rebuilt subtree deep-equals the existing one. `reenable=false` (self_heal/adopt)
 /// preserves an existing explicit `enabled:false` a user set by hand instead of
 /// forcing it back on — antigravity's `enabled` is a real per-plugin hook disable,
-/// same never-re-enable invariant as CC's own plugin disable (§6). `reenable=true`
+/// same never-re-enable invariant as CC's own plugin disable. `reenable=true`
 /// (an explicit install/update) always re-enables by omitting the key, whose
 /// documented default is `true`. When nothing survives, `json_edit` is not entered
 /// so no empty `hooks.json` is created.

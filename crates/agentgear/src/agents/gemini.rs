@@ -4,14 +4,14 @@
 //! mapped to gemini's; commands become one TOML file each under a plugin-named
 //! subdir of `~/.gemini/commands/`; CC agents become plugin-prefixed
 //! `~/.gemini/agents/<plugin>-<name>.md` subagent files, gemini's stable general
-//! subagent-file schema (not the still-preview extension-bundled form — see
-//! `docs/harness/gemini.md`). The host's always-loaded guidance lands as a tagged
-//! block in `~/.gemini/GEMINI.md`, the global tier's only default context file,
+//! subagent-file schema (not the still-preview extension-bundled form). The host's
+//! always-loaded guidance lands as a tagged block in `~/.gemini/GEMINI.md`, the
+//! global tier's only default context file,
 //! marker-id-scoped so the user's lines and a rival plugin's block survive
 //! byte-identical. Everything we write is keyed by our plugin's server
 //! names, namespaced under `<plugin>/`, or plugin-prefixed, so `remove` is exact
 //! and a second reconcile is a true `NoOp`. Skills have no stable file surface
-//! here and are skipped (see `docs/harness/gemini.md`).
+//! here and are skipped.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -225,8 +225,8 @@ fn flat_stem(rel: &str, prefix: &str) -> String {
 }
 
 /// Render a CC agent def as a gemini subagent file: gemini's stable general
-/// subagent schema requires `name` (a slug) + `description` in YAML frontmatter
-/// (docs/harness/gemini.md); the optional fields (`kind`/`tools`/`mcpServers`/
+/// subagent schema requires `name` (a slug) + `description` in YAML frontmatter;
+/// the optional fields (`kind`/`tools`/`mcpServers`/
 /// `model`/`temperature`/`max_turns`/`timeout_mins`) are left to gemini's own
 /// defaults since the CC IR carries none of them. `name` is plugin-prefixed so two
 /// plugins' agents never collide (gemini keys subagents by frontmatter `name`, not

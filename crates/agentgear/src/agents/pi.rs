@@ -6,8 +6,7 @@
 //! table). Its file-writable surfaces — prompt-template slash commands and skills —
 //! are out of this backend's scope. So this backend only *detects* pi: reconcile
 //! and remove are no-ops and probe is always Healthy, so a present marker is never
-//! dropped for a host that has pi installed. Full rationale + sources:
-//! `docs/harness/pi.md`.
+//! dropped for a host that has pi installed.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};

@@ -40,12 +40,12 @@ struct Env {
     settings: PathBuf,
     workflow: PathBuf,
     /// `~/Documents/Cline/Hooks/<Event>`: one of the two global dirs cline's own
-    /// `resolveHooksConfigSearchPaths` scans (`docs/research/verify-cline.md` #3).
+    /// `resolveHooksConfigSearchPaths` scans.
     /// A `Rules/` segment here would be silently inert.
     our_hook: PathBuf,
     foreign_hook: PathBuf,
     /// `~/Documents/Cline/Rules/Hooks/<Event>` — the retired dir this backend wrote
-    /// user-scope hook scripts to until 2026-07-17 (gotcha 1). cline's resolver
+    /// user-scope hook scripts to until 2026-07-17. cline's resolver
     /// never scanned it; `reconcile` now sweeps a stray tagged file left there.
     retired_hook: PathBuf,
     config: PathBuf,
@@ -226,9 +226,8 @@ fn cline_full_lifecycle() {
 
 /// The CLI resolves its mcp settings file through three overrides before falling
 /// back to `~/.cline`, and an empty value falls back rather than resolving to a
-/// relative path. Each level is live-proven against `cline@3.0.40`
-/// (`docs/research/verify-cline.md`); a settings file written to the HOME default
-/// while any of them is set is a file the CLI never reads.
+/// relative path. Each level is live-proven against `cline@3.0.40`; a settings file
+/// written to the HOME default while any of them is set is a file the CLI never reads.
 #[test]
 fn cline_honors_the_cli_config_dir_overrides() {
     let mut env = Env::new("env-overrides");
@@ -371,7 +370,7 @@ fn cline_self_heal_repairs_a_missing_hook_behind_healthy_mcp() {
     assert!(ok && out == "NoOp", "post-repair self-heal should no-op (marker kept), got {out}");
 }
 
-/// Retired-path sweep (gotcha 1): `reconcile` clears a tagged hook script an old
+/// Retired-path sweep: `reconcile` clears a tagged hook script an old
 /// binary left at the dead `Rules/Hooks` dir cline's resolver never scanned.
 #[test]
 fn reconcile_sweeps_our_own_tagged_script_at_the_retired_hooks_dir() {

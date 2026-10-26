@@ -61,9 +61,8 @@ pub(crate) enum RemoteShape {
     /// `{url, headers:{}, transport:"streamable-http"|"sse"}` — openclaw's own
     /// canonical form. openclaw accepts the majority `{type,url,headers}` dialect
     /// too, but `doctor --fix`/`mcp set` rewrite it into this shape on disk, which
-    /// defeats a whole-object probe forever (`docs/research/verify-openclaw.md`
-    /// #2/#4). Rendering it directly makes a post-canonicalization probe read
-    /// `Healthy` instead of churning.
+    /// defeats a whole-object probe forever. Rendering it directly makes a
+    /// post-canonicalization probe read `Healthy` instead of churning.
     UrlHeadersTransport,
 }
 
@@ -90,7 +89,7 @@ impl ServerShape {
 
 /// The servers this shape actually writes: portable AND renderable. reconcile,
 /// probe, and remove all key off this one filter so ownership can never drift
-/// between them (§chokepoint).
+/// between them.
 fn writable(servers: &[McpServer], shape: ServerShape) -> Vec<&McpServer> {
     servers.iter().filter(|s| s.is_portable() && render_server(s, shape).is_some()).collect()
 }
@@ -174,8 +173,8 @@ fn env_value(server: &McpServer) -> Value {
 pub(crate) fn reconcile(path: &Path, key_path: &[&str], servers: &[McpServer], shape: ServerShape) -> Result<Outcome> {
     let changed = json_edit(path, |root| {
         let obj = json_obj_at(root, key_path);
-        // Skip non-portable/unrenderable servers here so no json backend can forget
-        // to (§chokepoint).
+        // Skip non-portable/unrenderable servers here, so no json backend can
+        // forget to.
         for server in writable(servers, shape) {
             if let Some(body) = render_server(server, shape) {
                 obj.insert(server.name.clone(), body);

@@ -19,8 +19,7 @@
 //! Ownership: mcp servers are keyed by our server names; command/agent files are
 //! plugin-prefixed, so `remove` is exact and a second reconcile is a true `NoOp`.
 //! `PreCompact`/`SubagentStop` are absent from augment's event set and skipped
-//! (never guessed); skills are skipped. See `docs/harness/augment.md` for the full
-//! mapping + skipped surfaces.
+//! (never guessed); skills are skipped.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -60,9 +59,7 @@ impl AgentBackend for AugmentBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // Scope is user-only: augment documents `mcpServers` only at `~/.augment/
-        // settings.json` (workspace `.augment/` is documented for hooks/commands but
-        // not confirmed to honor mcp), and we write the whole config into one file.
+        // Scope is user-only by design: the tool serves project + local too.
         // mcp + hooks + commands + agents + instructions translate; skills are skipped.
         Capabilities {
             plugins: false,

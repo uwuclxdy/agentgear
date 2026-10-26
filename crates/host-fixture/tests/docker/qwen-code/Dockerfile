@@ -14,8 +14,8 @@ RUN cargo build -p host-fixture --release
 # Stage 2: real qwen-code + the fixture binary; assert the lifecycle end-to-end.
 # qwen-code requires Node.js >= 22.
 FROM node:22-slim
-# Pinned to a known-good tag (docker leg green on it); bump alongside
-# docs/harness/qwen-code.md. qwen-code's release cadence is fast.
+# Pinned to a known-good tag (docker leg green on it). qwen-code's release cadence is
+# fast.
 RUN npm install -g @qwen-code/qwen-code@0.19.10
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 

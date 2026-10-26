@@ -1,5 +1,4 @@
-//! Host-supplied installPath re-root over Claude Code's `installed_plugins.json`
-//! (design §installPath convergence).
+//! Host-supplied installPath re-root over CC's `installed_plugins.json`.
 //!
 //! A host that runs Claude Code against per-session config dirs (each reaching
 //! `plugins/` through a symlink onto the shared `~/.claude/plugins`) sees CC
@@ -20,7 +19,7 @@ use crate::error::{Error, Result};
 use crate::util::atomic_write;
 
 /// How many times a pass restarts on a registry that changed under it before
-/// it gives up and reports the contention (design §installPath convergence).
+/// it gives up and reports the contention.
 const REPOINT_ATTEMPTS: usize = 3;
 
 /// What a remap decided for one candidate path value.

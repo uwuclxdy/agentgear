@@ -18,7 +18,7 @@
 //! in every discovered config dir, both scopes), tagged for ownership; kilo requires
 //! `name`+`description`, which the shared renderer ensures.
 //!
-//! Skipped surface (see `docs/harness/kilo.md`): hooks (kilo has no config-file
+//! Skipped surface: hooks (kilo has no config-file
 //! shell-hook surface — an open feature request, kilocode#5827, asks for
 //! opencode-style lifecycle hooks).
 
@@ -48,8 +48,8 @@ impl AgentBackend for KiloBackend {
     fn detect(&self) -> bool {
         // `~/.config/kilo` is XDG-based, so a test redirecting `XDG_CONFIG_HOME`
         // (or `HOME`) redirects detection too; the `kilo` CLI on PATH is a bonus.
-        // The session env vars (KILOCODE_FEATURE, ...) are mid-unification per the
-        // brief, so binary + config dir are the stable signals.
+        // The session env vars (KILOCODE_FEATURE, ...) are unstable (kilocode#9599), so
+        // binary + config dir are the stable signals.
         which::which("kilo").is_ok() || kilo_config_dir_opt().is_some_and(|c| c.is_dir())
     }
 

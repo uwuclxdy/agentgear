@@ -218,12 +218,12 @@ fn cc_registry_covers(plugin: &Plugin) -> bool {
 
 // --- hooks -------------------------------------------------------------------
 
-/// Map a CC hook event to cursor's nearest lifecycle analog. The two verified in
-/// the brief are `SessionStart` -> `sessionStart` and `UserPromptSubmit` ->
-/// `beforeSubmitPrompt` (fires before the prompt is sent); the tool/lifecycle
-/// events map by position. Both subagent events map: cursor's agent-hook catalog
-/// carries `subagentStart` and `subagentStop` (verify-cursor #4). Events with no
-/// clean cursor counterpart are skipped rather than written under a guessed name.
+/// Map a CC hook event to cursor's nearest lifecycle analog. `SessionStart` ->
+/// `sessionStart` and `UserPromptSubmit` -> `beforeSubmitPrompt` (fires before the
+/// prompt is sent); the tool/lifecycle events map by position. Both subagent events
+/// map: cursor's agent-hook catalog carries `subagentStart` and `subagentStop`.
+/// Events with no clean cursor counterpart are skipped rather than written under a
+/// guessed name.
 fn map_event(cc_event: &str) -> Option<&'static str> {
     match cc_event {
         "SessionStart" => Some("sessionStart"),

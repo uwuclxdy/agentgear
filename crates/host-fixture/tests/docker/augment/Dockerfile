@@ -2,7 +2,7 @@
 # augment docker leg: the real auggie CLI ingesting our written config. Built + run
 # by tests/docker/run.sh augment (context = repo root). Config-file parse is the
 # auth-free source of truth; `auggie mcp list` is a best-effort native second opinion
-# (whether it runs pre-login is undocumented — see docs/harness/augment.md).
+# (auth-free: it runs with no login).
 
 # Stage 1: build the fixture host (all backends) from the workspace.
 FROM rust:1-slim-bookworm AS build
@@ -13,7 +13,7 @@ RUN cargo build -p host-fixture --release
 # Stage 2: real auggie + the fixture binary; assert the lifecycle end-to-end.
 # Node 22+ is required by @augmentcode/auggie.
 FROM node:22-slim
-# Pin the CLI for reproducibility; bump alongside docs/harness/augment.md.
+# Pin the CLI for reproducibility.
 RUN npm install -g @augmentcode/auggie@0.32.0
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 

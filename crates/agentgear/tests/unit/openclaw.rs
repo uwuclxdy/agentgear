@@ -95,7 +95,7 @@ fn probe_classifies_absent_healthy_and_needs_repair() {
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
-/// Pins the exact canonical shape from `docs/research/verify-openclaw.md` #2/#4:
+/// Pins the exact canonical shape:
 /// `openclaw doctor --fix` rewrote agentgear's `{type,url,headers}` render into
 /// `{url,headers,transport}` on disk. Our render must equal that body directly
 /// (never the `type`-keyed one), and a probe against a config already in that

@@ -63,7 +63,7 @@ fn reconcile_hooks_writes_cc_nested_shape_with_identity_events_and_is_idempotent
 }
 
 /// `SubagentStart` is a CC hook event and qwen-code's own `HookEventName` enum
-/// contains it verbatim (verify-qwen-code #6), so the identity map must carry it
+/// contains it verbatim, so the identity map must carry it
 /// through like every other shared event. Guards the `map_event` arm: without it, a
 /// CC plugin's `SubagentStart` hook is silently dropped even though qwen runs it.
 #[test]

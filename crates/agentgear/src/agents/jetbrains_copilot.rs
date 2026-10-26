@@ -7,8 +7,7 @@
 //! shared json renderer (`ServerShape::typed()`), so `remove` is exact (only our
 //! server keys) and a second reconcile is a true `NoOp`. Hooks/commands/agents are
 //! repo-level `.github` surfaces (Copilot-CLI / vscode-copilot territory) with no
-//! JetBrains-plugin file consumer, so they are skipped — see
-//! `docs/harness/jetbrains-copilot.md`.
+//! JetBrains-plugin file consumer, so they are skipped.
 //!
 //! User-scope only: capabilities advertise just `user` and the orchestration skips
 //! any other scope, so the lifecycle methods ignore their `scope` argument.
@@ -118,7 +117,7 @@ fn config_base() -> Option<PathBuf> {
 }
 
 /// Pure resolver mirroring the plugin's own `McpConfigurationService.getConfigPath()`
-/// (decompiled, `docs/research/verify-jetbrains-copilot.md`): an absolute
+/// (decompiled): an absolute
 /// `XDG_CONFIG_HOME` wins outright on every platform, Windows included, and lands
 /// directly under `github-copilot` with **no** `intellij` segment. Unset, empty, or
 /// relative falls back to `fallback_base` (`config_base()`), which every real

@@ -13,7 +13,7 @@ use serde::de::DeserializeOwned;
 use crate::error::{Error, Result};
 
 /// Minimum `claude` the crate supports: 2.1.196 is the first with per-entry
-/// `validate` resolving sources against the manifest's own dir (design §concurrency).
+/// `validate` resolving sources against the manifest's own dir.
 #[cfg(feature = "claude")]
 pub(crate) const MIN_CLAUDE_VERSION: &str = "2.1.196";
 #[cfg(feature = "claude")]

@@ -1,6 +1,6 @@
 //! `doctor`: a structured, ordered health report. Every check carries a rendered
 //! fix-hint, so a failing host binary tells the user what to do rather than
-//! surfacing a stack trace (design §doctor).
+//! surfacing a stack trace.
 
 use std::fmt;
 #[cfg(feature = "claude")]
@@ -114,7 +114,7 @@ impl fmt::Display for DoctorReport {
 }
 
 /// The full health report: one shared "host binary on PATH" check, then every
-/// configured agent's own `report` merged in (design §6). `PluginHost::doctor`
+/// configured agent's own `report` merged in. `PluginHost::doctor`
 /// calls this; a claude-only host gets the host-binary check followed by the
 /// claude backend's own report, in order.
 pub(crate) fn doctor(plugin: &Plugin, source: &Source) -> Result<DoctorReport> {

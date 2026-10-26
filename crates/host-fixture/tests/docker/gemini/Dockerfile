@@ -12,7 +12,7 @@ RUN cargo build -p host-fixture --release
 
 # Stage 2: real gemini-cli + the fixture binary; assert the lifecycle end-to-end.
 FROM node:20-slim
-# Pin the CLI for reproducibility; bump alongside docs/harness/gemini.md.
+# Pin the CLI for reproducibility.
 RUN npm install -g @google/gemini-cli@0.50.0
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 

@@ -13,7 +13,7 @@ workspace = true
 # feature (no `tar`/`brotli`, no decompress path) and `embed = false` on the derive
 # emits an empty blob instead of `include_bytes!`. The binary ships zero embed bytes
 # and installs from `Source::GitHub` instead. `claude` is the only backend this host
-# targets. See `docs/design.md` §distribution "Feature-gate pairing".
+# targets.
 [dependencies]
 agentgear = { path = "../../crates/agentgear", default-features = false, features = ["derive", "claude"] }
 

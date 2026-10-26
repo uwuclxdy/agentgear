@@ -19,8 +19,7 @@
 //! `remove` is exact and a second reconcile is a true `NoOp`. `~/.qwen` is honored
 //! via `QWEN_HOME` first (so a test redirecting it redirects the backend), else
 //! HOME-based. Skills land as bare `~/.qwen/skills/<name>/SKILL.md` (both scopes),
-//! tagged for ownership so `remove` only deletes skills we wrote (see
-//! `docs/harness/qwen-code.md`).
+//! tagged for ownership so `remove` only deletes skills we wrote.
 
 use std::collections::BTreeSet;
 use std::fs;

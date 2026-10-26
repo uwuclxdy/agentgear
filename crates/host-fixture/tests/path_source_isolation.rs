@@ -1,9 +1,8 @@
 //! Hermetic proof that `update`/`self_heal` never broadcast one agent's own
 //! persisted `Source::Path` onto a sibling agent installed from a different
 //! source — the stamp marker is per-`(plugin, scope, agent)`
-//! (`docs/design.md`'s per-agent-marker invariant: installing into
-//! `[claude, codex]` must never confuse one backend's marker for another's), so
-//! resolving it back into a runtime `Source` must be too.
+//! (installing into `[claude, codex]` must never confuse one backend's marker for
+//! another's), so resolving it back into a runtime `Source` must be too.
 //!
 //! No docker, no CLI: codex and cline both detect off a pre-created home dir
 //! alone, and `claude` stays undetected (curated PATH), so the fan-out this test

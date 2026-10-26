@@ -298,8 +298,7 @@ fn toml_prune_drops_only_a_container_our_removal_emptied() {
     // ours to prune. This is the whole difference between "we emptied it" and "it is
     // empty". It does NOT extend to the real install flow — a table the user had empty
     // and we then filled IS pruned when ours come back out, since nothing on disk
-    // records who created it. That is the accepted cost `docs/harness/foundation.md`
-    // §0 names, identical to the JSON side's.
+    // records who created it. That is the accepted cost, identical to the JSON side's.
     let mut doc: DocumentMut = "# mine\n[mcp_servers]\n".parse().unwrap();
     assert!(!drop_server(&mut doc, "ours"));
     assert_eq!(doc.to_string(), "# mine\n[mcp_servers]\n", "a table we never wrote into must survive untouched");

@@ -196,7 +196,7 @@ fn kilo_full_lifecycle() {
 
 /// kilo's `mcp.<name>.enabled` is a real per-server on/off flag the user can flip
 /// by hand (opencode-inherited). self_heal must classify that as `Disabled` and
-/// never write it back to `true` (foundation §0 never-re-enable); an explicit
+/// never write it back to `true`; an explicit
 /// `setup` honors user intent and re-enables.
 #[test]
 fn kilo_self_heal_never_reenables_a_user_disable() {

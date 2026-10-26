@@ -50,7 +50,7 @@ pub(crate) struct Person {
 
 /// The `marketplace.json` the crate generates. Carries no `version` field: CC
 /// keys its cache on the `plugin.json` version, and setting a second version here
-/// only masks drift (design §7 rule 1).
+/// only masks drift.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct MarketplaceManifest {
     pub name: String,
@@ -90,7 +90,7 @@ pub(crate) struct PluginEntry {
     #[serde(default)]
     pub errors: Option<Vec<String>>,
     /// `"user"` or `"project"`. Lookup filters on it so a user-scope op never
-    /// reads a project entry first (design §self_heal, the scope-blind caveat).
+    /// reads a project entry first.
     #[serde(default)]
     pub scope: Option<String>,
 }
@@ -138,8 +138,8 @@ pub(crate) struct MarketplaceEntry {
     pub source: Option<String>,
     /// The pinned git ref of a `source: "github"` entry (`known_marketplaces.json`
     /// stores it first-class; absent for a bare/non-github entry). Lets reconcile
-    /// spot a drifted pin and re-point it, since `marketplace update` never moves a
-    /// pin (design §ref-pinning ground truth).
+    /// spot a drifted pin and re-point it, since `marketplace update` never
+    /// moves a pin.
     #[serde(default, rename = "ref")]
     pub ref_: Option<String>,
     /// The dir CC cloned/materialized the marketplace into, carried first-class by

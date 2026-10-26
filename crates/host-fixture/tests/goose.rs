@@ -272,8 +272,8 @@ fn goose_uninstall_prunes_only_the_extensions_mapping_it_emptied() {
 
 /// goose's `extensions.<name>.enabled` is a real per-extension on/off flag a user
 /// can flip by hand. self_heal must classify a user disable as `Disabled` and never
-/// write it back to `true` (foundation never-re-enable); an explicit `setup` honors
-/// user intent and re-enables, mirroring the claude backend's disabled-entry rule.
+/// write it back to `true`; an explicit `setup` honors user intent and re-enables,
+/// mirroring the claude backend's disabled-entry rule.
 #[test]
 fn goose_self_heal_never_reenables_a_user_disable() {
     let env = Env::new("self-heal-disable");
@@ -304,8 +304,7 @@ fn goose_self_heal_never_reenables_a_user_disable() {
 /// (not `<XDG_CONFIG_HOME>/goose/config.yaml`) and the plugins/hooks dir at
 /// `<root>/.agents/plugins` (not the ordinary HOME-based `~/.agents/plugins`).
 /// `detect()` does not consult the env (out of this fix's scope), so it still rides
-/// the `<XDG_CONFIG_HOME>/goose` dir `Env::new` pre-creates. See `docs/harness/goose.md`
-/// gotcha 3.
+/// the `<XDG_CONFIG_HOME>/goose` dir `Env::new` pre-creates.
 #[test]
 fn goose_honors_goose_path_root() {
     let mut env = Env::new("path-root");

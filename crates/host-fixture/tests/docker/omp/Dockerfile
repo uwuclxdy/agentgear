@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # omp (oh-my-pi) docker leg: the real omp CLI ingesting our written config. omp has
 # no documented auth-free headless `mcp list`/validate subcommand (MCP writes are
-# validated only through the interactive `/mcp` TUI — see docs/harness/omp.md), so
+# validated only through the interactive `/mcp` TUI), so
 # the file-config parse is the authoritative assert. Installing the real `omp` and
 # running `omp --version` is a best-effort "the CLI is present + starts" second
 # opinion only; it never fails the leg. Built + run by tests/docker/run.sh omp

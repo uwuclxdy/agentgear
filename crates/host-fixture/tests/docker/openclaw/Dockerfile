@@ -2,7 +2,7 @@
 # openclaw docker leg: the real openclaw CLI ingesting our written config. Built +
 # run by tests/docker/run.sh openclaw (context = repo root). The config-file parse is
 # the auth-free source of truth; `openclaw mcp list` is a best-effort native second
-# opinion (documented auth-free/local per the brief — see docs/harness/openclaw.md).
+# opinion (documented auth-free/local).
 
 # Stage 1: build the fixture host (all backends) from the workspace.
 FROM rust:1-slim-bookworm AS build
@@ -17,7 +17,7 @@ RUN cargo build -p host-fixture --release
 FROM node:24-slim
 # The install script (headless: `--no-onboard`, no ClawHub login) lands the CLI at
 # build time as root; the leg adds its likely bin dirs to PATH. Tracks the script's
-# latest; bump the pin alongside docs/harness/openclaw.md if the script grows one.
+# latest; bump the pin if the script grows one.
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard

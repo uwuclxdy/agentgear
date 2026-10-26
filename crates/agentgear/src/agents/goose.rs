@@ -7,7 +7,7 @@
 //! extension key is our own server name and the whole plugin hooks dir is ours, so
 //! `remove` is exact and a second reconcile is a true `NoOp`.
 //!
-//! Two load-bearing goose caveats (see `docs/harness/goose.md`):
+//! Two load-bearing goose caveats:
 //! - the YAML editor is NOT comment-preserving (no pure-Rust comment-preserving
 //!   YAML writer exists); a write that changes the config re-renders it and drops
 //!   comments. Reconcile stays semantically no-op-aware so an already-converged
@@ -31,11 +31,11 @@
 //! and goose's two shared `AGENTS.md` defaults (`<config-dir>/AGENTS.md`,
 //! `~/.agents/AGENTS.md`) are never written.
 //!
-//! Skipped surfaces (see `docs/harness/goose.md`): commands + agents (both would
+//! Skipped surfaces: commands + agents (both would
 //! translate into goose's single `recipe` YAML format — a command also needs a
 //! `slash_commands:` config.yaml entry, an agent a `sub_recipes:`/by-name
-//! reference — with a Jinja `{{ }}` parameter contract the brief could not pin
-//! down; writing a malformed recipe a live goose rejects is the risk we avoid).
+//! reference — with a Jinja `{{ }}` parameter contract goose's docs under-specify;
+//! writing a malformed recipe a live goose rejects is the risk we avoid).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -146,7 +146,7 @@ impl AgentBackend for GooseBackend {
 
 /// `GOOSE_PATH_ROOT`, goose's own path-root override: it wins unconditionally over
 /// `XDG_CONFIG_HOME`/`HOME` (checked first, no merge) and relocates both the config
-/// file and the plugins/hooks dir (`docs/harness/goose.md` gotcha 3). An unset or
+/// file and the plugins/hooks dir. An unset or
 /// empty value is ignored, and a relative one is dropped: goose keeps only an absolute
 /// root (`config/paths.rs::validated_path_root`) and falls back otherwise, so honoring
 /// a relative root here would write files goose never reads.

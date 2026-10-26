@@ -37,7 +37,7 @@ fn hook_command_survives_the_wrapper_as_one_argument() {
     );
 }
 
-/// `PreCompact` is an exact name in cline's own file-hook enum (verify-cline.md #4),
+/// `PreCompact` is an exact name in cline's own file-hook enum,
 /// so it maps 1:1 and the script lands as a bare-`PreCompact` file in the scanned
 /// hooks dir. Guards the `map_event` arm: drop it and no `PreCompact` file is written.
 #[test]

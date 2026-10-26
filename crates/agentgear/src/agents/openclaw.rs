@@ -7,14 +7,14 @@
 //! dialect, but its own `doctor --fix`/`mcp set` canonicalize that into
 //! `{url,headers,transport}` on disk, which would defeat a whole-object probe
 //! forever; rendering the canonical shape directly keeps a post-canonicalization
-//! probe `Healthy` (`docs/research/verify-openclaw.md` #2/#4). Every key is our own
+//! probe `Healthy`. Every key is our own
 //! server name and every skill dir carries our ownership tag, so `remove` is exact
 //! and a second reconcile is a true `NoOp`.
 //!
-//! openclaw exposes no config-writable surface for hooks/commands/subagents (see
-//! `docs/harness/openclaw.md`): hooks are JS/TS plugin code enabled by a flag, never
-//! a shell command in JSON; "commands" are themselves SKILL.md skills; subagents live
-//! in-config but have no per-file surface to point at. Those are skipped. The
+//! openclaw exposes no config-writable surface for hooks/commands/subagents: hooks
+//! are JS/TS plugin code enabled by a flag, never a shell command in JSON;
+//! "commands" are themselves SKILL.md skills; subagents live in-config but have no
+//! per-file surface to point at. Those are skipped. The
 //! translated CC skills land as bare `~/.openclaw/skills/<name>/SKILL.md` (openclaw
 //! requires `name`+`description`, which the shared renderer ensures). The config is
 //! JSON5 (comments + trailing commas
@@ -74,9 +74,9 @@ impl AgentBackend for OpenclawBackend {
 
     fn capabilities(&self) -> Capabilities {
         // `hooks:false` — openclaw's only hook surface is JS/TS plugin code toggled by
-        // a config flag, not a shell command we can write. User scope only: the brief
-        // documents no project-level config file. mcp + skills + instructions
-        // translate; hooks/commands/subagents have no config-writable surface.
+        // a config flag, not a shell command we can write. User scope only: one
+        // user-global file regardless of cwd. mcp + skills + instructions translate;
+        // hooks/commands/subagents have no config-writable surface.
         Capabilities {
             plugins: false,
             mcp: true,
@@ -138,8 +138,8 @@ impl AgentBackend for OpenclawBackend {
 /// Precedence: `OPENCLAW_CONFIG_PATH` (the file itself) → `OPENCLAW_STATE_DIR` (flat:
 /// `<dir>/openclaw.json`) → `OPENCLAW_HOME` (a HOME-equivalent: openclaw reads
 /// `<dir>/.openclaw/openclaw.json`, one level below it) → `~/.openclaw/openclaw.json`.
-/// `_opt` never errors so `detect` can call it. Scope is not consulted: the brief
-/// documents no project-level config, so every scope maps to this one file.
+/// `_opt` never errors so `detect` can call it. Scope is not consulted: every
+/// scope maps to this one file.
 fn config_path_opt() -> Option<PathBuf> {
     config_path_from(
         env_nonempty("OPENCLAW_CONFIG_PATH").map(PathBuf::from),

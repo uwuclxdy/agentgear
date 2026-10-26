@@ -1,12 +1,12 @@
 //! cursor backend unit tests: the hook event map. cursor renames CC events to its
 //! own camelCase lifecycle names (`SessionStart` -> `sessionStart`, ...). This pins
 //! that `SubagentStart` maps to cursor's real `subagentStart` agent hook (present in
-//! the binary-confirmed 21-event catalog, verify-cursor #4), mirroring `SubagentStop`.
+//! the binary-confirmed 21-event catalog), mirroring `SubagentStop`.
 
 use super::*;
 use crate::components::HookBinding;
 
-/// cursor hosts a `subagentStart` agent hook (verify-cursor #4) and already maps
+/// cursor hosts a `subagentStart` agent hook and already maps
 /// `SubagentStop -> subagentStop`, so the CC `SubagentStart` event must map to
 /// `subagentStart` too. Guards the `map_event` arm end-to-end through `reconcile_hooks`:
 /// without it a CC plugin's `SubagentStart` hook is dropped even though cursor runs it.

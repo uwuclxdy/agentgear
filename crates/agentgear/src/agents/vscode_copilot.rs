@@ -2,9 +2,9 @@
 //! **project-scoped** translate into the repo's own files. User scope is skipped not
 //! because its path is unknown — it is `<userDataDir>/User/mcp.json` — but because
 //! *which* VS Code profile is active is VS Code-internal state not derivable from
-//! disk, so a default-profile write is silently wrong under a non-default profile
-//! (see `docs/harness/vscode-copilot.md`); the orchestration skips this backend at
-//! user scope and the lifecycle methods reject `Scope::User` rather than guess.
+//! disk, so a default-profile write is silently wrong under a non-default profile;
+//! the orchestration skips this backend at user scope and the lifecycle methods
+//! reject `Scope::User` rather than guess.
 //!
 //! MCP goes through the shared json renderer into `<project>/.vscode/mcp.json` under
 //! the root key `servers` (NOT CC's `mcpServers`), `ServerShape::typed()` (VS Code
@@ -15,7 +15,7 @@
 //! `<project>/.github/agents/<plugin>-<name>.agent.md`.
 //! Everything we write is keyed by our server names or prefixed with the plugin name,
 //! so `remove` is exact and a second reconcile is a true `NoOp`. Commands, skills,
-//! and the user-scope profile config are skipped (see the harness doc).
+//! and the user-scope profile config are skipped.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -52,7 +52,7 @@ impl AgentBackend for VscodeCopilotBackend {
         // binary; `~/.vscode` (its extensions/CLI home) is the host-agnostic
         // "installed here" signal. HOME-based via `dirs` so a test redirecting
         // `$HOME` also redirects detection; no session env var ships for it (the
-        // proposed `VSCODE_COPILOT_TERMINAL` was never implemented — see the doc).
+        // proposed `VSCODE_COPILOT_TERMINAL` was never implemented).
         which::which("code").is_ok()
             || which::which("code-insiders").is_ok()
             || dirs::home_dir().is_some_and(|h| h.join(".vscode").is_dir())
@@ -61,7 +61,7 @@ impl AgentBackend for VscodeCopilotBackend {
     fn capabilities(&self) -> Capabilities {
         // Project-scope only: the sole documented, unambiguous config lives in the
         // repo (`.vscode/`, `.github/`). The fan-out skips this backend at user scope.
-        // mcp + hooks + agents translate; commands + skills are skipped (harness doc).
+        // mcp + hooks + agents translate; commands + skills are skipped.
         Capabilities {
             plugins: false,
             mcp: true,

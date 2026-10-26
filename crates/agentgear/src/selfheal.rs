@@ -4,7 +4,7 @@
 //!
 //! Fans out over the plugin's configured agents (user scope only — project scope
 //! has no stable session context to key on in v1). Each *detected* backend's
-//! per-agent marker × `probe()` state drives the table (design §5):
+//! per-agent marker × `probe()` state drives the table:
 //!
 //! | marker | state | action |
 //! |--------|-------|--------|
@@ -127,8 +127,8 @@ fn heal_agent(
     // `--path` install whose tree differs from the embedded blob does not read as
     // perpetual drift (probe wanting embedded bytes, reconcile writing path bytes).
     let state = backend.probe(plugin, scope, &resolved_source)?;
-    // self_heal never re-enables a deliberate disable (the design's install-only
-    // enable flip); adopt/repair both converge without touching enable state.
+    // self_heal never re-enables a deliberate disable; adopt/repair both converge
+    // without touching enable state.
     let desired = Desired { source: resolved_source, reenable: false };
 
     match (has_marker, state) {

@@ -200,8 +200,8 @@ fn opencode_full_lifecycle() {
 
 /// opencode's `mcp.<name>.enabled` is a real per-server on/off flag the user can
 /// flip by hand (unlike the shared json family, which has no disable notion).
-/// self_heal must classify that as `Disabled` and never write it back to `true`
-/// (foundation §0 never-re-enable); an explicit `setup` honors user intent and
+/// self_heal must classify that as `Disabled` and never write it back to `true`;
+/// an explicit `setup` honors user intent and
 /// re-enables, mirroring the claude backend's own disabled-entry handling.
 #[test]
 fn opencode_self_heal_never_reenables_a_user_disable() {

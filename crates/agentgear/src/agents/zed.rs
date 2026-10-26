@@ -15,8 +15,7 @@
 //! the aggregate name+description catalog at ~50KB — a plugin shipping past that is
 //! the author's concern, not truncated here. Zed ships no general hook/command/
 //! subagent config-file surface (its `tasks.json` "hooks" fire on a single
-//! `create_worktree` event, not a CC lifecycle), so those components are skipped —
-//! full mapping and why-skipped detail in `docs/harness/zed.md`.
+//! `create_worktree` event, not a CC lifecycle), so those components are skipped.
 
 use std::path::{Path, PathBuf};
 

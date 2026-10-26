@@ -7,7 +7,7 @@ use crate::doctor::DoctorReport;
 use crate::error::Result;
 use crate::session::SessionSource;
 
-/// Where a plugin is installed. `Local` is intentionally absent (design §API):
+/// Where a plugin is installed. `Local` is intentionally absent:
 /// binary-driven install of user-wide tooling has no coherent local-scope story.
 /// `non_exhaustive` so a future variant lands without a semver major.
 #[non_exhaustive]
@@ -71,7 +71,7 @@ pub enum Source {
     Embedded,
     /// A GitHub-hosted marketplace the `claude` CLI fetches directly, letting users
     /// track a ref for plugin updates without a new binary release. Non-plugin-native
-    /// backends have no local tree here, so they skip (design §API).
+    /// backends have no local tree here, so they skip.
     GitHub {
         /// `"owner/repo"`.
         repo: &'static str,
@@ -90,9 +90,8 @@ pub enum Source {
 pub struct Desired {
     /// Where the plugin tree comes from for this reconcile.
     pub source: Source,
-    /// `true` for an explicit `install`/`update` (the design says install flips
-    /// enable state), `false` for self_heal/adopt (never re-enable a deliberate
-    /// disable).
+    /// `true` for an explicit `install`/`update`, `false` for self_heal/adopt (never
+    /// re-enable a deliberate disable).
     pub reenable: bool,
 }
 
@@ -265,8 +264,8 @@ impl std::fmt::Display for SkipReason {
 
 /// Spawn-free per-agent verdict of [`PluginHost::heal_needed_report`]: would
 /// [`PluginHost::self_heal`] mutate or repair this agent's install, answered from
-/// files alone (CC's registry files + the stamp marker — never the marker alone,
-/// design §self_heal). Whether a standing restart notice counts as a change
+/// files alone (CC's registry files + the stamp marker — never the marker alone).
+/// Whether a standing restart notice counts as a change
 /// depends on the [`SessionSource`] the report was asked under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -516,7 +515,7 @@ pub trait PluginHost {
     }
 
     /// SessionStart entrypoint. Repairs broken installs, never resurrects a
-    /// deliberate uninstall, never downgrades, never re-enables (design §6).
+    /// deliberate uninstall, never downgrades, never re-enables.
     /// `session` is the event the host fired under: only a `startup` or `resume`
     /// session began by loading the plugin tree from disk, so only those may
     /// retire a standing restart notice on a healthy row; a `/compact`, `/clear`,

@@ -15,8 +15,7 @@
 //! `PreCompact` share cline's exact name; CC's session-level `SessionEnd` maps onto
 //! cline's `SessionShutdown` (a once-per-session teardown hook). CC's `SessionStart`
 //! is skipped: cline has no session-level start hook, only the per-task `TaskStart`.
-//! Subagents have no cline file surface and are skipped. See `docs/harness/cline.md`
-//! for the full mapping.
+//! Subagents and skills are skipped.
 //!
 //! Instructions land as one plugin-named rule file in cline's own user-scope rules
 //! dir, `<CLINE_DIR|~/.cline>/rules/agentgear-<plugin>.md`, through the shared
@@ -69,8 +68,8 @@ impl AgentBackend for ClineBackend {
 
     fn capabilities(&self) -> Capabilities {
         // `project` covers workflows/hooks (`.clinerules/`); MCP is global-only.
-        // Commands land as workflows; subagents + skills have no cline file surface,
-        // and instructions is user-scope only (`<store>/rules/`).
+        // Commands land as workflows; subagents + skills are skipped, and
+        // instructions is user-scope only (`<store>/rules/`).
         Capabilities {
             plugins: false,
             mcp: true,
@@ -188,9 +187,9 @@ fn detect_dirs() -> Vec<PathBuf> {
 
 /// The MCP settings file, global-only (cline has no project MCP scope). The CLI's
 /// own overrides win outright, in its order: a full-path `CLINE_MCP_SETTINGS_PATH`,
-/// then `CLINE_DATA_DIR`, then `CLINE_DIR`'s `data` subdir (all live-proven, see
-/// `docs/research/verify-cline.md`). Those are CLI-only vocabulary, so an override
-/// set means the CLI is the target and the legacy VS Code candidate is off the table.
+/// then `CLINE_DATA_DIR`, then `CLINE_DIR`'s `data` subdir (all live-proven). Those are
+/// CLI-only vocabulary, so an override set means the CLI is the target and the legacy
+/// VS Code candidate is off the table.
 ///
 /// Unoverridden, the path is mid-migration, so we probe: modern unified store first
 /// (it wins merge conflicts), legacy VS Code globalStorage second, first existing
@@ -241,7 +240,7 @@ fn hooks_dir(scope: &Scope) -> Result<PathBuf> {
 }
 
 /// The dead `~/Documents/Cline/Rules/Hooks` dir this backend wrote user-scope hook
-/// scripts to until 2026-07-17 (gotcha 1): cline's resolver never scanned it, so
+/// scripts to until 2026-07-17: cline's resolver never scanned it, so
 /// every hook written there was silently inert. `None` at project scope, which
 /// always used the correct `.clinerules/hooks` path. Swept on every `reconcile`
 /// (the retired-path policy never sweeps on `remove`) so a stray script an old
@@ -336,7 +335,7 @@ fn file_is_ours(path: &Path, plugin: &str) -> bool {
 /// CC's per-tool `matcher` is dropped: cline's surface is one script per event with
 /// no matcher field, so a `PreToolUse` hook scoped to `Bash` runs on every tool here.
 /// Filtering inside the script would need cline's own tool vocabulary, which no doc
-/// pins. See `docs/harness/cline.md` gotcha 9.
+/// pins.
 fn render_hook_script(plugin: &str, hooks: &[&HookBinding]) -> String {
     const TEMPLATE: &str = r##"#!/usr/bin/env bash
 # __TAG__
