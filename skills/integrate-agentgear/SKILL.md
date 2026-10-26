@@ -13,8 +13,7 @@ native config files, detect-gated, never clobbering user config (`copilot-cli` i
 orchestrated through its own plugin CLI rather than a per-surface config translate). The host declares intent once;
 agentgear delivers it per harness.
 
-This skill is the process. The exhaustive API lives in the repo's `wiki/` and `docs/` (mapped at
-the end); cite those rather than restating them.
+This skill is the process. The exhaustive API lives in the repo's `wiki/` pages (mapped at the end); cite them rather than restating them.
 
 ## fit check (do this first)
 
@@ -23,8 +22,7 @@ Answer these before writing any code. A "no" changes the plan.
 1. **Does one binary both ship and install the plugin?** agentgear's embed model assumes the
    `PluginHost` binary IS the artifact that carries and installs the plugin tree. A plugin whose
    binary is a separate, independently-versioned artifact the plugin locates at runtime (the way
-   slopcat's plugin finds a `slopcat` on PATH) has no clean agentgear story yet. Track it against
-   the companion-binary item in `docs/todo.md` before committing to a migration.
+   slopcat's plugin finds a `slopcat` on PATH) has no clean agentgear story yet.
 2. **The plugin's own binary distribution stays the host's job.** `Source` models where the
    plugin *tree* comes from, never where the host's compiled binary comes from. Keep any
    curl+checksum / PATH-resolution / version-GC installer the host already has; agentgear does not
@@ -67,9 +65,7 @@ The smallest working host is Claude-only. Four things (shapes from `examples/hel
   `plugin/.claude-plugin/plugin.json`; its `name` must equal the derive's `name`, its `version`
   must equal `CARGO_PKG_VERSION`, and `author` is required (it becomes the marketplace owner).
 
-Then wire the binary's own subcommands to the lifecycle methods (`setup` → `install`,
-`uninstall`, `doctor`, and for a fuller surface `update`, `self-heal`, `check-restart`). Point the
-plugin's `SessionStart` hook at `self_heal()` and `UserPromptSubmit` at `restart_pending()`.
+Then wire the binary's own subcommands to the lifecycle methods (`setup` → `install`, `uninstall`, `doctor`, and for a fuller surface `update`, `self-heal`, `check-restart`). Point the plugin's `SessionStart` hook at `self_heal()`, gated as `if MyPlugin::heal_needed_report()?.needed() { MyPlugin::self_heal()?; }`: the pre-check reads files and spawns no CLI, so a healthy `claude` install skips the heal's `claude` calls. Point `UserPromptSubmit` at `restart_pending()`.
 
 The full attribute table, the six-subcommand `main.rs`, and the tree rules are in
 `wiki/Getting-Started.md` and `wiki/Plugin-Tree.md`. Do not restate them here; read them.
@@ -86,7 +82,7 @@ plumbing it replaces. Delete in this order, verifying after each:
 | a committed `marketplace.json` | generated into the versioned dir at materialize; never ship one |
 | a per-client config-merge engine (per-harness JSON/TOML/YAML writers, "which client do I support" descriptor files) | the built-in backends + `confedit`'s atomic read-modify-write; name harnesses in `agents = [...]` instead of writing translators |
 | a hand-rolled tree materialize / diff-copy | agentgear's `materialize` (tree hashing, atomic versioned-dir flip) |
-| manual `SessionStart` self-heal logic | point the existing hook at `self_heal()` |
+| manual `SessionStart` self-heal logic | point the existing hook at `self_heal()`, gated on `heal_needed_report()?.needed()` |
 | a hand-maintained CC-version floor check | agentgear gates on `claude --version` before any mutating call |
 | a hand-written `statusLine` writer in `~/.claude/settings.json` (refuse/force flags on a foreign value) | delete it; agentgear writes no status-line slot anymore — a host ships a `statusline` print subcommand and the user wires it manually |
 
@@ -121,14 +117,11 @@ Grep the tree afterward for the deleted symbols and any surviving `Command::new(
   branches on its caller sees the wrong harness. Unlike `${CLAUDE_PLUGIN_ROOT}` (skipped, below),
   this token is expanded, so a command carrying it stays portable.
 
-Per-harness fidelity (what each backend translates, what it skips and why) is in
-`docs/harness/<id>.md` and `docs/harness/matrix.md`. Read the target backend's doc before promising
-a surface reaches it.
+Per-harness fidelity (what each backend translates, what it skips and why) is in `wiki/Agent-Backends.md`, `wiki/Harness-Comparison.md` and the `wiki/Capability-*.md` pages. Read them before promising a surface reaches a backend.
 
 ## what does NOT migrate yet (gap blockers)
 
-Check these against the target plugin before promising a full migration. Each is an open item in
-`docs/todo.md`; some in depth in `docs/fox-nyactx-integration.md`.
+Check these against the target plugin before promising a full migration.
 
 - **statusLine is no longer written by agentgear at all; any settings key is unmodeled.** The
   automatic slot wiring (declaration, five slot backends, stash-and-restore) is retired: a host
@@ -161,8 +154,6 @@ Check these against the target plugin before promising a full migration. Each is
 | need | read |
 |---|---|
 | every `#[plugin(...)]` attr, defaults, the tree rules | `wiki/Getting-Started.md`, `wiki/Plugin-Tree.md` |
-| lifecycle method signatures, `Scope`, `Source`, reports | `wiki/Types-and-Errors.md`, `docs/design.md` (public API) |
-| which backend translates what, event maps, skips | `wiki/Agent-Backends.md`, `docs/harness/<id>.md`, `docs/harness/matrix.md` |
-| locked design decisions, accepted limits, ground-truth schemas | `docs/design.md` |
-| open gaps + the nyactx adoption backlog | `docs/todo.md`, `docs/fox-nyactx-integration.md` |
+| lifecycle method signatures, `Scope`, `Source`, reports | `wiki/Types-and-Errors.md` |
+| which backend translates what, event maps, skips | `wiki/Agent-Backends.md`, `wiki/Harness-Comparison.md`, `wiki/Capability-*.md` |
 | test harness rules | `wiki/Testing-Your-Host.md` |

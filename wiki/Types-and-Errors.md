@@ -2,7 +2,7 @@
 
 The programmatic surface: what a host reads when it wants structured results instead of a
 printed `Display` summary. The result enums a host matches on (`Outcome`, `AgentStatus`,
-`SkipReason`, `CheckStatus`, `Error`) are `#[non_exhaustive]`, so give them a wildcard arm.
+`SkipReason`, `HealNeededVerdict`, `CheckStatus`, `Error`) are `#[non_exhaustive]`, so give them a wildcard arm.
 The data types a backend builds or reads by field (`Capabilities`, `AgentResult`, the
 components IR) are not, so you can construct and exhaustively match those.
 
@@ -22,7 +22,7 @@ What a lifecycle op actually did.
 
 ## AgentReport, AgentResult, AgentStatus, SkipReason
 
-Every `*_report` lifecycle method (`install_report`, `install_into_report`, `update_report`,
+Every lifecycle `_report` twin (`install_report`, `install_into_report`, `update_report`,
 `uninstall_report`, `self_heal_report`) returns `Result<AgentReport>`. The plain methods
 (`install`, `update`, ...) collapse the same report to one `Outcome` and surface any per-agent
 failure as `Err(Error::Backend)`.
@@ -62,6 +62,29 @@ directly to build a per-agent UI, or use the two convenience methods:
 `AgentReport` and `AgentStatus` both have a `Display` impl (one `agent: status` line per result,
 using `Outcome`'s or `SkipReason`'s own wording), a ready `setup` summary when a host just wants
 to print it.
+
+## HealNeededReport, HealNeededResult, HealNeededVerdict
+
+`heal_needed_report()` returns `Result<HealNeededReport>`: one verdict per configured agent on whether `self_heal()` would change anything, answered from files with no CLI spawn. It never returns `Err` today.
+
+```rust
+pub struct HealNeededReport {
+    pub results: Vec<HealNeededResult>,   // one per configured agent, in `agents` order
+}
+
+pub struct HealNeededResult {
+    pub agent: &'static str,
+    pub verdict: HealNeededVerdict,
+}
+
+pub enum HealNeededVerdict {
+    Needed { reason: String },   // self_heal would act; `reason` is short and user-facing
+    Clean,                       // self_heal would change nothing, the restart-pending flag included
+    Skipped(SkipReason),         // the same skip self_heal would take
+}
+```
+
+`HealNeededReport::needed() -> bool` is true when any agent is `Needed`; a host's `SessionStart` hook runs `self_heal()` only then. `claude` answers from Claude Code's registry files plus agentgear's own marker; every other agent the pre-check does not skip answers `Needed`. `HealNeededReport` and `HealNeededVerdict` have a `Display` impl: one `agent: verdict` line per agent, the verdict reading `needed (<reason>)`, `clean`, or `skipped (<reason>)`.
 
 ## Capabilities
 

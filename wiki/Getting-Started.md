@@ -98,7 +98,13 @@ fn main() -> anyhow::Result<()> {
         Some("setup")         => { MyHost::install(Scope::User, Source::Embedded)?; }
         Some("update")        => { MyHost::update(Scope::User)?; }
         Some("uninstall")     => { MyHost::uninstall(Scope::User)?; }
-        Some("self-heal")     => { MyHost::self_heal()?; }
+        Some("self-heal")     => {
+            // SessionStart hook entry: heal only when the pre-check says a
+            // heal would change something.
+            if MyHost::heal_needed_report()?.needed() {
+                MyHost::self_heal()?;
+            }
+        }
         Some("check-restart") => {
             // UserPromptSubmit hook entry: print the reload notice if an update
             // landed that this session has not loaded yet.
@@ -133,7 +139,7 @@ MyHost::install(Scope::Project { path: std::env::current_dir()? }, Source::Embed
 
 Scope support is per backend. One whose `capabilities().scopes` omits `"project"` is skipped silently, and `vscode-copilot` is project-only (user scope skips it the same way). [Scopes & gates](Capability-Scopes) has the per-backend split and the trust gates.
 
-Point the plugin's hooks at subcommands. The `SessionStart` hook calls `MyHost::self_heal()`, a no-op on a healthy install that repairs a broken one without resurrecting an uninstall. The `UserPromptSubmit` hook calls a `check-restart` subcommand wrapping `MyHost::restart_pending()`: after an out-of-band `setup update`, it prints a notice that the running session still has the old plugin loaded and needs a `/reload-plugins`. Claude Code does not hot-reload plugin hooks, so ship the `UserPromptSubmit` hook from your first release. It fires from whatever version the running session already has. Both hooks live in `hooks/hooks.json` at the plugin root:
+Point the plugin's hooks at subcommands. The `SessionStart` hook calls `MyHost::self_heal()`, a no-op on a healthy install that repairs a broken one without resurrecting an uninstall. Gate it on `MyHost::heal_needed_report()?.needed()`, as above: the pre-check reads files and spawns no CLI, so a healthy install skips the heal's `claude` calls. [Types and errors](Types-and-Errors#healneededreport-healneededresult-healneededverdict) has the per-agent verdicts; any non-`claude` agent the pre-check does not skip answers `Needed`, so a host with any such agent detected still heals every session. The `UserPromptSubmit` hook calls a `check-restart` subcommand wrapping `MyHost::restart_pending()`: after an out-of-band `setup update`, it prints a notice that the running session still has the old plugin loaded and needs a `/reload-plugins`. Claude Code does not hot-reload plugin hooks, so ship the `UserPromptSubmit` hook from your first release. It fires from whatever version the running session already has. Both hooks live in `hooks/hooks.json` at the plugin root:
 
 ```json
 {

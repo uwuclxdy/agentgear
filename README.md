@@ -32,9 +32,9 @@ $ mytool doctor
 ## Why
 
 - **One binary, 25 agents.** `agents = [...]` in the derive picks the targets. Claude Code and GitHub Copilot CLI get the full plugin lifecycle; the other 23 get config-merge: mcp servers, hooks, commands, agent defs translated into each tool's own config file. Only installed tools are touched.
-- **One dependency, one derive.** Add the crate, write a `#[derive(PluginHost)]` struct and a one-line `build.rs`. The binary then gets `install` / `update` / `uninstall` / `self_heal` / `doctor`.
+- **One dependency, one derive.** Add the crate, write a `#[derive(PluginHost)]` struct and a one-line `build.rs`. The binary then gets `install` / `update` / `uninstall` / `self_heal` / `doctor`, plus `heal_needed_report`, a pre-check that tells a hook whether `self_heal` would change anything, reading files and spawning no CLI.
 - **Know which agent did what.** Each lifecycle call has a `_report` twin (`install_report`, `update_report`, `uninstall_report`, `self_heal_report`) returning an `AgentReport`: one `AgentResult` per configured agent, each `Converged` (with its own `Outcome`), `Skipped` (with a `SkipReason`), or `Failed` (with the detail). A host reads it to tell the user which of its 25 agents actually installed instead of guessing from one collapsed result. The plain `install` / `update` / `uninstall` / `self_heal` calls still return a single merged `Outcome` for a host that only wants pass/fail.
-- **The CLI is the source of truth.** Every mutation goes through `claude plugin …`, so a Claude Code registry schema bump never breaks the crate. It reads state back through `list --json` for drift checks.
+- **The CLI is the source of truth.** Every install, update, uninstall and repair goes through `claude plugin …`, and `self_heal` reads state back through `list --json`. The spawn-free `heal_needed_report` pre-check reads Claude Code's registry files instead and answers `Needed` when a file its verdict depends on cannot be read or parsed, or on an `installed_plugins.json` schema version it does not recognize, handing the decision back to `self_heal` and the CLI. The one direct registry write is `repoint_install_paths`, which a host calls for its own `installPath` remap.
 - **Self-heal that respects the user.** A SessionStart hook repairs a broken install without overriding a deliberate choice: it never resurrects an uninstall, re-enables a disable, or downgrades a newer install.
 - **Tells the model when to reload.** After an out-of-band `setup update`, a `UserPromptSubmit` hook surfaces a restart-pending flag so the model tells the user to run `/reload-plugins`; the next `self_heal` clears it once the new version is loaded.
 - **Atomic materialize.** The plugin tree ships as a compressed blob (a pure-Rust brotli archive, roughly a quarter of the raw text size). It decompresses into a content-keyed versioned directory with an atomic pointer flip, so a crash mid-install leaves the previous state intact.
@@ -96,10 +96,12 @@ fn main() {
 }
 ```
 
-Wire the plugin's SessionStart hook to call `self_heal` so an existing install repairs itself each session:
+Wire the plugin's SessionStart hook to call `self_heal` so an existing install repairs itself each session, gated on the pre-check so a healthy Claude-only install skips the `claude` calls (any other agent the pre-check does not skip answers `Needed`, so a host with such an agent still heals every session):
 
 ```rust
-MyHost::self_heal()?; // no-op on a healthy install
+if MyHost::heal_needed_report()?.needed() {
+    MyHost::self_heal()?;
+}
 ```
 
 The plugin tree lives at `<crate>/plugin/.claude-plugin/plugin.json` by default, with its `version` equal to `CARGO_PKG_VERSION`.
