@@ -72,7 +72,12 @@ use known_agents::{KNOWN_AGENTS, feature_const_ident};
 /// - a listed agent whose cargo feature is off (the message names the `features = [..]` fix);
 /// - `default_source = "github"` without `github_repo`;
 /// - a `plugin.json` that is missing, is invalid JSON, or whose `name` disagrees with the attr;
+/// - a `name` that is not a single file-name component (a separator, a Windows drive
+///   prefix, a NUL, or `.`/`..`), because the backends interpolate it into paths;
 /// - a missing `build.rs` (the `AGENTGEAR_GUARD` guard).
+///
+/// The derive is the only name check: a hand-written `PluginHost` impl reaches the
+/// backends unchecked.
 ///
 /// # Example
 ///
@@ -247,6 +252,15 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
     }
 
     let name = name.ok_or_else(|| syn::Error::new(span, "`#[plugin(..)]` requires `name = \"...\"`"))?;
+    // Backends interpolate this name into paths under the user's config dir
+    // (`agentgear-<name>.md` and per-stem paths); a separator, a Windows drive
+    // prefix, a NUL, or a `.`/`..` component would leave that dir at write time.
+    if name.is_empty() || name.contains(['/', '\\', ':', '\0']) || name == "." || name == ".." {
+        return Err(syn::Error::new(
+            span,
+            format!("plugin name {name:?} must be a single file-name component (no `/`, `\\`, `:`, `.` or `..`)"),
+        ));
+    }
     let marketplace = marketplace.unwrap_or_else(|| name.clone());
     let version = version.unwrap_or_else(|| quote! { ::core::env!("CARGO_PKG_VERSION") });
     let tree = tree.unwrap_or_else(|| "$CARGO_MANIFEST_DIR/plugin".to_string());
@@ -352,5 +366,34 @@ mod tests {
             panic!("known ids must parse");
         };
         assert_eq!(attrs.agents, ["claude", "copilot-cli", "qwen-code"]);
+    }
+
+    fn name_attr_error(name: &str) -> Option<String> {
+        let input: DeriveInput = syn::parse_str(&format!("#[plugin(name = {name:?})] struct Host;")).unwrap();
+        parse_attrs(&input).err().map(|e| e.to_string())
+    }
+
+    #[test]
+    fn a_plugin_name_that_escapes_a_write_path_is_rejected() {
+        for name in ["a/b", "a\\b", "C:foo", "a\0b", "..", ".", ""] {
+            let msg = name_attr_error(name).unwrap_or_else(|| panic!("{name:?} must be rejected"));
+            assert_eq!(
+                msg,
+                format!("plugin name {name:?} must be a single file-name component (no `/`, `\\`, `:`, `.` or `..`)"),
+                "case {name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_kebab_case_plugin_name_parses() {
+        let input: DeriveInput = syn::parse_quote! {
+            #[plugin(name = "my-plugin")]
+            struct Host;
+        };
+        let Ok(attrs) = parse_attrs(&input) else {
+            panic!("a kebab-case name must parse");
+        };
+        assert_eq!(attrs.name, "my-plugin");
     }
 }
