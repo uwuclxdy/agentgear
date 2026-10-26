@@ -27,7 +27,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use agentgear::{PluginHost, Scope, Source};
+use agentgear::prelude::{PluginHost, Scope, SessionSource, Source};
 
 #[derive(PluginHost)]
 #[plugin(
@@ -49,7 +49,7 @@ fn main() -> ExitCode {
         }
         Some("update") => report(HooksEverywhere::update(Scope::User)),
         Some("uninstall") => report(HooksEverywhere::uninstall(Scope::User)),
-        Some("self-heal") => report(HooksEverywhere::self_heal()),
+        Some("self-heal") => report(HooksEverywhere::self_heal(SessionSource::from_stdin())),
         // Prints the restart notice as plain stdout (most harnesses feed non-JSON
         // hook stdout back as context) when an update is pending, else nothing.
         // Always exits 0 so a per-prompt hook never blocks the user.

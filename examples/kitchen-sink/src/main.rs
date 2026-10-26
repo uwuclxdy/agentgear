@@ -19,7 +19,7 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use agentgear::{PluginHost, Scope, Source};
+use agentgear::prelude::{PluginHost, Scope, SessionSource, Source};
 
 #[derive(PluginHost)]
 #[plugin(name = "kitchen-sink", agents = ["claude", "codex", "opencode", "gemini", "cursor", "crush", "goose"])]
@@ -34,7 +34,7 @@ fn main() -> ExitCode {
         }
         Some("update") => report(KitchenSink::update(Scope::User)),
         Some("uninstall") => report(KitchenSink::uninstall(Scope::User)),
-        Some("self-heal") => report(KitchenSink::self_heal()),
+        Some("self-heal") => report(KitchenSink::self_heal(SessionSource::from_stdin())),
         // Prints the restart notice as plain stdout (Claude Code feeds non-JSON hook
         // stdout back as context) when an update is pending, else nothing. Always
         // exits 0 so a per-prompt hook never blocks the user.

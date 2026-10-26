@@ -8,9 +8,11 @@
 //! actually changed the on-disk plugin (a takeover of an unowned install included, since
 //! the session is stranded by the tree moving under it rather than by whose install it
 //! was); a reconcile that changed nothing clears it, as does a heal that found the
-//! install already current — a fresh session loaded what CC holds, so the nag no longer
-//! applies. `install` never sets it (a first install precedes any session that relies on
-//! the plugin).
+//! install already current — both only when the firing `SessionStart` began by loading
+//! plugin contents (`startup`/`resume`). `/compact` and `/clear` fire inside the session
+//! that already loaded the plugin, so a heal under them leaves the notice standing; a
+//! clean-uninstall heal clears it under any event, the plugin being gone. `install` never
+//! sets it (a first install precedes any session that relies on the plugin).
 //!
 //! The flag is advisory UX state, not transactional: a write/clear failure is
 //! swallowed (`let _ = …`) so it can never flip a successful lifecycle op red or

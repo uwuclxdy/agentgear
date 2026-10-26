@@ -18,7 +18,7 @@
 //! compiled example of the derive-free value types follows below.
 //!
 //! ```ignore
-//! use agentgear::{PluginHost, Scope, Source};
+//! use agentgear::{PluginHost, Scope, SessionSource, Source};
 //!
 //! #[derive(PluginHost)]
 //! #[plugin(name = "claudix", agents = ["claude", "codex", "gemini"])]
@@ -26,7 +26,7 @@
 //!
 //! ClaudixHost::install(Scope::User, Source::Embedded)?; // all detected agents
 //! ClaudixHost::install_into(Scope::User, Source::Embedded, &["gemini"])?; // one
-//! ClaudixHost::self_heal()?; // SessionStart entrypoint
+//! ClaudixHost::self_heal(SessionSource::Startup)?; // SessionStart entrypoint
 //! ```
 //!
 //! The value types need no derive, so this block is a real, compiled doctest. It
@@ -123,6 +123,7 @@ mod restart;
 #[path = "../tests/unit/scratch.rs"]
 mod scratch;
 mod selfheal;
+mod session;
 mod stamp;
 mod util;
 
@@ -143,6 +144,7 @@ pub use host::{
 };
 #[cfg(feature = "claude")]
 pub use repoint::{Remap, RepointReport, RepointSkip, Repointed, repoint_install_paths};
+pub use session::SessionSource;
 pub use statusline::StatusLineDecl;
 
 #[cfg(feature = "derive")]
@@ -150,5 +152,5 @@ pub use agentgear_derive::PluginHost;
 
 /// A ready-to-glob prelude for host binaries.
 pub mod prelude {
-    pub use crate::{AgentReport, DoctorReport, Outcome, PluginHost, Scope, Source};
+    pub use crate::{AgentReport, DoctorReport, Outcome, PluginHost, Scope, SessionSource, Source};
 }

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::doctor::DoctorReport;
 use crate::error::Result;
+use crate::session::SessionSource;
 
 /// Where a plugin is installed. `Local` is intentionally absent (design §API):
 /// binary-driven install of user-wide tooling has no coherent local-scope story.
@@ -263,19 +264,22 @@ impl std::fmt::Display for SkipReason {
 }
 
 /// Spawn-free per-agent verdict of [`PluginHost::heal_needed_report`]: would
-/// `self_heal()` mutate or repair this agent's install, answered from files
-/// alone (CC's registry files + the stamp marker — never the marker alone,
-/// design §self_heal).
+/// [`PluginHost::self_heal`] mutate or repair this agent's install, answered from
+/// files alone (CC's registry files + the stamp marker — never the marker alone,
+/// design §self_heal). Whether a standing restart notice counts as a change
+/// depends on the [`SessionSource`] the report was asked under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HealNeededVerdict {
-    /// `self_heal()` would act on this agent (mutate or repair).
+    /// [`PluginHost::self_heal`] would act on this agent (mutate or repair).
     Needed {
         /// A short, user-facing reason.
         reason: String,
     },
-    /// `self_heal()` would change nothing for this agent (the restart flag
-    /// included).
+    /// [`PluginHost::self_heal`] would change nothing for this agent. The
+    /// restart flag is included only when the calling event may retire it (a
+    /// `startup` or `resume`); a notice a `/compact`, `/clear`, fork, or unknown
+    /// event cannot retire leaves the verdict `Clean`.
     Clean,
     /// The agent was skipped before any verdict (the lifecycle fan-out's skip
     /// reasons); a skipped agent contributes nothing to [`HealNeededReport::needed`].
@@ -513,29 +517,34 @@ pub trait PluginHost {
 
     /// SessionStart entrypoint. Repairs broken installs, never resurrects a
     /// deliberate uninstall, never downgrades, never re-enables (design §6).
-    /// Collapses [`PluginHost::self_heal_report`] like [`PluginHost::install`].
-    fn self_heal() -> Result<Outcome> {
-        Self::self_heal_report()?.into_merged()
+    /// `session` is the event the host fired under: only a `startup` or `resume`
+    /// session began by loading the plugin tree from disk, so only those may
+    /// retire a standing restart notice on a healthy row; a `/compact`, `/clear`,
+    /// fork, or unknown source leaves it standing. Collapses
+    /// [`PluginHost::self_heal_report`] like [`PluginHost::install`].
+    fn self_heal(session: SessionSource) -> Result<Outcome> {
+        Self::self_heal_report(session)?.into_merged()
     }
 
     /// [`PluginHost::self_heal`] with per-agent results. Same `Err` contract as
     /// [`PluginHost::install_report`]: only the lock or a missing data root.
-    fn self_heal_report() -> Result<AgentReport> {
-        crate::selfheal::self_heal_report(&Self::descriptor(), Self::DEFAULT_SOURCE)
+    fn self_heal_report(session: SessionSource) -> Result<AgentReport> {
+        crate::selfheal::self_heal_report(&Self::descriptor(), Self::DEFAULT_SOURCE, session)
     }
 
     /// Spawn-free pre-check for [`PluginHost::self_heal`]: one verdict per
     /// configured agent — `Needed` (self_heal would act, with a short reason),
-    /// `Clean` (self_heal would change nothing, the restart flag included), or
-    /// `Skipped` (a backend self_heal skips: undetected, no surface at this
-    /// scope, or a github source it cannot serve) — answered from files alone,
-    /// so a host's hook can run the CLI only when a heal would actually act.
-    /// Non-`claude` backends answer `Needed` (there is no spawn-free check for
-    /// them), so a host with any of them keeps the current behavior; collapse
-    /// with [`HealNeededReport::needed`]. Never returns `Err` today; reserved for
-    /// a whole-call precondition.
-    fn heal_needed_report() -> Result<HealNeededReport> {
-        crate::selfheal::heal_needed_report(&Self::descriptor(), Self::DEFAULT_SOURCE)
+    /// `Clean` (self_heal would change nothing; a standing restart notice counts
+    /// as a change only when `session` may retire it), or `Skipped` (a backend
+    /// self_heal skips: undetected, no surface at this scope, or a github source
+    /// it cannot serve) — answered from files alone, so a host's hook can run the
+    /// CLI only when a heal would actually act. Non-`claude` backends answer
+    /// `Needed` (there is no spawn-free check for them), so a host with any of
+    /// them keeps the current behavior; collapse with
+    /// [`HealNeededReport::needed`]. Never returns `Err` today; reserved for a
+    /// whole-call precondition.
+    fn heal_needed_report(session: SessionSource) -> Result<HealNeededReport> {
+        crate::selfheal::heal_needed_report(&Self::descriptor(), Self::DEFAULT_SOURCE, session)
     }
 
     /// `Some(message)` when an update landed that the running CC session has not

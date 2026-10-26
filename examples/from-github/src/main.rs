@@ -13,7 +13,7 @@
 
 use std::process::ExitCode;
 
-use agentgear::{PluginHost, Scope, Source};
+use agentgear::prelude::{PluginHost, Scope, SessionSource, Source};
 use from_github::FromGithub;
 
 fn main() -> ExitCode {
@@ -27,7 +27,7 @@ fn main() -> ExitCode {
         }
         Some("update") => report(FromGithub::update(Scope::User)),
         Some("uninstall") => report(FromGithub::uninstall(Scope::User)),
-        Some("self-heal") => report(FromGithub::self_heal()),
+        Some("self-heal") => report(FromGithub::self_heal(SessionSource::from_stdin())),
         Some("doctor") => match FromGithub::doctor() {
             Ok(report) => {
                 print!("{report}");

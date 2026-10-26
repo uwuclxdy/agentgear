@@ -59,9 +59,10 @@ use known_agents::{KNOWN_AGENTS, feature_const_ident};
 /// 2. expect the adoption release itself to migrate nobody through the `SessionStart`
 ///    hook, which ships inside the plugin and so only reaches releases that already
 ///    carried it;
-/// 3. call `self_heal()` from somewhere in the binary too (a daemon tick, an MCP
-///    server's startup, a launcher pre-flight), because a plugin that fails to load
-///    cannot repair itself.
+/// 3. call `self_heal(SessionSource::Unknown)` (or the source of the event it runs
+///    on) from somewhere in the binary too (a daemon tick, an MCP server's startup,
+///    a launcher pre-flight), because a plugin that fails to load cannot repair
+///    itself. A non-hook caller never retires a standing restart notice.
 ///
 /// Full path: <https://github.com/uwuclxdy/agentgear/wiki/Adopting-An-Existing-Plugin>
 ///

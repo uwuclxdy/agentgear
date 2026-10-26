@@ -31,9 +31,20 @@
 //! repair strands the running session; config-family harnesses re-read each session and
 //! need no nag. Every CC reconcile above keys the flag on its own outcome, a takeover of
 //! an unowned install included: changed something sets it, changed nothing clears it.
-//! What strands the session is the tree moving under it, never whose install it was. The
-//! two rows that run no reconcile (healthy, clean uninstall) clear it; the disabled row
-//! leaves it alone, since it converges nothing either way.
+//! What strands the session is the tree moving under it, never whose install it was, so
+//! a changed outcome sets the flag under every firing event.
+//!
+//! Retiring a standing notice is not unconditional: only a `SessionStart` that began by
+//! loading the plugin tree from disk (`startup`/`resume`, see
+//! [`SessionSource::loaded_plugin_contents`]) proves the running session holds the
+//! current tree. `/compact` and `/clear` fire inside the session that loaded the plugin
+//! at startup — CC memoizes plugin hook registration per session — so a heal under them
+//! leaves the notice standing; a `fork` is excluded too, because an in-process fork
+//! inherits that stale registration and the payload does not distinguish it (the notice
+//! outliving a fork costs one session). Of the two rows that run no reconcile, the healthy
+//! row clears the flag only under a retiring event; the clean-uninstall row clears it under
+//! any event, the plugin being gone, so the notice is moot. The disabled row leaves it
+//! alone, since it converges nothing either way.
 
 use crate::agents::{AgentBackend, BackendState};
 use crate::error::Result;
@@ -41,9 +52,10 @@ use crate::host::{
     AgentReport, AgentStatus, Capabilities, Desired, HealNeededReport, HealNeededVerdict, Outcome, Plugin, Scope, SkipReason, Source,
 };
 use crate::install::resolve;
+use crate::session::SessionSource;
 use crate::{lock, restart, stamp};
 
-pub(crate) fn self_heal_report(plugin: &Plugin, source: Source) -> Result<AgentReport> {
+pub(crate) fn self_heal_report(plugin: &Plugin, source: Source, session: SessionSource) -> Result<AgentReport> {
     // The SessionStart hook targets user-scoped installs; project scope has no
     // stable session context to key on in v1.
     let scope = Scope::User;
@@ -52,9 +64,10 @@ pub(crate) fn self_heal_report(plugin: &Plugin, source: Source) -> Result<AgentR
     // identically: a whole-call precondition, not a per-agent failure.
     crate::install::data_dir_precondition(plugin)?;
 
+    let retire_notice = session.loaded_plugin_contents();
     let mut report = AgentReport::new();
     for id in plugin.agents {
-        report.push(id, heal_status(plugin, &source, &scope, id));
+        report.push(id, heal_status(plugin, &source, &scope, id, retire_notice));
     }
     Ok(report)
 }
@@ -62,7 +75,7 @@ pub(crate) fn self_heal_report(plugin: &Plugin, source: Source) -> Result<AgentR
 /// One agent's heal slice; a failure here becomes its `Failed` entry and never
 /// aborts the fan-out (a session-start heal must not let one broken agent stop
 /// the other 24 from healing).
-fn heal_status(plugin: &Plugin, source: &Source, scope: &Scope, id: &'static str) -> AgentStatus {
+fn heal_status(plugin: &Plugin, source: &Source, scope: &Scope, id: &'static str, retire_notice: bool) -> AgentStatus {
     let backend = match resolve(id) {
         Ok(backend) => backend,
         Err(e) => return AgentStatus::Failed(e.to_string()),
@@ -91,7 +104,7 @@ fn heal_status(plugin: &Plugin, source: &Source, scope: &Scope, id: &'static str
         return AgentStatus::Skipped(reason);
     }
     let interrupted = marker.as_ref().is_some_and(|m| m.reinstalling);
-    match heal_agent(&*backend, plugin, resolved_source, scope, marker.is_some(), interrupted, id == "claude") {
+    match heal_agent(&*backend, plugin, resolved_source, scope, marker.is_some(), interrupted, retire_notice) {
         Ok(outcome) => AgentStatus::Converged(outcome),
         Err(e) => AgentStatus::Failed(e.to_string()),
     }
@@ -100,12 +113,16 @@ fn heal_status(plugin: &Plugin, source: &Source, scope: &Scope, id: &'static str
 /// Drive one detected backend's marker × `probe()` table. `resolved_source` is
 /// the caller-resolved per-agent source and `has_marker` its marker's presence
 /// (the caller reads it once for the source resolution and the table both).
-/// `is_claude` gates the CC-only restart flag; convergence delegates to the
-/// backend's `reconcile`.
+/// `retire_notice` says the firing `SessionStart` began by loading plugin
+/// contents, the only event that may retire a standing restart notice;
+/// convergence delegates to the backend's `reconcile`.
 fn heal_agent(
     backend: &dyn AgentBackend, plugin: &Plugin, resolved_source: Source, scope: &Scope, has_marker: bool, interrupted: bool,
-    is_claude: bool,
+    retire_notice: bool,
 ) -> Result<Outcome> {
+    // The backend came from `resolve(id)` for this row, so its own id is the row's
+    // id; the restart flag is Claude-only.
+    let is_claude = backend.id() == "claude";
     // Probe against the SAME source `reconcile` (below) will render from, so a
     // `--path` install whose tree differs from the embedded blob does not read as
     // perpetual drift (probe wanting embedded bytes, reconcile writing path bytes).
@@ -121,7 +138,7 @@ fn heal_agent(
             // Adopt a healthy pre-existing install: converge (a no-op here), record
             // ownership.
             let outcome = backend.reconcile(plugin, &desired, scope)?;
-            flag_restart(plugin, is_claude, &outcome);
+            flag_restart(plugin, is_claude, retire_notice, &outcome);
             stamp::write(plugin, scope, &desired.source, backend.id())?;
             Ok(match outcome {
                 Outcome::NoOp => Outcome::Adopted,
@@ -133,7 +150,7 @@ fn heal_agent(
             // Take over a disabled/broken install: reconcile (leaves a disable alone,
             // repairs a break), record ownership.
             let outcome = backend.reconcile(plugin, &desired, scope)?;
-            flag_restart(plugin, is_claude, &outcome);
+            flag_restart(plugin, is_claude, retire_notice, &outcome);
             stamp::write(plugin, scope, &desired.source, backend.id())?;
             Ok(outcome)
         }
@@ -144,13 +161,15 @@ fn heal_agent(
         // repair that fails again stay loud rather than settling into a no-op.
         (true, BackendState::Absent) if interrupted => {
             let outcome = backend.reconcile(plugin, &desired, scope)?;
-            flag_restart(plugin, is_claude, &outcome);
+            flag_restart(plugin, is_claude, retire_notice, &outcome);
             stamp::write(plugin, scope, &desired.source, backend.id())?;
             Ok(outcome)
         }
 
         (true, BackendState::Absent) => {
-            // Clean uninstall under our marker: forget it, do not reinstall.
+            // Clean uninstall under our marker: forget it, do not reinstall. The
+            // notice is cleared under any event: the plugin is gone, so a session
+            // still holding an older tree has nothing left to restart into.
             if is_claude {
                 let _ = restart::clear(plugin);
             }
@@ -161,9 +180,11 @@ fn heal_agent(
         (true, BackendState::Disabled) => Ok(Outcome::NoOp), // never re-enable a deliberate disable
 
         (true, BackendState::Healthy) => {
-            // Healthy + current: a fresh session already loaded this plugin, so a
-            // prior restart-pending flag no longer applies. Best-effort clear.
-            if is_claude {
+            // Healthy + current: a session that began by loading plugin contents
+            // already holds this tree, so a prior restart-pending flag no longer
+            // applies. `/compact` and `/clear` fire inside the session still
+            // holding the old tree, so under those the notice must stand.
+            if is_claude && retire_notice {
                 let _ = restart::clear(plugin);
             }
             // A hook killed after `plugin_install` but before `record_converged`
@@ -179,7 +200,7 @@ fn heal_agent(
 
         (true, BackendState::NeedsRepair) => {
             let outcome = backend.reconcile(plugin, &desired, scope)?;
-            flag_restart(plugin, is_claude, &outcome);
+            flag_restart(plugin, is_claude, retire_notice, &outcome);
             stamp::write(plugin, scope, &desired.source, backend.id())?;
             Ok(outcome)
         }
@@ -188,15 +209,22 @@ fn heal_agent(
 
 /// What a CC reconcile did to the running session, recorded for the host's own notice
 /// hook. A reconcile that changed something handed CC a tree the session cannot reload,
-/// so it strands; one that changed nothing means this session started on what CC holds,
-/// which retires any flag an earlier session left. Whose install it was never enters it:
-/// a takeover that re-hands the tree strands the session exactly like an owned repair.
-/// Best-effort both ways, so a flag write cannot fail a heal that otherwise succeeded.
-fn flag_restart(plugin: &Plugin, is_claude: bool, outcome: &Outcome) {
+/// so it strands, whatever event fired; one that changed nothing means the running
+/// session already holds what CC holds, which retires any flag an earlier session left —
+/// but only when the firing event began by loading plugin contents (`retire_notice`),
+/// since `/compact` and `/clear` run inside the session that still holds the old tree.
+/// Whose install it was never enters it: a takeover that re-hands the tree strands the
+/// session exactly like an owned repair. Best-effort both ways, so a flag write cannot
+/// fail a heal that otherwise succeeded.
+fn flag_restart(plugin: &Plugin, is_claude: bool, retire_notice: bool, outcome: &Outcome) {
     if !is_claude {
         return;
     }
-    let _ = if *outcome == Outcome::NoOp { restart::clear(plugin) } else { restart::set(plugin) };
+    if *outcome != Outcome::NoOp {
+        let _ = restart::set(plugin);
+    } else if retire_notice {
+        let _ = restart::clear(plugin);
+    }
 }
 
 /// Spawn-free fan-out mirror of [`self_heal_report`]: one [`HealNeededVerdict`]
@@ -204,10 +232,13 @@ fn flag_restart(plugin: &Plugin, is_claude: bool, outcome: &Outcome) {
 /// so a host's hook can run the CLI only when a heal would act. No lock, no
 /// data-root precondition, no CLI spawn — every "cannot tell" reads as `Needed`,
 /// the conservative answer that changes nothing about what `self_heal` would do.
-pub(crate) fn heal_needed_report(plugin: &Plugin, source: Source) -> Result<HealNeededReport> {
+/// The firing `session` gates the same way it does in the heal: a standing
+/// restart notice counts as a change only when the event may retire it.
+pub(crate) fn heal_needed_report(plugin: &Plugin, source: Source, session: SessionSource) -> Result<HealNeededReport> {
+    let retire_notice = session.loaded_plugin_contents();
     let mut report = HealNeededReport::new();
     for id in plugin.agents {
-        report.push(id, heal_needed_status(plugin, &source, id));
+        report.push(id, heal_needed_status(plugin, &source, id, retire_notice));
     }
     Ok(report)
 }
@@ -235,7 +266,7 @@ fn scope_unsupported(capabilities: &Capabilities, scope: &Scope) -> bool {
     !capabilities.scopes.contains(&scope.as_cli())
 }
 
-fn heal_needed_status(plugin: &Plugin, source: &Source, id: &'static str) -> HealNeededVerdict {
+fn heal_needed_status(plugin: &Plugin, source: &Source, id: &'static str, retire_notice: bool) -> HealNeededVerdict {
     let backend = match resolve(id) {
         Ok(backend) => backend,
         Err(e) => return HealNeededVerdict::Needed { reason: format!("backend unavailable: {e}") },
@@ -265,10 +296,11 @@ fn heal_needed_status(plugin: &Plugin, source: &Source, id: &'static str) -> Hea
     }
     #[cfg(feature = "claude")]
     {
-        crate::agents::claude::heal_needed(plugin, &scope, source)
+        crate::agents::claude::heal_needed(plugin, &scope, source, retire_notice)
     }
     #[cfg(not(feature = "claude"))]
     {
+        let _ = retire_notice;
         HealNeededVerdict::Needed { reason: "claude backend not compiled in".into() }
     }
 }

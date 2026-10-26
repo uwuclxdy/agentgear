@@ -8,7 +8,7 @@
 
 use std::process::ExitCode;
 
-use agentgear::{AgentReport, PluginHost, Scope, Source};
+use agentgear::prelude::{AgentReport, PluginHost, Scope, SessionSource, Source};
 
 #[derive(PluginHost)]
 #[plugin(
@@ -25,7 +25,7 @@ fn main() -> ExitCode {
         // Explicitly embedded, never `DEFAULT_SOURCE`: the point of this fixture
         // is an embedded install on a github-default host.
         Some("install") => print_report(EmbeddedGithubFixture::install_report(Scope::User, Source::Embedded)),
-        Some("self-heal-report") => print_report(EmbeddedGithubFixture::self_heal_report()),
+        Some("self-heal-report") => print_report(EmbeddedGithubFixture::self_heal_report(SessionSource::from_stdin())),
         Some("uninstall-report") => print_report(EmbeddedGithubFixture::uninstall_report(Scope::User)),
         other => {
             eprintln!("usage: embedded_github_fixture <install|self-heal-report|uninstall-report> (got {other:?})");

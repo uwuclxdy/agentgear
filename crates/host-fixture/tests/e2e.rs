@@ -13,8 +13,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::ffi::OsString;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 const PLUGIN_ID: &str = "ez-fixture-plugin@ez-fixture-plugin";
 const BIN: &str = env!("CARGO_BIN_EXE_host_fixture");
@@ -67,6 +68,20 @@ impl Env {
         cmd.args(args);
         self.apply(&mut cmd);
         let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// A hook-shaped run: the SessionStart payload Claude Code pipes on stdin.
+    fn hook(&self, sub: &str, payload: &str) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.arg(sub);
+        self.apply(&mut cmd);
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = cmd.spawn().unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(payload.as_bytes()).unwrap();
+        drop(stdin);
+        let out = child.wait_with_output().unwrap();
         (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
@@ -454,11 +469,33 @@ fn restart_flag_lifecycle() {
     assert!(out.contains("ez-fixture-plugin"), "notice should name the plugin: {out}");
     assert!(out.contains("/reload-plugins"), "notice should name the remedy: {out}");
 
-    // A healthy self_heal (fast path) clears the flag: the running install is current.
-    let (ok, out) = env.fixture("self-heal");
-    assert!(ok && out == "NoOp", "post-update self-heal should no-op, got {out}");
+    // The pre-check must not count the notice as a change it can make under a
+    // mid-session event, or the host spawns a heal that only no-ops.
+    let (ok, out) = env.hook("heal-needed", r#"{"hook_event_name":"SessionStart","source":"compact"}"#);
+    assert!(ok, "compact heal-needed errored: {out}");
+    assert!(out.lines().any(|l| l == "claude: clean"), "a compact-triggered pre-check must read clean: {out}");
+    let (ok, out) = env.hook("heal-needed", r#"{"hook_event_name":"SessionStart","source":"startup"}"#);
+    assert!(ok, "startup heal-needed errored: {out}");
+    assert!(
+        out.lines().any(|l| l == "claude: needed (restart notice to retire)"),
+        "a startup-triggered pre-check must count the notice: {out}"
+    );
+
+    // A mid-session SessionStart (`/compact`, `/clear`) fires in the process that
+    // still has the old tree loaded, so a heal under it must leave the notice.
+    for source in ["compact", "clear"] {
+        let payload = format!(r#"{{"hook_event_name":"SessionStart","source":"{source}"}}"#);
+        let (ok, out) = env.hook("self-heal", &payload);
+        assert!(ok && out == "NoOp", "post-update {source} heal should no-op, got {out}");
+        let (ok, out) = env.fixture("check-restart");
+        assert!(ok && !out.is_empty(), "a /{source}-fired heal must leave the notice standing, got {out:?}");
+    }
+
+    // A real session start loaded the current tree and retires it.
+    let (ok, out) = env.hook("self-heal", r#"{"hook_event_name":"SessionStart","source":"startup"}"#);
+    assert!(ok && out == "NoOp", "post-update startup heal should no-op, got {out}");
     let (ok, out) = env.fixture("check-restart");
-    assert!(ok && out.is_empty(), "check-restart should be silent once healthy, got {out:?}");
+    assert!(ok && out.is_empty(), "check-restart should be silent once a startup retired the notice, got {out:?}");
 
     env.fixture("uninstall");
 }
@@ -504,17 +541,21 @@ fn heal_needed_tracks_a_same_version_tree_edit() {
 
     // The repair raises the restart notice, which only the NEXT session's heal
     // retires (healthy row): the pre-check answers needed once for it, then clean.
+    // Only a session start that loaded plugin contents can retire it, so both the
+    // check and the retiring heal run with a `startup` source.
     let (ok, out) = env.fixture("self-heal");
     assert!(ok, "self-heal failed after the edit: {out}");
-    let (ok, out) = env.fixture("heal-needed");
+    let (ok, out) = env.hook("heal-needed", r#"{"hook_event_name":"SessionStart","source":"startup"}"#);
     assert!(ok, "heal-needed failed after the repair: {out}");
     assert!(
         out.lines().any(|l| l == "claude: needed (restart notice to retire)"),
         "a repair's restart notice must read needed until a heal retires it: {out}"
     );
-    let (ok, out) = env.fixture("self-heal");
+    let (ok, out) = env.hook("self-heal", r#"{"hook_event_name":"SessionStart","source":"startup"}"#);
     assert!(ok && out == "NoOp", "the retiring heal should no-op, got {out}");
-    let (ok, out) = env.fixture("heal-needed");
+    // Under a retiring source, so `Clean` is earned: if the heal above left the
+    // notice standing, a startup-sourced pre-check would still answer `Needed`.
+    let (ok, out) = env.hook("heal-needed", r#"{"hook_event_name":"SessionStart","source":"startup"}"#);
     assert!(ok, "heal-needed failed after the retiring heal: {out}");
     assert!(out.lines().any(|l| l == "claude: clean"), "post-retire pre-check must read clean: {out}");
 

@@ -15,7 +15,7 @@
 use std::io::{BufRead, Write};
 use std::process::ExitCode;
 
-use agentgear::{PluginHost, Scope, Source};
+use agentgear::prelude::{PluginHost, Scope, SessionSource, Source};
 use multi_installer::MultiInstaller;
 
 fn main() -> ExitCode {
@@ -30,7 +30,7 @@ fn main() -> ExitCode {
             report_agents(MultiInstaller::install_into_report(Scope::User, Source::Embedded, &refs))
         }
         Some("uninstall") => report_agents(MultiInstaller::uninstall_report(Scope::User)),
-        Some("self-heal") => report(MultiInstaller::self_heal()),
+        Some("self-heal") => report(MultiInstaller::self_heal(SessionSource::from_stdin())),
         Some("doctor") => match MultiInstaller::doctor() {
             Ok(report) => {
                 print!("{report}");

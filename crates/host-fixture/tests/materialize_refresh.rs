@@ -20,8 +20,9 @@
 
 use std::ffi::OsString;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 const BIN: &str = env!("CARGO_BIN_EXE_host_fixture");
 const FAKE_CLAUDE: &str = env!("CARGO_BIN_EXE_fake_claude");
@@ -80,6 +81,24 @@ impl Env {
 
     /// The same run with extra environment, for the legs that inject a CLI failure.
     fn fixture_env(&self, args: &[&str], extra: &[(&str, &str)]) -> (bool, String) {
+        let out = self.command(args, extra).output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// The same run with a hook payload on stdin, as Claude Code invokes a
+    /// `SessionStart` command hook (`stdin` carries the event JSON).
+    fn fixture_stdin(&self, args: &[&str], payload: &str) -> (bool, String) {
+        let mut cmd = self.command(args, &[]);
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = cmd.spawn().unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(payload.as_bytes()).unwrap();
+        drop(stdin);
+        let out = child.wait_with_output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    fn command(&self, args: &[&str], extra: &[(&str, &str)]) -> Command {
         let mut cmd = Command::new(BIN);
         cmd.args(args);
         for (key, value) in extra {
@@ -93,8 +112,7 @@ impl Env {
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_RUNTIME_DIR", &self.run)
             .env("PATH", &self.path);
-        let out = cmd.output().unwrap();
-        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+        cmd
     }
 
     /// The plugin's own source file this test edits.
@@ -298,10 +316,45 @@ fn an_unowned_install_is_re_handed_the_tree_rather_than_adopted() {
 
     // The takeover records the tree it handed over, so the next session no-ops and
     // retires the notice with it.
-    let (ok, out) = env.fixture(&["self-heal"]);
+    let (ok, out) = env.fixture_stdin(&["self-heal"], r#"{"source":"startup"}"#);
     assert!(ok, "the settling heal failed: {out}");
     assert_eq!(out, "NoOp", "a recorded takeover must converge to a no-op");
     assert!(!env.restart_pending(), "a heal that converged nothing must retire the restart notice");
+}
+
+#[test]
+fn a_midsession_session_start_does_not_retire_the_restart_notice() {
+    // `/compact` and `/clear` fire SessionStart inside the same process that loaded
+    // the plugin at startup: CC's hook registration is memoized for the session and
+    // re-read only on an explicit reload, so neither event can have loaded the tree
+    // an update staged. Only an event that began by loading plugin contents from disk
+    // (`startup` or `resume`) proves the running session is current, and only those may
+    // retire the notice; `fork` is deliberately excluded (an in-process fork inherits
+    // the parent's registration and the payload cannot tell it apart).
+    let env = Env::new("notice-source");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "claude"]);
+    assert!(ok, "first setup failed: {out}");
+    // Raise the notice the way a tree moving under a live session does: a takeover
+    // re-hands the tree and strands the session.
+    env.clear_markers();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "the takeover heal failed: {out}");
+    assert!(env.restart_pending(), "the takeover re-handed the tree and left the session with no restart notice");
+
+    for source in ["compact", "clear"] {
+        let payload = format!(r#"{{"hook_event_name":"SessionStart","source":"{source}"}}"#);
+        let (ok, out) = env.fixture_stdin(&["self-heal"], &payload);
+        assert!(ok, "{source} heal failed: {out}");
+        assert_eq!(out, "NoOp", "a healthy install heals to a no-op under {source}");
+        assert!(env.restart_pending(), "a /{source}-fired SessionStart retired the notice while the session still runs the old tree");
+    }
+
+    // A real session start loaded what CC holds and retires it.
+    let (ok, out) = env.fixture_stdin(&["self-heal"], r#"{"source":"startup"}"#);
+    assert!(ok, "startup heal failed: {out}");
+    assert_eq!(out, "NoOp", "the healthy row converges to a no-op");
+    assert!(!env.restart_pending(), "a startup-sourced session began on the current tree and must retire the notice");
 }
 
 #[test]

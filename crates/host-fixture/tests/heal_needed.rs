@@ -1,4 +1,4 @@
-//! Hermetic proof that `heal_needed_report()` is spawn-free, answers the
+//! Hermetic proof that `heal_needed_report` is spawn-free, answers the
 //! `claude` verdict it should, ends a lingering reinstall on the healthy row, and
 //! mirrors self_heal's skip gates.
 //!

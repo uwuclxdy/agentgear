@@ -10,7 +10,7 @@
 
 use std::process::ExitCode;
 
-use agentgear::{PluginHost, Scope};
+use agentgear::prelude::{PluginHost, Scope, SessionSource};
 
 #[derive(PluginHost)]
 #[plugin(
@@ -69,7 +69,7 @@ fn main() -> ExitCode {
         // The spawn-free pre-check, so a hermetic test can pin that a github
         // source on a config-merge backend reads `Skipped(SourceUnsupported)`
         // here exactly as it does in `self_heal_report`.
-        Some("heal-needed") => match GithubFixture::heal_needed_report() {
+        Some("heal-needed") => match GithubFixture::heal_needed_report(SessionSource::from_stdin()) {
             Ok(report) => {
                 print!("{report}");
                 ExitCode::SUCCESS
@@ -79,7 +79,7 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Some("self-heal-report") => match GithubFixture::self_heal_report() {
+        Some("self-heal-report") => match GithubFixture::self_heal_report(SessionSource::from_stdin()) {
             Ok(report) => {
                 print!("{report}");
                 if report.is_healthy() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
@@ -91,7 +91,7 @@ fn main() -> ExitCode {
         },
         // Legacy merged path: a source-skipped backend must collapse to `Ok`,
         // never an error telling the user to stop using the source they're on.
-        Some("self-heal") => match GithubFixture::self_heal() {
+        Some("self-heal") => match GithubFixture::self_heal(SessionSource::from_stdin()) {
             Ok(outcome) => {
                 println!("{outcome:?}");
                 ExitCode::SUCCESS

@@ -7,7 +7,7 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use agentgear::{PluginHost, Scope, Source};
+use agentgear::prelude::{PluginHost, Scope, SessionSource, Source};
 
 #[derive(PluginHost)]
 #[plugin(name = "ez-fixture-plugin", instructions_fn = fixture_instructions, agents = [
@@ -95,11 +95,11 @@ fn main() -> ExitCode {
                 }
             }
         }
-        "self-heal" => report(FixtureHost::self_heal()),
+        "self-heal" => report(FixtureHost::self_heal(SessionSource::from_stdin())),
         // The hook-side per-agent summary: one broken agent reads as its own
         // failed line while the siblings still heal (exercised by the
         // fanout-report hermetic test).
-        "self-heal-report" => match FixtureHost::self_heal_report() {
+        "self-heal-report" => match FixtureHost::self_heal_report(SessionSource::from_stdin()) {
             Ok(report) => {
                 print!("{report}");
                 if report.is_healthy() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
@@ -124,7 +124,7 @@ fn main() -> ExitCode {
         "uninstall" => report(FixtureHost::uninstall(scope_flag())),
         // The spawn-free pre-check: prints the per-agent heal-needed report. A
         // hermetic test pins that this spawns no `claude` (it reads files only).
-        "heal-needed" => match FixtureHost::heal_needed_report() {
+        "heal-needed" => match FixtureHost::heal_needed_report(SessionSource::from_stdin()) {
             Ok(report) => {
                 print!("{report}");
                 ExitCode::SUCCESS

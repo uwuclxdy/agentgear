@@ -6,8 +6,9 @@
 //!
 //! The classifier under test is `heal_needed_from`: the caller (this file) hands
 //! it the already-resolved source, marker, config dir, data root, restart-pending
-//! flag and cwd. The `CLAUDE_CONFIG_DIR`/home resolution behind the config dir is
-//! unit-tested in `ccregistry_claude.rs`, not here.
+//! flag, whether the firing session event could retire it, and cwd. The
+//! `CLAUDE_CONFIG_DIR`/home resolution behind the config dir is unit-tested in
+//! `ccregistry_claude.rs`, not here.
 
 use std::path::{Path, PathBuf};
 
@@ -176,7 +177,17 @@ impl Fixture {
     }
 
     fn verdict_with_restart(&self, plugin: &Plugin, source: &Source, marker: Option<&Marker>, restart_pending: bool) -> HealNeededVerdict {
-        let env = super::HealNeededEnv { config_dir: &self.config, data_root: &self.data, restart_pending, cwd: Some(&self.cwd) };
+        self.verdict_with_flags(plugin, source, marker, restart_pending, true)
+    }
+
+    /// The same verdict with the event's retire term spelled out: only a
+    /// session event that loaded plugin contents (`startup` / `resume`) can
+    /// retire a standing restart notice.
+    fn verdict_with_flags(
+        &self, plugin: &Plugin, source: &Source, marker: Option<&Marker>, restart_pending: bool, retire_notice: bool,
+    ) -> HealNeededVerdict {
+        let env =
+            super::HealNeededEnv { config_dir: &self.config, data_root: &self.data, restart_pending, retire_notice, cwd: Some(&self.cwd) };
         super::heal_needed_from(plugin, source, marker, &env)
     }
 }
@@ -241,6 +252,22 @@ fn healthy_marked_with_restart_pending_is_needed() {
         fx.verdict_with_restart(&plugin(), &fx.path_source(), Some(&m), true),
         HealNeededVerdict::Needed { reason: "restart notice to retire".into() }
     );
+}
+
+#[test]
+fn healthy_marked_with_a_standing_notice_under_a_midsession_event_is_clean() {
+    // `/compact` and `/clear` fire SessionStart without reloading plugin contents,
+    // so under them the healthy row cannot retire the notice: that clear is not a
+    // change self_heal would make, and the pre-check must not send the host on the
+    // two-spawn heal. A real session start passes `retire_notice: true` and reads
+    // Needed above.
+    let fx = Fixture::new();
+    fx.seed_installed(Some("0.1.0"), Some(&fx.install), "user", None);
+    fx.seed_settings(Some(true));
+    fx.seed_marketplace(Some(&fx.pointer()), "directory");
+    fx.seed_manifest_at(&fx.pointer());
+    let m = marker("embedded", Some(fx.staged_hash()), false);
+    assert_eq!(fx.verdict_with_flags(&plugin(), &fx.path_source(), Some(&m), true, false), HealNeededVerdict::Clean);
 }
 
 #[test]

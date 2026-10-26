@@ -445,7 +445,9 @@ pub(crate) fn remove(plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
 /// alone — the marker says "we installed this", never "it is still installed";
 /// design §self_heal). No CLI spawn; every "cannot tell" answer folds to
 /// `Needed`, so a host that trusts this never skips a heal that would have acted.
-pub(crate) fn heal_needed(plugin: &Plugin, scope: &Scope, default_source: &Source) -> HealNeededVerdict {
+/// `retire_notice` is the firing event's gate: a standing restart flag is a
+/// change only when the event began by loading plugin contents.
+pub(crate) fn heal_needed(plugin: &Plugin, scope: &Scope, default_source: &Source, retire_notice: bool) -> HealNeededVerdict {
     let data_root = match crate::host::data_root(plugin) {
         Ok(root) => root,
         Err(e) => return HealNeededVerdict::Needed { reason: format!("no data root: {e}") },
@@ -464,36 +466,40 @@ pub(crate) fn heal_needed(plugin: &Plugin, scope: &Scope, default_source: &Sourc
             return HealNeededVerdict::Needed { reason: "no home directory (HOME unset)".into() };
         }
     };
-    // The healthy row and the owned-by-another-binary no-op both clear the restart
-    // flag (selfheal.rs), so a pending flag — or one that cannot be read — is a
-    // change self_heal would make, and the answer is `Needed`, never `Clean`.
+    // The healthy row and the owned-by-another-binary no-op clear the restart
+    // flag only under a session event that loaded plugin contents (selfheal.rs);
+    // under `/compact` or `/clear` a pending flag is no change self_heal would
+    // make. An unreadable flag still reads pending, hence `Needed` when it counts.
     let restart_pending = !matches!(crate::restart::pending(plugin), Ok(None));
     let cwd = std::env::current_dir().ok();
-    let env = HealNeededEnv { config_dir: &config_dir, data_root: &data_root, restart_pending, cwd: cwd.as_deref() };
+    let env = HealNeededEnv { config_dir: &config_dir, data_root: &data_root, restart_pending, retire_notice, cwd: cwd.as_deref() };
     heal_needed_from(plugin, &resolved, marker.as_ref(), &env)
 }
 
 /// The file/flag inputs the classifier core reads beside the plugin and marker:
-/// the three path roots plus the restart flag, all resolved by [`heal_needed`].
-/// Bundled so [`heal_needed_from`] stays under the argument-count lint.
+/// the three path roots plus the restart flag and the firing event's retire
+/// gate, all resolved by [`heal_needed`]. Bundled so [`heal_needed_from`] stays
+/// under the argument-count lint.
 struct HealNeededEnv<'a> {
     config_dir: &'a Path,
     data_root: &'a Path,
     restart_pending: bool,
+    retire_notice: bool,
     cwd: Option<&'a Path>,
 }
 
 /// The file-only core of [`heal_needed`]: given CC's registry files at
 /// `env.config_dir`, this agent's marker (or `None`), the marker-resolved source,
 /// the agentgear data root (for the `current@claude` pointer), whether the
-/// restart flag is pending (or unreadable), and the process cwd (for the
-/// cwd-merged enable bit), answer whether self_heal would mutate or repair —
-/// reproducing probe + the heal table + reconcile's monotonic short-circuit, with
-/// every unreadable input folding to `Needed` (never a false `Clean`).
+/// restart flag is pending (or unreadable), whether the firing event may retire
+/// it, and the process cwd (for the cwd-merged enable bit), answer whether
+/// self_heal would mutate or repair — reproducing probe + the heal table +
+/// reconcile's monotonic short-circuit, with every unreadable input folding to
+/// `Needed` (never a false `Clean`).
 fn heal_needed_from(
     plugin: &Plugin, resolved_source: &Source, marker: Option<&stamp::Marker>, env: &HealNeededEnv<'_>,
 ) -> HealNeededVerdict {
-    let HealNeededEnv { config_dir, data_root, restart_pending, cwd } = *env;
+    let HealNeededEnv { config_dir, data_root, restart_pending, retire_notice, cwd } = *env;
     let has_marker = marker.is_some();
 
     let entry = match crate::agents::ccregistry::installed_entry(config_dir, &plugin.id()) {
@@ -558,13 +564,13 @@ fn heal_needed_from(
 
     if files_ok && monotonic_current && marketplace_ok && tree_current {
         // Healthy: self_heal's `(marker present, Healthy)` row clears the restart
-        // flag and now also ends a lingering reinstall, so only a settled marker
-        // with no pending flag is a no-op. An unmarked install is the adopt row
-        // (the heal writes a marker).
+        // flag when the event may retire it and now also ends a lingering
+        // reinstall, so only a settled marker with no retirable pending flag is a
+        // no-op. An unmarked install is the adopt row (the heal writes a marker).
         return if has_marker {
             if marker.is_some_and(|m| m.reinstalling) {
                 HealNeededVerdict::Needed { reason: "lingering reinstall".into() }
-            } else if restart_pending {
+            } else if restart_pending && retire_notice {
                 HealNeededVerdict::Needed { reason: "restart notice to retire".into() }
             } else {
                 HealNeededVerdict::Clean
@@ -577,8 +583,9 @@ fn heal_needed_from(
     // NeedsRepair: the one no-op reconcile is the monotonic short-circuit — a
     // strictly-newer install another binary owns (structurally sound against its
     // OWN registered path) is left alone, never downgraded or re-handed a tree.
-    // That no-op still clears the restart flag and rebuilds the marker (ending a
-    // lingering reinstall), so both are changes the classifier must not read Clean.
+    // That no-op still clears the restart flag when the event may retire it and
+    // rebuilds the marker (ending a lingering reinstall), so both are changes the
+    // classifier must not read Clean.
     if has_marker && newer {
         let registered = marketplace.as_ref().and_then(|m| m.path.as_deref()).map(Path::new).unwrap_or(expected.as_path());
         let owned_by_another_binary = files_ok
@@ -588,7 +595,7 @@ fn heal_needed_from(
             if marker.is_some_and(|m| m.reinstalling) {
                 return HealNeededVerdict::Needed { reason: "lingering reinstall".into() };
             }
-            if restart_pending {
+            if restart_pending && retire_notice {
                 return HealNeededVerdict::Needed { reason: "restart notice to retire".into() };
             }
             return HealNeededVerdict::Clean;
