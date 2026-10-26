@@ -19,10 +19,7 @@ This skill is the process. The exhaustive API lives in the repo's `wiki/` pages 
 
 Answer these before writing any code. A "no" changes the plan.
 
-1. **Does one binary both ship and install the plugin?** agentgear's embed model assumes the
-   `PluginHost` binary IS the artifact that carries and installs the plugin tree. A plugin whose
-   binary is a separate, independently-versioned artifact the plugin locates at runtime (the way
-   slopcat's plugin finds a `slopcat` on PATH) has no clean agentgear story yet.
+1. **Does one binary both ship and install the plugin?** agentgear's embed model assumes the `PluginHost` binary IS the artifact that carries and installs the plugin tree. A plugin whose binary is a separate, independently-versioned artifact the plugin locates at runtime (say, one it finds on PATH) has no clean agentgear story yet.
 2. **The plugin's own binary distribution stays the host's job.** `Source` models where the
    plugin *tree* comes from, never where the host's compiled binary comes from. Keep any
    curl+checksum / PATH-resolution / version-GC installer the host already has; agentgear does not
@@ -32,7 +29,7 @@ Answer these before writing any code. A "no" changes the plan.
    automated lifecycle (setup / self-heal / doctor / version-guard), not translation. Only name
    extra `agents = [...]` when the plugin genuinely ships to those harnesses.
 4. **Does it hand-roll CC registry state directly?** Writing `known_marketplaces.json` or
-   `installed_plugins.json` by hand (raawr did) is the exact anti-pattern agentgear removes: the
+   `installed_plugins.json` by hand is the exact anti-pattern agentgear removes: the
    CLI is the only supported writer. Migrating that is a correctness upgrade, not just a line cut.
 
 ## greenfield: minimal setup
@@ -86,9 +83,7 @@ plumbing it replaces. Delete in this order, verifying after each:
 | a hand-maintained CC-version floor check | agentgear gates on `claude --version` before any mutating call |
 | a hand-written `statusLine` writer in `~/.claude/settings.json` (refuse/force flags on a foreign value) | delete it; agentgear writes no status-line slot anymore — a host ships a `statusline` print subcommand and the user wires it manually |
 
-nyactx is the worked example: adopting the derive deleted ~1,100 net lines (20 per-client
-descriptor files plus a parse-and-merge engine plus its tests), replaced by ~160 lines of
-CLI glue. The migration commit is the reference for scope.
+One real migration deleted ~1,100 net lines (20 per-client descriptor files plus a parse-and-merge engine plus its tests), replaced by ~160 lines of CLI glue. That commit is the reference for scope.
 
 Grep the tree afterward for the deleted symbols and any surviving `Command::new("claude")` /
 `known_marketplaces` / `marketplace.json` reference; a mechanical delete leaves stragglers.
@@ -129,10 +124,7 @@ Check these against the target plugin before promising a full migration.
   the plugin tree is unmodeled: the components IR
   carries five surfaces (mcp servers, hooks, commands, agents, skills) and nothing else reaches a
   harness's own settings file.
-- **codex `notify` hooks / opencode hooks.** agentgear's codex backend writes `hooks.json`, which
-  stays inert until the user trusts it via codex's `/hooks` TUI; opencode has no declarative hook
-  surface at all (in-process JS/TS plugin only). A plugin relying on either (raawr) cannot fully
-  migrate its hook path yet.
+- **codex `notify` hooks / opencode hooks.** agentgear's codex backend writes `hooks.json`, which stays inert until the user trusts it via codex's `/hooks` TUI; opencode has no declarative hook surface at all (in-process JS/TS plugin only). A plugin relying on either cannot fully migrate its hook path yet.
 - **`${CLAUDE_PLUGIN_ROOT}` in an mcp/hook command.** Every non-CC backend silently skips a
   command carrying that token (it only expands inside CC). Use bare executable names so the surface
   survives translation. Watch for the `cargo:warning` at build and doctor's "no portable ... to
