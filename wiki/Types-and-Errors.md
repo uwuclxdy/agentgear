@@ -65,7 +65,7 @@ to print it.
 
 ## HealNeededReport, HealNeededResult, HealNeededVerdict
 
-`heal_needed_report()` returns `Result<HealNeededReport>`: one verdict per configured agent on whether `self_heal()` would change anything, answered from files with no CLI spawn. It never returns `Err` today.
+`heal_needed_report(session)` returns `Result<HealNeededReport>`: one verdict per configured agent on whether `self_heal(session)` would change anything, answered from files with no CLI spawn. It never returns `Err` today.
 
 ```rust
 pub struct HealNeededReport {
@@ -79,12 +79,27 @@ pub struct HealNeededResult {
 
 pub enum HealNeededVerdict {
     Needed { reason: String },   // self_heal would act; `reason` is short and user-facing
-    Clean,                       // self_heal would change nothing, the restart-pending flag included
+    Clean,                       // self_heal would change nothing; a standing restart-pending flag counts as a change only under a startup/resume session
     Skipped(SkipReason),         // the same skip self_heal would take
 }
 ```
 
-`HealNeededReport::needed() -> bool` is true when any agent is `Needed`; a host's `SessionStart` hook runs `self_heal()` only then. `claude` answers from Claude Code's registry files plus agentgear's own marker; every other agent the pre-check does not skip answers `Needed`. `HealNeededReport` and `HealNeededVerdict` have a `Display` impl: one `agent: verdict` line per agent, the verdict reading `needed (<reason>)`, `clean`, or `skipped (<reason>)`.
+`HealNeededReport::needed() -> bool` is true when any agent is `Needed`; a host's `SessionStart` hook runs `self_heal(session)` only then. `claude` answers from Claude Code's registry files plus agentgear's own marker; every other agent the pre-check does not skip answers `Needed`. `HealNeededReport` and `HealNeededVerdict` have a `Display` impl: one `agent: verdict` line per agent, the verdict reading `needed (<reason>)`, `clean`, or `skipped (<reason>)`.
+
+## SessionSource
+
+Which `SessionStart` event fired a heal, and the one decision it drives: whether that event can retire a standing restart notice. `SessionSource::from_stdin()` reads the hook payload Claude Code pipes in (a manual run, whose stdin is a terminal, reads `Unknown`); `from_hook_source` and `from_hook_payload` map a raw string or a full payload.
+
+| variant | payload `source` | retires the notice on a healthy row |
+|---|---|---|
+| `Startup` | `startup` | yes |
+| `Resume` | `resume` | yes |
+| `Clear` | `clear` (`/clear`) | no |
+| `Compact` | `compact` (`/compact`) | no |
+| `Fork` | `fork` (`--fork-session`) | no |
+| `Unknown` | absent, malformed, or a manual run | no |
+
+Only a `startup` or `resume` session began by loading the plugin tree from disk, so only those prove the running session holds what a heal compares against. `/clear` and `/compact` fire inside the session that already loaded the plugin, and Claude Code does not re-read the tree there, so the notice stands. The clean-uninstall heal is the one branch that clears it under any source: the plugin is gone, so the notice is moot.
 
 ## Capabilities
 

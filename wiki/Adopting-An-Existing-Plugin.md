@@ -24,7 +24,7 @@ Condition 3 is what removes the delay: a trigger in your own binary runs at what
 
 A plugin that fails to load cannot repair itself, which is exactly condition 1's failure mode. Every trigger inside `hooks/hooks.json` is unreachable in the state you most need a trigger.
 
-Wire `self_heal()` somewhere your binary reaches on its own: a daemon tick, your MCP server's startup, your launcher's pre-flight. Throttle it and run it detached so it never sits in front of a user-visible path, and gate it on `heal_needed_report()?.needed()`: the pre-check reads files and spawns no CLI, so the detached heal runs only on the ticks that need one. One out-of-plugin trigger is the difference between a migration that converges and one that waits for a subcommand your users have no reason to run.
+Wire `self_heal(SessionSource::Unknown)` somewhere your binary reaches on its own: a daemon tick, your MCP server's startup, your launcher's pre-flight. Throttle it and run it detached so it never sits in front of a user-visible path, and gate it on `heal_needed_report(SessionSource::Unknown)?.needed()`: the pre-check reads files and spawns no CLI, so the detached heal runs only on the ticks that need one. One out-of-plugin trigger is the difference between a migration that converges and one that waits for a subcommand your users have no reason to run.
 
 ## What converges, once all three hold
 

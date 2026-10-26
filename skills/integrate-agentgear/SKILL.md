@@ -62,7 +62,7 @@ The smallest working host is Claude-only. Four things (shapes from `examples/hel
   `plugin/.claude-plugin/plugin.json`; its `name` must equal the derive's `name`, its `version`
   must equal `CARGO_PKG_VERSION`, and `author` is required (it becomes the marketplace owner).
 
-Then wire the binary's own subcommands to the lifecycle methods (`setup` → `install`, `uninstall`, `doctor`, and for a fuller surface `update`, `self-heal`, `check-restart`). Point the plugin's `SessionStart` hook at `self_heal()`, gated as `if MyPlugin::heal_needed_report()?.needed() { MyPlugin::self_heal()?; }`: the pre-check reads files and spawns no CLI, so a healthy `claude` install skips the heal's `claude` calls. Point `UserPromptSubmit` at `restart_pending()`.
+Then wire the binary's own subcommands to the lifecycle methods (`setup` → `install`, `uninstall`, `doctor`, and for a fuller surface `update`, `self-heal`, `check-restart`). Point the plugin's `SessionStart` hook at `self_heal`, gated as `let session = agentgear::SessionSource::from_stdin(); if MyPlugin::heal_needed_report(session)?.needed() { MyPlugin::self_heal(session)?; }` (Claude Code pipes the SessionStart payload on stdin; read it once): the pre-check reads files and spawns no CLI, so a healthy `claude` install skips the heal's `claude` calls. Point `UserPromptSubmit` at `restart_pending()`.
 
 The full attribute table, the six-subcommand `main.rs`, and the tree rules are in
 `wiki/Getting-Started.md` and `wiki/Plugin-Tree.md`. Do not restate them here; read them.
@@ -79,7 +79,7 @@ plumbing it replaces. Delete in this order, verifying after each:
 | a committed `marketplace.json` | generated into the versioned dir at materialize; never ship one |
 | a per-client config-merge engine (per-harness JSON/TOML/YAML writers, "which client do I support" descriptor files) | the built-in backends + `confedit`'s atomic read-modify-write; name harnesses in `agents = [...]` instead of writing translators |
 | a hand-rolled tree materialize / diff-copy | agentgear's `materialize` (tree hashing, atomic versioned-dir flip) |
-| manual `SessionStart` self-heal logic | point the existing hook at `self_heal()`, gated on `heal_needed_report()?.needed()` |
+| manual `SessionStart` self-heal logic | point the existing hook at `self_heal(session)`, gated on `heal_needed_report(session)?.needed()` — read the payload once into `session` (`let session = agentgear::SessionSource::from_stdin();`) |
 | a hand-maintained CC-version floor check | agentgear gates on `claude --version` before any mutating call |
 | a hand-written `statusLine` writer in `~/.claude/settings.json` (refuse/force flags on a foreign value) | delete it; agentgear writes no status-line slot anymore — a host ships a `statusline` print subcommand and the user wires it manually |
 
