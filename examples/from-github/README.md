@@ -70,8 +70,16 @@ A marketplace already present on a *different* ref gets re-added instead of upda
 because `claude plugin marketplace update` refreshes a pin without moving it. Re-adding
 is what re-points the pin when a binary upgrade changes the tracked tag.
 
-`tests/wiring.rs`'s `github_install_pins_the_version_tag` covers that flow against the
-real `claude` CLI and a pushed tag. It is `#[ignore]`d and gated on
-`AGENTGEAR_E2E_GITHUB=1` on top of that, so a default test run never couples to a
-mutable remote. The file's other tests run unconditionally, against a fake `claude`
-shim where they need one.
+Claude Code 2.1.308+ gates that re-add on the marketplace declaration it keeps in
+`<config>/settings.json`: while the `extraKnownMarketplaces` entry names the old ref,
+`marketplace add` refuses the new one. The backend therefore drops its own entry before
+the re-add, and the add re-declares it at the new ref. `marketplace remove` would also
+uninstall the plugin and delete its saved options and data, so it is never the path.
+
+`tests/wiring.rs` has two `#[ignore]`d legs against the real `claude` CLI and pushed
+tags, both gated on `AGENTGEAR_E2E_GITHUB=1` so a default test run never couples to a
+mutable remote: `github_install_pins_the_version_tag` (a fresh install lands on the
+version tag) and `github_update_re_points_a_pin_left_on_the_previous_tag` (a binary one
+version ahead moves a pin left behind on the prior tag; it derives that tag with
+`git describe`, or takes `AGENTGEAR_E2E_GITHUB_OLD_REF`). The file's other tests run
+unconditionally, against a fake `claude` shim where they need one.

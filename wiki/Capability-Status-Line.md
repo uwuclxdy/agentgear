@@ -4,8 +4,8 @@ A status line is the bar a coding agent renders under (or over) its prompt, fill
 command and printing its stdout. agentgear used to deliver one automatically — a host declared a
 `StatusLineDecl`, and five backends wrote it into their harness's single status-line slot, stashing
 and restoring whatever the user had. That automatic wiring is retired (2026-08-30): agentgear
-writes no harness's status-line slot anymore, and a status line you already had is left
-byte-identical by every lifecycle operation.
+writes no harness's status-line slot anymore, and a status line you already had is never written
+by a lifecycle operation.
 
 What remains is the render half. A host ships a `statusline` print subcommand — it reads the
 session JSON on stdin and prints the bar — and you wire that subcommand into your harness config
