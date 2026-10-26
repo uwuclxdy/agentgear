@@ -89,5 +89,8 @@ thiserror = "2.0.20"
 which = "8.0.6"
 toml_edit = { version = "0.25.15", optional = true }
 
+[dev-dependencies]
+anyhow = "1"
+
 [target."cfg(windows)".dependencies]
 junction = "2.0.0"

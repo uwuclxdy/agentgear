@@ -7,6 +7,7 @@ name = "agentgear"
 version = "0.1.5"
 dependencies = [
  "agentgear-derive",
+ "anyhow",
  "brotli",
  "dirs",
  "fastrand",
@@ -46,6 +47,12 @@ checksum = "0b5c1865780388bfa186411ab5f247819487fc4864c6e9c3106611fa347586e1"
 dependencies = [
  "alloc-no-stdlib",
 ]
+
+[[package]]
+name = "anyhow"
+version = "1.0.104"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "bitflags"

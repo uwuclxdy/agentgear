@@ -52,7 +52,7 @@ pub enum Error {
     },
 
     /// A JSON document did not parse.
-    #[error("could not parse {what} as JSON: {source}")]
+    #[error("could not parse {what} as JSON")]
     Json {
         /// What was being parsed (for the message).
         what: String,
@@ -62,7 +62,7 @@ pub enum Error {
     },
 
     /// A filesystem operation failed.
-    #[error("{context}: {source}")]
+    #[error("{context}")]
     Io {
         /// The operation being attempted.
         context: String,
@@ -105,7 +105,7 @@ pub enum Error {
     Verify(String),
 
     /// The shared cross-process lock could not be acquired.
-    #[error("failed to acquire the shared lock at {path}: {source}")]
+    #[error("failed to acquire the shared lock at {path}")]
     Lock {
         /// The lock file.
         path: PathBuf,
@@ -113,6 +113,21 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+}
+
+impl Error {
+    /// Renders the one line a host prints: this error's message followed by each
+    /// cause in its [`source`](std::error::Error::source) chain, joined with `: `.
+    pub fn report(&self) -> String {
+        let mut out = self.to_string();
+        let mut next = std::error::Error::source(self);
+        while let Some(cause) = next {
+            out.push_str(": ");
+            out.push_str(&cause.to_string());
+            next = cause.source();
+        }
+        out
+    }
 }
 
 /// Attach a human context string to an `io::Result`, converting it into our

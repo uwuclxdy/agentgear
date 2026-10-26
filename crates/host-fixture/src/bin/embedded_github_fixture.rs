@@ -41,7 +41,7 @@ fn print_report(result: agentgear::Result<AgentReport>) -> ExitCode {
             if report.is_healthy() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
         }
         Err(e) => {
-            eprintln!("error: {e}");
+            eprintln!("error: {}", e.report());
             ExitCode::FAILURE
         }
     }
