@@ -39,6 +39,9 @@ mod spawned {
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
+    use agentgear::{PluginHost, Source};
+    use from_github::FromGithub;
+
     const BIN: &str = env!("CARGO_BIN_EXE_from-github");
     const PLUGIN_ID: &str = "from-github@from-github";
 
@@ -123,7 +126,7 @@ mod spawned {
     #[ignore = "needs AGENTGEAR_E2E_GITHUB + network + the matching version tag pushed"]
     fn github_install_pins_the_version_tag() {
         if std::env::var_os("AGENTGEAR_E2E_GITHUB").is_none() {
-            eprintln!("skipping github pin: set AGENTGEAR_E2E_GITHUB=1 (needs a tagged repo, docs/todo.md §2)");
+            eprintln!("skipping github pin: set AGENTGEAR_E2E_GITHUB=1 (needs a tagged repo)");
             return;
         }
         if !claude_available() {
@@ -148,6 +151,101 @@ mod spawned {
         let listed = String::from_utf8_lossy(&list.output().unwrap().stdout).into_owned();
         assert!(listed.contains(PLUGIN_ID), "plugin not registered from the GitHub source:\n{listed}");
         assert!(listed.contains(env!("CARGO_PKG_VERSION")), "installed version is not the pinned version tag:\n{listed}");
+    }
+
+    /// The live re-point: a binary that tracks a newer tag than the pin it finds must
+    /// move that pin. Real `claude` 2.1.308+ refuses `marketplace add` at a source the
+    /// user settings' `extraKnownMarketplaces` entry does not match, so the backend
+    /// clears its own declaration first; this leg proves the whole sequence against
+    /// the real CLI and a real tag move, which is the half `github_install_pins_the_version_tag`
+    /// never reached.
+    ///
+    /// Needs two pushed tags: the current `v{version}` and a prior release, which it
+    /// derives with `git describe` (or takes from `AGENTGEAR_E2E_GITHUB_OLD_REF`).
+    #[test]
+    #[ignore = "needs AGENTGEAR_E2E_GITHUB + network + the current and a prior version tag pushed"]
+    fn github_update_re_points_a_pin_left_on_the_previous_tag() {
+        if std::env::var_os("AGENTGEAR_E2E_GITHUB").is_none() {
+            eprintln!("skipping github re-point: set AGENTGEAR_E2E_GITHUB=1 (needs a tagged repo)");
+            return;
+        }
+        if !claude_available() {
+            eprintln!("skipping: `claude` not on PATH");
+            return;
+        }
+        let Some(old_ref) = previous_version_tag() else {
+            eprintln!("skipping github re-point: no prior version tag to pin first; set AGENTGEAR_E2E_GITHUB_OLD_REF");
+            return;
+        };
+        let sb = Sandbox::new("github-repoint");
+        let path = path_with_real_claude(&sb.root);
+
+        let claude = |args: &[&str]| {
+            let mut cmd = Command::new("claude");
+            cmd.args(args).env("CLAUDE_CONFIG_DIR", sb.root.join("cfg"));
+            sb.apply(&mut cmd, &path);
+            cmd.output().unwrap()
+        };
+        let repo = match FromGithub::DEFAULT_SOURCE {
+            Source::GitHub { repo, .. } => repo,
+            _ => panic!("`default_source = \"github\"` must expand to Source::GitHub"),
+        };
+
+        // Seed the previous release exactly as a user who installed it would hold it.
+        let added = claude(&["plugin", "marketplace", "add", &format!("{repo}@{old_ref}"), "--scope", "user"]);
+        assert!(added.status.success(), "pinning {old_ref} failed:\n{}", String::from_utf8_lossy(&added.stderr));
+        let installed = claude(&["plugin", "install", PLUGIN_ID, "--scope", "user"]);
+        assert!(installed.status.success(), "installing at {old_ref} failed:\n{}", String::from_utf8_lossy(&installed.stderr));
+        let old_version = old_ref.trim_start_matches('v');
+        let listed = String::from_utf8_lossy(&claude(&["plugin", "list", "--json"]).stdout).into_owned();
+        assert!(
+            listed.contains(&format!("\"version\": \"{old_version}\"")),
+            "the sandbox must start pinned at {old_version} (derived from {old_ref}); set \
+             AGENTGEAR_E2E_GITHUB_OLD_REF to a released tag whose plugin version differs:\n{listed}"
+        );
+
+        // The binary tracks the current tag; its update is the version bump.
+        let mut update = Command::new(BIN);
+        update.arg("update").env("CLAUDE_CONFIG_DIR", sb.root.join("cfg"));
+        sb.apply(&mut update, &path);
+        let out = update.output().unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        assert!(out.status.success(), "update failed:\n{}\n{stdout}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(
+            stdout,
+            format!("Updated {{ from: Some(\"{old_version}\"), to: \"{}\" }}", env!("CARGO_PKG_VERSION")),
+            "the update must move the pin, not reinstall"
+        );
+
+        let tag = concat!("v", env!("CARGO_PKG_VERSION"));
+        let listed = String::from_utf8_lossy(&claude(&["plugin", "list", "--json"]).stdout).into_owned();
+        assert!(listed.contains(&format!("\"version\": \"{}\"", env!("CARGO_PKG_VERSION"))), "the plugin must now sit on {tag}:\n{listed}");
+        assert!(
+            listed.contains(&format!("from-github/from-github/{}", env!("CARGO_PKG_VERSION"))),
+            "the installed tree must come from the new tag's cache:\n{listed}"
+        );
+        assert!(listed.contains("\"enabled\": true"), "the re-point must not disable the plugin:\n{listed}");
+        let market = String::from_utf8_lossy(&claude(&["plugin", "marketplace", "list", "--json"]).stdout).into_owned();
+        assert!(market.contains(&format!("\"ref\": \"{tag}\"")), "the marketplace must track {tag}:\n{market}");
+        let settings = fs::read_to_string(sb.root.join("cfg").join("settings.json")).unwrap();
+        assert!(settings.contains(&format!("\"ref\": \"{tag}\"")), "the declaration must follow the new pin:\n{settings}");
+        assert!(settings.contains(PLUGIN_ID), "the plugin must stay enabled through the re-point:\n{settings}");
+    }
+
+    /// The released tag one version behind the binary. `None` when it cannot be told:
+    /// no git history, no tag for the current version, or a derived tag that IS the
+    /// current one (the test's own premise would be gone).
+    fn previous_version_tag() -> Option<String> {
+        if let Some(tag) = std::env::var_os("AGENTGEAR_E2E_GITHUB_OLD_REF") {
+            return Some(tag.to_string_lossy().into_owned());
+        }
+        let parent = concat!("v", env!("CARGO_PKG_VERSION"), "^");
+        let out = Command::new("git").args(["describe", "--tags", "--abbrev=0", parent]).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let tag = String::from_utf8(out.stdout).ok()?.trim().to_string();
+        (tag != concat!("v", env!("CARGO_PKG_VERSION"))).then_some(tag)
     }
 
     fn claude_available() -> bool {

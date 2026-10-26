@@ -16,6 +16,12 @@
 //! `version`/`installPath` from its entries, which the crate's tolerant serde models
 //! read as "unknown, assume fine" rather than letting the double invent a version.
 //!
+//! It also models the user-settings marketplace declaration real `claude` 2.1.308+
+//! checks on `marketplace add`: a github add whose `extraKnownMarketplaces` entry
+//! names another source is refused, and an accepted one rewrites the entry. The
+//! declaration a directory add leaves behind is not modeled, because the real guard
+//! exempts directory sources too.
+//!
 //! Every invocation is also appended to `<config-dir>/fake-claude-calls.log`, one
 //! line per call, for the tests whose subject is which calls ran rather than what the
 //! registry ended up holding. `FAKE_CLAUDE_FAIL_INSTALL` in the environment makes
@@ -79,6 +85,9 @@ fn plugin(argv: &[&str]) -> ExitCode {
         }
         ["marketplace", rest @ ..] => marketplace(rest),
         ["install", id, ..] => install(id),
+        // The real CLI re-copies the tree from the catalog's version. The double
+        // carries no versions, so success plus the call log is all a test can see.
+        ["update", _id, ..] => ExitCode::SUCCESS,
         ["uninstall", id, ..] => mutate(|state| state.plugins.retain(|p| p["id"] != json!(id))),
         ["enable", id, ..] => set_enabled(id, true),
         ["disable", id, ..] => set_enabled(id, false),
@@ -118,11 +127,7 @@ fn marketplace(argv: &[&str]) -> ExitCode {
             println!("{}", render(&State::load().marketplaces));
             ExitCode::SUCCESS
         }
-        ["add", source, ..] => mutate(|state| {
-            let entry = marketplace_entry(source);
-            state.marketplaces.retain(|m| m["name"] != entry["name"]);
-            state.marketplaces.push(entry);
-        }),
+        ["add", source, ..] => add(source),
         // A no-op for a healthy local marketplace: the source dir IS the live copy.
         // A dir whose manifest vanished fails like the real CLI's EISDIR refresh
         // failure (probed 2.1.241), so a heal that picks `update` over a re-pointing
@@ -196,16 +201,83 @@ fn usage(argv: &[&str]) -> ExitCode {
     ExitCode::from(2)
 }
 
+/// `marketplace add <source>`, under the declaration check real `claude` 2.1.308+
+/// enforces: a user-settings `extraKnownMarketplaces` entry for the marketplace's
+/// name must name the same source, and a successful github add (re)declares it.
+/// A local-directory source is exempt from the guard (measured 2.1.310), so its
+/// declaration is not modeled; `source`/`repo`/`ref` mirror what
+/// `marketplace list --json` reports, which is what the backend reads.
+fn add(source: &str) -> ExitCode {
+    let mut state = State::load();
+    let entry = marketplace_entry(source, &state);
+    let name = entry["name"].as_str().unwrap_or_default().to_string();
+    if entry["source"] == json!("github") {
+        if let Some(cause) = declaration_conflict(&name, &entry) {
+            eprintln!("Cannot add marketplace \"{name}\": {cause}");
+            return ExitCode::FAILURE;
+        }
+        declare(&name, &entry);
+    }
+    state.marketplaces.retain(|m| m["name"] != entry["name"]);
+    state.marketplaces.push(entry);
+    state.save();
+    ExitCode::SUCCESS
+}
+
+/// The real CLI's refusal when the settings entry for `name` names anything but the
+/// source being added: `add it from the source that entry lists, or change the
+/// entry` (measured 2.1.310). Strict on the whole source object, matching the guard
+/// that compares it field for field; a directory ADD is exempt before this check,
+/// which the caller handles.
+fn declaration_conflict(name: &str, entry: &Value) -> Option<String> {
+    let declared = read_settings().get("extraKnownMarketplaces")?.get(name)?.get("source")?.clone();
+    let exact = declared.as_object().filter(|fields| fields.len() == 3).is_some_and(|source| {
+        source.get("source").and_then(Value::as_str) == Some("github")
+            && source
+                .get("repo")
+                .and_then(Value::as_str)
+                .zip(entry["repo"].as_str())
+                .is_some_and(|(declared, added)| declared.eq_ignore_ascii_case(added))
+            && source.get("ref").and_then(Value::as_str) == entry["ref"].as_str()
+    });
+    (!exact).then(|| {
+        "its source doesn't match its extraKnownMarketplaces entry in user or managed settings; add it from the \
+         source that entry lists, or change the entry"
+            .to_string()
+    })
+}
+
+/// The declaration a successful github add leaves behind, keeping every other
+/// settings key the user holds.
+fn declare(name: &str, entry: &Value) {
+    let mut settings = read_settings();
+    if !settings.is_object() {
+        settings = json!({});
+    }
+    settings["extraKnownMarketplaces"][name] = json!({
+        "source": {"source": "github", "repo": entry["repo"], "ref": entry["ref"]}
+    });
+    write_settings(&settings);
+}
+
 /// A registered marketplace entry. A local dir carries `path` (what the backend's
-/// dangling-source check reads); a `owner/repo@ref` source carries `ref` instead,
-/// matching `MarketplaceEntry`'s two shapes.
-fn marketplace_entry(source: &str) -> Value {
+/// dangling-source check reads); a `owner/repo@ref` source carries `source`/`repo`/
+/// `ref`, matching `MarketplaceEntry`'s two shapes. A github add reuses the name an
+/// existing entry for the same repo registered under: the real CLI reads that name
+/// off the fetched `marketplace.json`, which a hermetic double cannot reach.
+fn marketplace_entry(source: &str, state: &State) -> Value {
     let path = Path::new(source);
     if path.is_dir() {
         return json!({"name": local_marketplace_name(path), "path": source});
     }
     let (repo, ref_) = source.split_once('@').unwrap_or((source, ""));
-    json!({"name": repo.rsplit('/').next().unwrap_or(repo), "ref": ref_})
+    let known = state
+        .marketplaces
+        .iter()
+        .find(|m| m["source"] == json!("github") && m["repo"].as_str().is_some_and(|r| r.eq_ignore_ascii_case(repo)))
+        .and_then(|m| m["name"].as_str());
+    let name = known.map(str::to_string).unwrap_or_else(|| repo.rsplit('/').next().unwrap_or(repo).to_string());
+    json!({"name": name, "source": "github", "repo": repo, "ref": ref_})
 }
 
 /// The `name` out of a local marketplace's generated `.claude-plugin/marketplace.json`,
@@ -248,6 +320,24 @@ impl State {
 
 fn state_path() -> PathBuf {
     config_dir().join(STATE_FILENAME)
+}
+
+fn settings_path() -> PathBuf {
+    config_dir().join("settings.json")
+}
+
+/// The user settings file, or `Null` when it is absent or unparseable — the same
+/// shape the real CLI reads its `extraKnownMarketplaces` declaration from.
+fn read_settings() -> Value {
+    fs::read(settings_path()).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or(Value::Null)
+}
+
+/// Best-effort, like [`State::save`]: a double that failed a lifecycle call because
+/// its own bookkeeping could not be written would red a test for the wrong reason.
+fn write_settings(root: &Value) {
+    if let Ok(bytes) = serde_json::to_vec_pretty(root) {
+        let _ = fs::write(settings_path(), bytes);
+    }
 }
 
 fn config_dir() -> PathBuf {

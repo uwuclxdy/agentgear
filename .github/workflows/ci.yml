@@ -211,8 +211,9 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code
       # The ignored suite drives the real `claude plugin` CLI in an isolated
       # CLAUDE_CONFIG_DIR; it is the golden drift gate (design §11). `--no-fail-fast`
-      # so one red ignored test (e.g. a §2 GitHub pin) can never abort the run before
-      # a later test binary and mask the golden suite the way it did 2026-07-16.
+      # so one red ignored test (the live GitHub pin legs included) can never abort
+      # the run before a later test binary and mask the golden suite the way it did
+      # 2026-07-16.
       - name: end-to-end lifecycle
         run: cargo test --all-features --no-fail-fast -- --ignored
 

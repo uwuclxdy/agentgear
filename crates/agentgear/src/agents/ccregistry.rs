@@ -1,4 +1,5 @@
-//! Shared readers for Claude Code's own on-disk registry files.
+//! Shared readers for Claude Code's own on-disk state, plus the one user-settings
+//! write: dropping our stale marketplace declaration before a github re-point.
 //!
 //! Two call sites, two path resolutions:
 //! - omp's `claude-plugins` provider and cursor's default-on `loadClaude` loader
@@ -6,14 +7,19 @@
 //!   hardcoded — neither honors `CLAUDE_CONFIG_DIR`), so a relocated config dir
 //!   moves the registry off this path for every caller, and each reads
 //!   not-listed (translate, never lose coverage) rather than mis-covering.
-//! - the claude backend's spawn-free heal-needed classifier reads CC's registry
-//!   files (`installed_plugins.json`, `known_marketplaces.json`, `settings.json`)
-//!   from the config dir CC actually uses, so the caller passes the dir in.
+//! - the claude backend's spawn-free heal-needed classifier reads CC's on-disk
+//!   plugin state (`installed_plugins.json`, `known_marketplaces.json`, and
+//!   `settings.json` for the enable bit) from the config dir CC actually uses, so the
+//!   caller passes the dir in. The write is the same config dir's `settings.json`;
+//!   nothing else is ever written.
 
 use std::fs;
 use std::path::Path;
 
 use serde_json::Value;
+
+#[cfg(feature = "claude")]
+use crate::agents::confedit::{json_edit, json_prune_obj};
 
 #[cfg(feature = "claude")]
 use std::ffi::OsStr;
@@ -165,6 +171,62 @@ pub(crate) fn enabled_plugin(cwd: &Path, config_dir: &Path, id: &str) -> Result<
         }
     }
     Ok(false)
+}
+
+/// Drop `<config_dir>/settings.json`'s `extraKnownMarketplaces[marketplace]` entry
+/// unless it already declares `repo` at `ref_`, and report whether the file changed.
+/// A missing settings file, a missing entry, or an exact match writes nothing; a
+/// file we cannot parse is refused, never clobbered.
+///
+/// CC 2.1.308+ refuses `plugin marketplace add` while that entry names another
+/// source ("add it from the source that entry lists, or change the entry"), which a
+/// version-pinned host hits on every tag move; the add that follows re-declares it.
+/// Only the user-scope file is in reach: project/local declarations are exempt from
+/// the guard, and a managed or `--settings` one is likewise out of reach and must
+/// fail loudly instead.
+#[cfg(feature = "claude")]
+pub(crate) fn drop_marketplace_declaration(config_dir: &Path, marketplace: &str, repo: &str, ref_: &str) -> crate::Result<bool> {
+    let path = config_dir.join("settings.json");
+    json_edit(&path, |root| {
+        json_prune_obj(root, &["extraKnownMarketplaces"], |entries| {
+            if entries.get(marketplace).is_some_and(|entry| declares(entry, repo, ref_)) {
+                return Ok(());
+            }
+            entries.remove(marketplace);
+            Ok(())
+        })?;
+        Ok(())
+    })
+}
+
+/// Whether one `extraKnownMarketplaces` value already declares exactly `repo` at
+/// `ref_`. Strict: another source kind, repo or ref, or any extra field, reads as
+/// "not ours as written", so the entry is dropped and the CLI re-declares it from
+/// the fetched marketplace — wholesale, which the CLI does on any re-add even when
+/// the source already matched (measured 2.1.310), so a sibling field such as
+/// `autoUpdate` is the CLI's to reset either way. Mirroring the CLI's own source
+/// comparison would tie this crate to its private schema for no benefit.
+#[cfg(feature = "claude")]
+fn declares(entry: &Value, repo: &str, ref_: &str) -> bool {
+    let Some(declaration) = entry.as_object().filter(|fields| fields.len() == 1) else { return false };
+    let Some(source) = declaration.get("source").and_then(Value::as_object).filter(|fields| fields.len() == 3) else {
+        return false;
+    };
+    source.get("source").and_then(Value::as_str) == Some("github")
+        && source.get("repo").and_then(Value::as_str).is_some_and(|declared| declared.eq_ignore_ascii_case(repo))
+        && source.get("ref").and_then(Value::as_str) == Some(ref_)
+}
+
+/// [`drop_marketplace_declaration`] at the config dir CC actually uses. A dir the
+/// crate cannot resolve (an empty override, no home) writes nothing: the closing
+/// `marketplace add` then runs as it would have, succeeding if the CLI finds no
+/// declaration where it looks and failing with its own refusal otherwise.
+#[cfg(feature = "claude")]
+pub(crate) fn drop_stale_marketplace_declaration(marketplace: &str, repo: &str, ref_: &str) -> crate::Result<bool> {
+    match cc_config_dir() {
+        CcConfigDir::Dir(dir) => drop_marketplace_declaration(&dir, marketplace, repo, ref_),
+        CcConfigDir::EmptyOverride | CcConfigDir::NoHome => Ok(false),
+    }
 }
 
 /// Read + parse a registry file. A missing file reads as empty JSON (absence, not

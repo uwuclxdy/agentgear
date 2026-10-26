@@ -6,7 +6,9 @@
 //! Two contracts live here: the registry heal cases (a broken/divergent
 //! marketplace, an error-carrying plugin entry), and the retired-slot contract —
 //! setup/self-heal/uninstall never touch the user's `settings.json`, so a
-//! pre-existing statusLine survives byte-identical.
+//! pre-existing statusLine survives byte-identical. The one exception is a github
+//! re-point, which drops our own `extraKnownMarketplaces` declaration — the
+//! container too when that empties it — before the CLI can accept the new pin.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -16,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const BIN: &str = env!("CARGO_BIN_EXE_host_fixture");
+const GITHUB_FIXTURE: &str = env!("CARGO_BIN_EXE_github_fixture");
 const FAKE_CLAUDE: &str = env!("CARGO_BIN_EXE_fake_claude");
 
 /// Mirrors `fake_claude.rs`'s own `STATE_FILENAME`; a bin target exports nothing an
@@ -24,9 +27,10 @@ const FAKE_CLAUDE: &str = env!("CARGO_BIN_EXE_fake_claude");
 const FAKE_CLAUDE_STATE_FILENAME: &str = "fake-claude-state.json";
 
 /// The user's own settings before we touch anything: an unrelated key plus a real
-/// status line of theirs. The automatic slot wiring is retired, so this whole file
-/// must survive every lifecycle op byte-identical — nothing this backend writes
-/// lives in it anymore.
+/// status line of theirs. The automatic slot wiring is retired, so this file
+/// survives every embedded/path lifecycle op byte-identical; the one write the
+/// backend makes to it is a github re-point's drop of our own declaration, covered
+/// by the drift test below.
 const SEED_SETTINGS: &str = r#"{
   "theirSetting": true,
   "statusLine": {
@@ -75,11 +79,29 @@ impl Env {
     }
 
     fn fixture(&self, args: &[&str]) -> (bool, String) {
-        let mut cmd = Command::new(BIN);
+        self.run(BIN, args)
+    }
+
+    /// Drive any fixture host binary, not only the default one: a github-default
+    /// host resolves `Source::GitHub`, which the per-agent fixture never does.
+    /// Stdout only, for the assertions that pin a lifecycle's collapsed outcome.
+    fn run(&self, bin: &str, args: &[&str]) -> (bool, String) {
+        let (ok, out, _) = self.run_full(bin, args);
+        (ok, out)
+    }
+
+    /// [`run`](Self::run) with the stderr kept: a live-CLI refusal arrives there
+    /// while stdout stays empty, so a red is unreadable without it.
+    fn run_full(&self, bin: &str, args: &[&str]) -> (bool, String, String) {
+        let mut cmd = Command::new(bin);
         cmd.args(args);
         self.apply(&mut cmd);
         let out = cmd.output().unwrap();
-        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        )
     }
 
     fn settings_path(&self) -> PathBuf {
@@ -319,6 +341,58 @@ fn claude_a_newer_github_registration_migrates_to_the_local_marketplace() {
 
     let (ok, out) = env.fixture(&["self-heal"]);
     assert!(ok && out == "NoOp", "a migrated registration must no-op, got {out}");
+}
+
+/// A version-pinned github host re-points its pin when the binary that tracks it
+/// bumps. Real `claude` 2.1.308+ refuses `marketplace add owner/repo@<new tag>`
+/// while the user settings' `extraKnownMarketplaces` entry still names the old
+/// tag, so reconcile must drop its own declaration first; without that the pass
+/// dies inside the CLI and the install stays pinned at the old plugin version
+/// forever. The double carries the guard, so a regression here reds in CI rather
+/// than only on the network-gated live leg.
+#[test]
+fn claude_a_github_ref_drift_re_points_its_pinned_marketplace() {
+    let env = Env::new("github-drift");
+    let current = concat!("v", env!("CARGO_PKG_VERSION"));
+    // The live CLI's shapes: `known_marketplaces.json` (also `marketplace list
+    // --json`) carries source/repo/ref, and the declaration the add wrote mirrors it.
+    fs::write(
+        env.cfg.join(FAKE_CLAUDE_STATE_FILENAME),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "plugins": [{"id": "ez-fixture-plugin@ez-fixture-plugin", "enabled": true, "scope": "user", "version": "0.0.9"}],
+            "marketplaces": [{"name": "ez-fixture-plugin", "source": "github", "repo": "uwuclxdy/agentgear", "ref": "v0.0.9"}]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let mut settings: serde_json::Value = serde_json::from_str(SEED_SETTINGS).unwrap();
+    settings["extraKnownMarketplaces"] = serde_json::json!({
+        "ez-fixture-plugin": {"source": {"source": "github", "repo": "uwuclxdy/agentgear", "ref": "v0.0.9"}}
+    });
+    fs::write(env.settings_path(), serde_json::to_vec_pretty(&settings).unwrap()).unwrap();
+    let log_path = env.cfg.join("fake-claude-calls.log");
+    fs::write(&log_path, "").unwrap();
+
+    let (ok, out, err) = env.run_full(GITHUB_FIXTURE, &["update"]);
+    assert!(ok, "update errored on a github ref drift:\n{out}\n{err}");
+    assert_eq!(out, concat!("Updated { from: Some(\"0.0.9\"), to: \"", env!("CARGO_PKG_VERSION"), "\" }"));
+
+    let log = fs::read_to_string(&log_path).unwrap();
+    let add = format!("plugin marketplace add uwuclxdy/agentgear@{current} --scope user");
+    assert!(log.lines().any(|l| l == add), "the drift must re-point the pin with `{add}`, calls were:\n{log}");
+    assert!(
+        log.lines().any(|l| l == "plugin update ez-fixture-plugin@ez-fixture-plugin --scope user"),
+        "a drifted pin must re-hand the tree, calls were:\n{log}"
+    );
+
+    let state: serde_json::Value = serde_json::from_slice(&fs::read(env.cfg.join(FAKE_CLAUDE_STATE_FILENAME)).unwrap()).unwrap();
+    assert_eq!(state["marketplaces"][0]["name"], "ez-fixture-plugin", "the re-point must keep the marketplace name");
+    assert_eq!(state["marketplaces"][0]["ref"], current, "the marketplace must sit on the new tag");
+
+    let settings: serde_json::Value = serde_json::from_slice(&fs::read(env.settings_path()).unwrap()).unwrap();
+    assert_eq!(settings["extraKnownMarketplaces"]["ez-fixture-plugin"]["source"]["ref"], current);
+    assert_eq!(settings["theirSetting"], true, "the drop must leave every other settings key alone");
+    assert_eq!(settings["statusLine"]["command"], "echo their-bar-row", "the drop must not touch the user's status line");
 }
 
 /// The guard the fix must not break: a strictly-newer LOCAL install is another

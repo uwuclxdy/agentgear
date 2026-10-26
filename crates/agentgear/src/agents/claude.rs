@@ -1,6 +1,8 @@
 //! The Claude Code backend: converge the `claude plugin` registry to a desired
 //! state via marketplace-ensure + install/update, read back through `list --json`.
-//! It orchestrates the supported CLI; it never forges CC's on-disk state.
+//! It orchestrates the supported CLI; the one file it writes is the user settings'
+//! marketplace declaration a github re-point has to clear first
+//! (`ccregistry::drop_stale_marketplace_declaration`).
 
 use std::path::Path;
 
@@ -311,7 +313,8 @@ fn record_staged(plugin: &Plugin, desired: &Desired, scope: &Scope, staged: Opti
 /// Embedded/path: (re)materialize so `current@claude` is fresh, then add-if-absent /
 /// update-if-present. GitHub: send `owner/repo@ref` to pin the ref; when already
 /// present, `update` if the stored ref still matches, else re-`add` to re-point the
-/// pin (`update` never moves one — design §ref-pinning ground truth). A present
+/// pin (`update` never moves one — design §ref-pinning ground truth), after clearing
+/// the settings declaration 2.1.308+ checks that add against. A present
 /// local-source entry whose registered path diverges from the just-materialized
 /// pointer (an old checkout dir, a github-registered entry, a pre-client-scoping
 /// `current`) is re-pointed the same way: `marketplace add <dir>` over the same
@@ -329,7 +332,18 @@ fn ensure_marketplace(cli: &ClaudeCli, plugin: &Plugin, source: &Source, scope: 
     };
     match marketplace_op(source, present, &source_str) {
         MarketplaceOp::Update => marketplace_update(cli, plugin.marketplace, scope)?,
-        MarketplaceOp::Add => marketplace_add(cli, &source_str, scope)?,
+        MarketplaceOp::Add => {
+            // 2.1.308+ validates the add against the user settings' own declaration
+            // and refuses a source it does not match, so a tag move never reaches
+            // the CLI's re-registration until that entry is cleared. The CLI names
+            // changing the entry as the remedy and the add re-declares it; its other
+            // route, `marketplace remove`, would also uninstall the plugin and
+            // delete its saved options and data.
+            if let Source::GitHub { repo, ref_ } = source {
+                crate::agents::ccregistry::drop_stale_marketplace_declaration(plugin.marketplace, repo, ref_)?;
+            }
+            marketplace_add(cli, &source_str, scope)?;
+        }
     }
     Ok(())
 }
