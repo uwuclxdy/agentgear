@@ -12,7 +12,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -25,8 +25,9 @@ struct Env {
     cfg: PathBuf,
     data: PathBuf,
     run: PathBuf,
-    /// Curated `PATH` holding only `claude` + the fixture, so the non-CC backends'
-    /// `which` arm stays false regardless of what the machine has installed.
+    /// Curated `PATH` holding the fixture plus every directory on the inherited
+    /// one that holds a `claude` entry, so a wrapper shim can still resolve the
+    /// binary it wraps.
     path: OsString,
 }
 
@@ -44,11 +45,11 @@ impl Env {
     }
 
     fn apply(&self, cmd: &mut Command) {
-        // Two arms of the non-CC `detect()` must both stay false so the fan-out is
-        // a pure Claude exercise: `HOME` + `XDG_CONFIG_HOME` under the temp root kill
-        // the config-dir arm (no `~/.gemini`, `~/.config/opencode`, …), and the
-        // curated `PATH` kills the `which` arm (a dev box may have `codex`/`opencode`
-        // installed). Both also pin any write a filled backend might do to the sandbox.
+        // `HOME` + `XDG_CONFIG_HOME` under the temp root keep every config-dir
+        // `detect()` arm false (no `~/.gemini`, `~/.config/opencode`, …) and pin any
+        // write a detected backend does to the sandbox. A `which` arm stays false
+        // unless the inherited `PATH` keeps a harness binary in the same directory
+        // as `claude`.
         cmd.env("CLAUDE_CONFIG_DIR", &self.cfg)
             .env("HOME", &self.root)
             .env("XDG_CONFIG_HOME", self.root.join("config"))
@@ -161,10 +162,9 @@ fn claude_available() -> bool {
     Command::new("claude").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
 }
 
-/// The first `name` found on the inherited `PATH`.
-fn locate(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|dir| dir.join(name)).find(|p| p.is_file())
+/// Every directory on `path` holding a `claude` entry, in `path` order.
+fn claude_dirs_on(path: &OsStr) -> Vec<PathBuf> {
+    std::env::split_paths(path).filter(|dir| dir.join("claude").is_file()).collect()
 }
 
 /// Recursively copy a plugin tree into a scratch dir so a test can mutate its
@@ -182,21 +182,40 @@ fn copy_dir_all(src: &Path, dst: &Path) {
     }
 }
 
-/// A `PATH` holding only the fixture binary's dir and `claude`'s dir, so `which`
-/// resolves `claude` + `host_fixture` but not a `codex`/`opencode`/… a dev box may
-/// have installed. Claude's plugin ops need nothing else on PATH (local
-/// marketplace, no git), so this stays a pure Claude exercise.
+/// A `PATH` holding the fixture binary's dir and every directory on the inherited
+/// one that holds a `claude` entry — all of them, so a wrapper shim can resolve
+/// the binary it wraps. Claude's plugin ops need nothing else on PATH (local
+/// marketplace, no git); a directory that also holds another harness binary makes
+/// that backend's `which` arm live, and the sandbox still keeps its writes inside
+/// the temp root.
 fn curated_path() -> OsString {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(dir) = Path::new(BIN).parent() {
         dirs.push(dir.to_path_buf());
     }
-    if let Some(claude) = locate("claude")
-        && let Some(dir) = claude.parent()
-    {
-        dirs.push(dir.to_path_buf());
+    if let Some(path) = std::env::var_os("PATH") {
+        dirs.extend(claude_dirs_on(&path));
     }
     std::env::join_paths(&dirs).unwrap_or_default()
+}
+
+/// Every directory holding a `claude` entry joins the curated `PATH`, so a
+/// wrapper earlier on the inherited path can still resolve the binary it wraps.
+#[test]
+fn curated_path_keeps_every_directory_holding_a_claude_entry() {
+    let root = std::env::temp_dir().join(format!("ez-e2e-path-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let shim = root.join("shim");
+    let real = root.join("real");
+    let empty = root.join("empty");
+    for dir in [&shim, &real, &empty] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(shim.join("claude"), "").unwrap();
+    std::fs::write(real.join("claude"), "").unwrap();
+    let path = std::env::join_paths([&empty, &shim, &real]).unwrap();
+    assert_eq!(claude_dirs_on(&path), vec![shim.clone(), real.clone()]);
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
