@@ -8,7 +8,7 @@ use super::{AgentBackend, BackendState};
 use crate::cli::{ClaudeCli, version_lt};
 use crate::doctor::DoctorReport;
 use crate::error::{Error, Result};
-use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
+use crate::host::{Capabilities, Desired, HealNeededVerdict, Outcome, Plugin, Scope, Source};
 use crate::manifest::{MarketplaceEntry, PluginEntry};
 use crate::materialize::{TreeSource, content_hash, materialize};
 use crate::stamp;
@@ -440,6 +440,195 @@ pub(crate) fn remove(plugin: &Plugin, scope: &Scope) -> Result<Outcome> {
     Ok(Outcome::Removed)
 }
 
+/// Spawn-free pre-check entry: would self_heal mutate or repair this install,
+/// read from CC's registry files + the stamp marker alone (never the marker
+/// alone — the marker says "we installed this", never "it is still installed";
+/// design §self_heal). No CLI spawn; every "cannot tell" answer folds to
+/// `Needed`, so a host that trusts this never skips a heal that would have acted.
+pub(crate) fn heal_needed(plugin: &Plugin, scope: &Scope, default_source: &Source) -> HealNeededVerdict {
+    let data_root = match crate::host::data_root(plugin) {
+        Ok(root) => root,
+        Err(e) => return HealNeededVerdict::Needed { reason: format!("no data root: {e}") },
+    };
+    let marker = match stamp::read(plugin, scope, ClaudeBackend.id()) {
+        Ok(marker) => marker,
+        Err(e) => return HealNeededVerdict::Needed { reason: format!("cannot tell: {e}") },
+    };
+    let resolved = stamp::source_from_marker(marker.as_ref(), default_source.clone());
+    let config_dir = match crate::agents::ccregistry::cc_config_dir() {
+        crate::agents::ccregistry::CcConfigDir::Dir(dir) => dir,
+        crate::agents::ccregistry::CcConfigDir::EmptyOverride => {
+            return HealNeededVerdict::Needed { reason: "empty CLAUDE_CONFIG_DIR".into() };
+        }
+        crate::agents::ccregistry::CcConfigDir::NoHome => {
+            return HealNeededVerdict::Needed { reason: "no home directory (HOME unset)".into() };
+        }
+    };
+    // The healthy row and the owned-by-another-binary no-op both clear the restart
+    // flag (selfheal.rs), so a pending flag — or one that cannot be read — is a
+    // change self_heal would make, and the answer is `Needed`, never `Clean`.
+    let restart_pending = !matches!(crate::restart::pending(plugin), Ok(None));
+    let cwd = std::env::current_dir().ok();
+    let env = HealNeededEnv { config_dir: &config_dir, data_root: &data_root, restart_pending, cwd: cwd.as_deref() };
+    heal_needed_from(plugin, &resolved, marker.as_ref(), &env)
+}
+
+/// The file/flag inputs the classifier core reads beside the plugin and marker:
+/// the three path roots plus the restart flag, all resolved by [`heal_needed`].
+/// Bundled so [`heal_needed_from`] stays under the argument-count lint.
+struct HealNeededEnv<'a> {
+    config_dir: &'a Path,
+    data_root: &'a Path,
+    restart_pending: bool,
+    cwd: Option<&'a Path>,
+}
+
+/// The file-only core of [`heal_needed`]: given CC's registry files at
+/// `env.config_dir`, this agent's marker (or `None`), the marker-resolved source,
+/// the agentgear data root (for the `current@claude` pointer), whether the
+/// restart flag is pending (or unreadable), and the process cwd (for the
+/// cwd-merged enable bit), answer whether self_heal would mutate or repair —
+/// reproducing probe + the heal table + reconcile's monotonic short-circuit, with
+/// every unreadable input folding to `Needed` (never a false `Clean`).
+fn heal_needed_from(
+    plugin: &Plugin, resolved_source: &Source, marker: Option<&stamp::Marker>, env: &HealNeededEnv<'_>,
+) -> HealNeededVerdict {
+    let HealNeededEnv { config_dir, data_root, restart_pending, cwd } = *env;
+    let has_marker = marker.is_some();
+
+    let entry = match crate::agents::ccregistry::installed_entry(config_dir, &plugin.id()) {
+        Ok(entry) => entry,
+        Err(reason) => return HealNeededVerdict::Needed { reason },
+    };
+    let Some(entry) = entry else {
+        // The registry holds no row at this scope: heal clears a stale marker (or
+        // repairs a cut-off reinstall) and never resurrects an absent install.
+        return if has_marker {
+            let reason = if marker.is_some_and(|m| m.reinstalling) {
+                "cut-off reinstall".to_string()
+            } else {
+                "stale marker without a registry row".to_string()
+            };
+            HealNeededVerdict::Needed { reason }
+        } else {
+            HealNeededVerdict::Clean
+        };
+    };
+
+    // The enable bit is the cwd-merged value; the project layers live in the
+    // process cwd, so a cwd that cannot be read is "cannot tell", never a silent
+    // disabled.
+    let enabled = match cwd {
+        Some(cwd) => match crate::agents::ccregistry::enabled_plugin(cwd, config_dir, &plugin.id()) {
+            Ok(enabled) => enabled,
+            Err(reason) => return HealNeededVerdict::Needed { reason },
+        },
+        None => return HealNeededVerdict::Needed { reason: "no working directory".into() },
+    };
+    if !enabled {
+        // A disable is deliberate: heal no-ops on a marked install (never
+        // re-enables) and only adopts — writes a marker — an unmarked one.
+        return if has_marker {
+            HealNeededVerdict::Clean
+        } else {
+            HealNeededVerdict::Needed { reason: "disabled install with no marker".into() }
+        };
+    }
+
+    let files_ok = entry.install_path.as_deref().is_none_or(|p| Path::new(p).exists());
+    let monotonic_current = !version_lt(entry.version.as_deref(), plugin.version);
+    let newer = entry.version.as_deref().is_some_and(|v| version_lt(Some(plugin.version), v));
+
+    let marketplace = match crate::agents::ccregistry::marketplace_entry(config_dir, plugin.marketplace) {
+        Ok(marketplace) => marketplace,
+        Err(reason) => return HealNeededVerdict::Needed { reason },
+    };
+    let expected = data_root.join(format!("current@{}", ClaudeBackend.id()));
+    // `installed_plugins.json` rows carry no `errors` field (probed 2.1.310), so
+    // the load-failure signal probe reads off `list --json` is replaced here by
+    // the manifest-presence term inside `marketplace_health` plus the
+    // installLocation manifest check, which also covers a github source.
+    let marketplace_ok = matches!(marketplace_health(marketplace.as_ref(), resolved_source, &expected), MarketplaceHealth::Healthy)
+        && install_location_manifest_ok(marketplace.as_ref());
+    let staged = staged_tree_hash(plugin, resolved_source);
+    // A github source has no local tree (`staged` is `None`), and an unreadable
+    // local tree means "no drift detectable"; both read current, matching
+    // probe's `newer || tree_is_current` short-circuit.
+    let tree_current = newer || tree_hash_current(marker, staged.as_deref());
+
+    if files_ok && monotonic_current && marketplace_ok && tree_current {
+        // Healthy: self_heal's `(marker present, Healthy)` row clears the restart
+        // flag and now also ends a lingering reinstall, so only a settled marker
+        // with no pending flag is a no-op. An unmarked install is the adopt row
+        // (the heal writes a marker).
+        return if has_marker {
+            if marker.is_some_and(|m| m.reinstalling) {
+                HealNeededVerdict::Needed { reason: "lingering reinstall".into() }
+            } else if restart_pending {
+                HealNeededVerdict::Needed { reason: "restart notice to retire".into() }
+            } else {
+                HealNeededVerdict::Clean
+            }
+        } else {
+            HealNeededVerdict::Needed { reason: "no ownership marker (adopt)".into() }
+        };
+    }
+
+    // NeedsRepair: the one no-op reconcile is the monotonic short-circuit — a
+    // strictly-newer install another binary owns (structurally sound against its
+    // OWN registered path) is left alone, never downgraded or re-handed a tree.
+    // That no-op still clears the restart flag and rebuilds the marker (ending a
+    // lingering reinstall), so both are changes the classifier must not read Clean.
+    if has_marker && newer {
+        let registered = marketplace.as_ref().and_then(|m| m.path.as_deref()).map(Path::new).unwrap_or(expected.as_path());
+        let owned_by_another_binary = files_ok
+            && matches!(marketplace_health(marketplace.as_ref(), resolved_source, registered), MarketplaceHealth::Healthy)
+            && install_location_manifest_ok(marketplace.as_ref());
+        if owned_by_another_binary {
+            if marker.is_some_and(|m| m.reinstalling) {
+                return HealNeededVerdict::Needed { reason: "lingering reinstall".into() };
+            }
+            if restart_pending {
+                return HealNeededVerdict::Needed { reason: "restart notice to retire".into() };
+            }
+            return HealNeededVerdict::Clean;
+        }
+    }
+
+    HealNeededVerdict::Needed { reason: "install drifted".into() }
+}
+
+/// The `installLocation` half of the marketplace health the classifier
+/// substitutes for probe's `errors`: a missing manifest at a directory source's
+/// `installLocation` is the load failure probe reads off `errors` (probed
+/// 2.1.241); an unparseable manifest and a github clone's missing one are treated
+/// the same, unprobed. An absent or empty `installLocation` is "cannot tell" and
+/// reads not-ok.
+fn install_location_manifest_ok(marketplace: Option<&MarketplaceEntry>) -> bool {
+    let Some(location) = marketplace.and_then(|m| m.install_location.as_deref()).filter(|l| !l.is_empty()) else {
+        return false;
+    };
+    let manifest = Path::new(location).join(".claude-plugin").join("marketplace.json");
+    let Ok(bytes) = std::fs::read(manifest) else {
+        return false;
+    };
+    serde_json::from_slice::<serde_json::Value>(&bytes).is_ok()
+}
+
+/// The tree-hash term probe folds into `newer || tree_is_current`: an absent
+/// staged hash (a github source, an unreadable local tree) reads current, and
+/// otherwise the marker's recorded hash must equal the staged one.
+fn tree_hash_current(marker: Option<&stamp::Marker>, staged: Option<&str>) -> bool {
+    let Some(staged) = staged else {
+        return true;
+    };
+    marker.and_then(|m| m.tree_hash.as_deref()).is_some_and(|recorded| recorded == staged)
+}
+
 #[cfg(test)]
 #[path = "../../tests/unit/claude.rs"]
 mod claude_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/heal_needed.rs"]
+mod heal_needed_tests;

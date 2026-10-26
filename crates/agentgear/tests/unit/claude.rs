@@ -20,15 +20,27 @@ fn github(ref_: &'static str) -> Source {
 }
 
 fn entry(ref_: Option<&str>) -> MarketplaceEntry {
-    MarketplaceEntry { name: Some("m".into()), path: None, ref_: ref_.map(str::to_string), source: None }
+    MarketplaceEntry { name: Some("m".into()), path: None, ref_: ref_.map(str::to_string), source: None, install_location: None }
 }
 
 fn entry_with_path(path: &str) -> MarketplaceEntry {
-    MarketplaceEntry { name: Some("m".into()), path: Some(path.into()), ref_: None, source: Some("directory".into()) }
+    MarketplaceEntry {
+        name: Some("m".into()),
+        path: Some(path.into()),
+        ref_: None,
+        source: Some("directory".into()),
+        install_location: None,
+    }
 }
 
 fn github_entry(ref_: Option<&str>) -> MarketplaceEntry {
-    MarketplaceEntry { name: Some("m".into()), path: None, ref_: ref_.map(str::to_string), source: Some("github".into()) }
+    MarketplaceEntry {
+        name: Some("m".into()),
+        path: None,
+        ref_: ref_.map(str::to_string),
+        source: Some("github".into()),
+        install_location: None,
+    }
 }
 
 #[test]
@@ -129,6 +141,7 @@ fn marketplace_health_local_path_on_the_pointer_with_manifest_is_healthy() {
         path: Some(root.to_string_lossy().into_owned()),
         ref_: None,
         source: Some("directory".into()),
+        install_location: None,
     };
     assert_eq!(marketplace_health(Some(&e), &Source::Embedded, &root), MarketplaceHealth::Healthy);
     assert_eq!(marketplace_health(Some(&e), &Source::Path(PathBuf::from("/tmp/x")), &root), MarketplaceHealth::Healthy);

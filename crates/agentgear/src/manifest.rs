@@ -142,4 +142,11 @@ pub(crate) struct MarketplaceEntry {
     /// pin (design §ref-pinning ground truth).
     #[serde(default, rename = "ref")]
     pub ref_: Option<String>,
+    /// The dir CC cloned/materialized the marketplace into, carried first-class by
+    /// `known_marketplaces.json` for both source kinds. The spawn-free classifier
+    /// reads the generated manifest there as its stand-in for the load-failure
+    /// signal `probe` reads off `errors` (a github clone can lose its manifest the
+    /// same way a directory source can), so an absent/empty value reads "cannot tell".
+    #[serde(default, rename = "installLocation")]
+    pub install_location: Option<String>,
 }

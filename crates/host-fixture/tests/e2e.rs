@@ -462,3 +462,61 @@ fn restart_flag_lifecycle() {
 
     env.fixture("uninstall");
 }
+
+#[test]
+#[ignore = "spawns the real `claude` CLI; run with --ignored"]
+fn heal_needed_tracks_a_same_version_tree_edit() {
+    if !claude_available() {
+        eprintln!("skipping: `claude` not on PATH");
+        return;
+    }
+
+    // A converged embedded install reads Clean from the spawn-free pre-check,
+    // off CC's real registry files (never hand-built fixtures).
+    let env = Env::new("heal-needed-embedded");
+    let (ok, out) = env.fixture("setup");
+    assert!(ok, "setup failed: {out}");
+    let (ok, out) = env.fixture("self-heal");
+    assert!(ok && out == "NoOp", "self-heal on healthy should no-op, got {out}");
+    let (ok, out) = env.fixture("heal-needed");
+    assert!(ok, "heal-needed failed: {out}");
+    assert!(out.lines().any(|l| l == "claude: clean"), "converged install must read clean: {out}");
+
+    // A same-version tree edit flips the content hash the marker records; the
+    // embedded blob cannot change at runtime, so drive the edit through a path
+    // source (the same content-keyed staging self-heal converges).
+    let env = Env::new("heal-needed-path");
+    let src_plugin = env.root.join("src-plugin");
+    copy_dir_all(&Path::new(env!("CARGO_MANIFEST_DIR")).join("plugin"), &src_plugin);
+    let (ok, out) = env.fixture_args(&["setup", "--path", src_plugin.to_str().unwrap()]);
+    assert!(ok, "path setup failed: {out}");
+    let (ok, out) = env.fixture("heal-needed");
+    assert!(ok, "heal-needed failed: {out}");
+    assert!(out.lines().any(|l| l == "claude: clean"), "converged path install must read clean: {out}");
+
+    let hello = src_plugin.join("commands/hello.md");
+    let original = std::fs::read_to_string(&hello).unwrap();
+    std::fs::write(&hello, format!("{original}\n<!-- same-version tree edit -->\n")).unwrap();
+
+    let (ok, out) = env.fixture("heal-needed");
+    assert!(ok, "heal-needed failed after the edit: {out}");
+    assert!(out.lines().any(|l| l == "claude: needed (install drifted)"), "same-version tree edit must read needed: {out}");
+
+    // The repair raises the restart notice, which only the NEXT session's heal
+    // retires (healthy row): the pre-check answers needed once for it, then clean.
+    let (ok, out) = env.fixture("self-heal");
+    assert!(ok, "self-heal failed after the edit: {out}");
+    let (ok, out) = env.fixture("heal-needed");
+    assert!(ok, "heal-needed failed after the repair: {out}");
+    assert!(
+        out.lines().any(|l| l == "claude: needed (restart notice to retire)"),
+        "a repair's restart notice must read needed until a heal retires it: {out}"
+    );
+    let (ok, out) = env.fixture("self-heal");
+    assert!(ok && out == "NoOp", "the retiring heal should no-op, got {out}");
+    let (ok, out) = env.fixture("heal-needed");
+    assert!(ok, "heal-needed failed after the retiring heal: {out}");
+    assert!(out.lines().any(|l| l == "claude: clean"), "post-retire pre-check must read clean: {out}");
+
+    env.fixture("uninstall");
+}

@@ -122,6 +122,18 @@ fn main() -> ExitCode {
         "mcp" => run_mcp_server(),
         "update" => report(FixtureHost::update(scope_flag())),
         "uninstall" => report(FixtureHost::uninstall(scope_flag())),
+        // The spawn-free pre-check: prints the per-agent heal-needed report. A
+        // hermetic test pins that this spawns no `claude` (it reads files only).
+        "heal-needed" => match FixtureHost::heal_needed_report() {
+            Ok(report) => {
+                print!("{report}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
         "doctor" => match FixtureHost::doctor() {
             Ok(report) => {
                 print!("{report}");
@@ -134,7 +146,7 @@ fn main() -> ExitCode {
         },
         other => {
             eprintln!(
-                "usage: host_fixture <setup|setup-report|self-heal|self-heal-report|check-restart|mcp|update|uninstall|doctor> (got {other:?})"
+                "usage: host_fixture <setup|setup-report|self-heal|self-heal-report|check-restart|mcp|update|uninstall|heal-needed|doctor> (got {other:?})"
             );
             ExitCode::from(2)
         }

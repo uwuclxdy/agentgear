@@ -37,7 +37,9 @@
 
 use crate::agents::{AgentBackend, BackendState};
 use crate::error::Result;
-use crate::host::{AgentReport, AgentStatus, Desired, Outcome, Plugin, Scope, SkipReason, Source};
+use crate::host::{
+    AgentReport, AgentStatus, Capabilities, Desired, HealNeededReport, HealNeededVerdict, Outcome, Plugin, Scope, SkipReason, Source,
+};
 use crate::install::resolve;
 use crate::{lock, restart, stamp};
 
@@ -69,8 +71,10 @@ fn heal_status(plugin: &Plugin, source: &Source, scope: &Scope, id: &'static str
         // a tool that isn't installed has nothing to heal
         return AgentStatus::Skipped(SkipReason::NotDetected);
     }
-    if !backend.capabilities().scopes.contains(&scope.as_cli()) {
-        // no user-scope surface (e.g. a repo-config-only IDE backend)
+    // No user-scope surface (e.g. a repo-config-only IDE backend); checked before
+    // the marker read so a scope-unsupported backend reads as a skip, never as a
+    // marker error (heal_needed_status mirrors the order).
+    if scope_unsupported(&backend.capabilities(), scope) {
         return AgentStatus::Skipped(SkipReason::ScopeUnsupported);
     }
     // This agent's OWN marker settles its source (never a sibling's — the
@@ -81,11 +85,10 @@ fn heal_status(plugin: &Plugin, source: &Source, scope: &Scope, id: &'static str
         Err(e) => return AgentStatus::Failed(e.to_string()),
     };
     let resolved_source = stamp::source_from_marker(marker.as_ref(), source.clone());
-    // A github source has no local tree for a config-merge backend to probe or
-    // render from; only a plugin-native backend can heal off it. A visible skip,
-    // matching install/update.
-    if matches!(resolved_source, Source::GitHub { .. }) && !backend.capabilities().plugins {
-        return AgentStatus::Skipped(SkipReason::SourceUnsupported);
+    // The source gate needs the marker-resolved source; skip_reason re-checks the
+    // scope gate (a no-op here) and applies the github-source gate.
+    if let Some(reason) = skip_reason(&backend.capabilities(), scope, &resolved_source) {
+        return AgentStatus::Skipped(reason);
     }
     let interrupted = marker.as_ref().is_some_and(|m| m.reinstalling);
     match heal_agent(&*backend, plugin, resolved_source, scope, marker.is_some(), interrupted, id == "claude") {
@@ -163,6 +166,14 @@ fn heal_agent(
             if is_claude {
                 let _ = restart::clear(plugin);
             }
+            // A hook killed after `plugin_install` but before `record_converged`
+            // leaves `reinstalling` beside a healthy row; end it (without touching
+            // the tree hash), or a later manual uninstall reads the
+            // interrupted-repair row and resurrects the install.
+            #[cfg(any(feature = "claude", feature = "copilot-cli"))]
+            if interrupted {
+                stamp::record_converged(plugin, scope, &desired.source, backend.id(), None)?;
+            }
             Ok(Outcome::NoOp)
         }
 
@@ -187,3 +198,81 @@ fn flag_restart(plugin: &Plugin, is_claude: bool, outcome: &Outcome) {
     }
     let _ = if *outcome == Outcome::NoOp { restart::clear(plugin) } else { restart::set(plugin) };
 }
+
+/// Spawn-free fan-out mirror of [`self_heal_report`]: one [`HealNeededVerdict`]
+/// per configured agent, answered from files alone (and `which`-based detection),
+/// so a host's hook can run the CLI only when a heal would act. No lock, no
+/// data-root precondition, no CLI spawn — every "cannot tell" reads as `Needed`,
+/// the conservative answer that changes nothing about what `self_heal` would do.
+pub(crate) fn heal_needed_report(plugin: &Plugin, source: Source) -> Result<HealNeededReport> {
+    let mut report = HealNeededReport::new();
+    for id in plugin.agents {
+        report.push(id, heal_needed_status(plugin, &source, id));
+    }
+    Ok(report)
+}
+
+/// The two spawn-free skip gates [`heal_status`] applies (and
+/// [`heal_needed_status`] mirrors): a backend with no surface at `scope`, and a
+/// github source on a config-merge backend (no plugin-native surface to hand a
+/// ref to). Split out so the classifier's mirror is unit-testable — a github
+/// source cannot be reached through the embedded-default host fixture, and
+/// `detect()` is env-dependent.
+fn skip_reason(capabilities: &Capabilities, scope: &Scope, source: &Source) -> Option<SkipReason> {
+    if scope_unsupported(capabilities, scope) {
+        return Some(SkipReason::ScopeUnsupported);
+    }
+    if matches!(source, Source::GitHub { .. }) && !capabilities.plugins {
+        return Some(SkipReason::SourceUnsupported);
+    }
+    None
+}
+
+/// Whether this backend has no surface at `scope` — the first skip gate, run
+/// before the marker read in both `heal_status` and `heal_needed_status` so a
+/// scope-unsupported backend reads as a skip, never as a marker error.
+fn scope_unsupported(capabilities: &Capabilities, scope: &Scope) -> bool {
+    !capabilities.scopes.contains(&scope.as_cli())
+}
+
+fn heal_needed_status(plugin: &Plugin, source: &Source, id: &'static str) -> HealNeededVerdict {
+    let backend = match resolve(id) {
+        Ok(backend) => backend,
+        Err(e) => return HealNeededVerdict::Needed { reason: format!("backend unavailable: {e}") },
+    };
+    if !backend.detect() {
+        return HealNeededVerdict::Skipped(SkipReason::NotDetected);
+    }
+    let scope = Scope::User;
+    // Scope gate before the marker read, exactly as in heal_status.
+    if scope_unsupported(&backend.capabilities(), &scope) {
+        return HealNeededVerdict::Skipped(SkipReason::ScopeUnsupported);
+    }
+    let marker = match stamp::read(plugin, &scope, id) {
+        Ok(marker) => marker,
+        Err(e) => return HealNeededVerdict::Needed { reason: format!("cannot tell: {e}") },
+    };
+    let resolved_source = stamp::source_from_marker(marker.as_ref(), source.clone());
+    // Mirror heal_status's two spawn-free skip gates, so a host with such an
+    // agent is not pinned to the two-spawn floor self_heal itself skips.
+    if let Some(reason) = skip_reason(&backend.capabilities(), &scope, &resolved_source) {
+        return HealNeededVerdict::Skipped(reason);
+    }
+    // Every non-claude backend has no spawn-free check; answering `Needed` keeps
+    // its current behavior — the host runs self_heal, which does what it did.
+    if id != "claude" {
+        return HealNeededVerdict::Needed { reason: "no spawn-free check".into() };
+    }
+    #[cfg(feature = "claude")]
+    {
+        crate::agents::claude::heal_needed(plugin, &scope, source)
+    }
+    #[cfg(not(feature = "claude"))]
+    {
+        HealNeededVerdict::Needed { reason: "claude backend not compiled in".into() }
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/selfheal.rs"]
+mod selfheal_tests;

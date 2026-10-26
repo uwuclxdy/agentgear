@@ -138,7 +138,8 @@ pub use components::{AGENTGEAR_CLIENT_TOKEN, HookBinding, MarkdownDoc, McpKind, 
 pub use doctor::{CheckStatus, DoctorCheck, DoctorReport};
 pub use error::{Error, Result};
 pub use host::{
-    AgentReport, AgentResult, AgentStatus, Capabilities, Desired, Outcome, Plugin, PluginHost, Scope, SkipReason, Source, current_pointer,
+    AgentReport, AgentResult, AgentStatus, Capabilities, Desired, HealNeededReport, HealNeededResult, HealNeededVerdict, Outcome, Plugin,
+    PluginHost, Scope, SkipReason, Source, current_pointer,
 };
 #[cfg(feature = "claude")]
 pub use repoint::{Remap, RepointReport, RepointSkip, Repointed, repoint_install_paths};

@@ -66,6 +66,19 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        // The spawn-free pre-check, so a hermetic test can pin that a github
+        // source on a config-merge backend reads `Skipped(SourceUnsupported)`
+        // here exactly as it does in `self_heal_report`.
+        Some("heal-needed") => match GithubFixture::heal_needed_report() {
+            Ok(report) => {
+                print!("{report}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Some("self-heal-report") => match GithubFixture::self_heal_report() {
             Ok(report) => {
                 print!("{report}");
@@ -111,7 +124,7 @@ fn main() -> ExitCode {
         },
         other => {
             eprintln!(
-                "usage: github_fixture <setup-report|uninstall|uninstall-report|doctor|self-heal-report|self-heal|update-report|update> (got {other:?})"
+                "usage: github_fixture <setup-report|uninstall|uninstall-report|doctor|heal-needed|self-heal-report|self-heal|update-report|update> (got {other:?})"
             );
             ExitCode::from(2)
         }

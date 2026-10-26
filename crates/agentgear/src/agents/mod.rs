@@ -133,10 +133,11 @@ cfg_config_backends! {
     pub(crate) mod agentsmd;
 }
 
-// The HOME-based Claude Code registry reader, shared by every backend that
-// detects native CC-plugin-tree ingestion already covering it (omp's
-// `claude-plugins` provider, cursor's default-on `loadClaude` loader).
-#[cfg(any(feature = "omp", feature = "cursor"))]
+// The Claude Code registry-file readers, shared by the backends that read CC's
+// own on-disk state: omp's `claude-plugins` provider and cursor's default-on
+// `loadClaude` loader (HOME-based), plus the claude backend's spawn-free
+// heal-needed classifier (config-dir-aware).
+#[cfg(any(feature = "claude", feature = "omp", feature = "cursor"))]
 pub(crate) mod ccregistry;
 
 /// What `probe` classifies a plugin's per-agent state as. Drives self_heal's

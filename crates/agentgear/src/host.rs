@@ -262,6 +262,80 @@ impl std::fmt::Display for SkipReason {
     }
 }
 
+/// Spawn-free per-agent verdict of [`PluginHost::heal_needed_report`]: would
+/// `self_heal()` mutate or repair this agent's install, answered from files
+/// alone (CC's registry files + the stamp marker — never the marker alone,
+/// design §self_heal).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HealNeededVerdict {
+    /// `self_heal()` would act on this agent (mutate or repair).
+    Needed {
+        /// A short, user-facing reason.
+        reason: String,
+    },
+    /// `self_heal()` would change nothing for this agent (the restart flag
+    /// included).
+    Clean,
+    /// The agent was skipped before any verdict (the lifecycle fan-out's skip
+    /// reasons); a skipped agent contributes nothing to [`HealNeededReport::needed`].
+    Skipped(SkipReason),
+}
+
+/// One agent's slice of a [`HealNeededReport`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealNeededResult {
+    /// The backend id (`"claude"`, `"codex"`, …).
+    pub agent: &'static str,
+    /// Whether self_heal would act for this agent.
+    pub verdict: HealNeededVerdict,
+}
+
+/// The [`PluginHost::heal_needed_report`] fan-out result: one
+/// [`HealNeededResult`] per configured agent, in `plugin.agents` order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HealNeededReport {
+    /// One entry per configured agent.
+    pub results: Vec<HealNeededResult>,
+}
+
+impl HealNeededReport {
+    pub(crate) fn new() -> Self {
+        Self { results: Vec::new() }
+    }
+
+    pub(crate) fn push(&mut self, agent: &'static str, verdict: HealNeededVerdict) {
+        self.results.push(HealNeededResult { agent, verdict });
+    }
+
+    /// True when any agent needs a heal. This is the host's hot-path gate: call
+    /// [`PluginHost::self_heal`] only when it is true, so the CLI spawn a
+    /// self-heal would otherwise pay on every session event is skipped.
+    pub fn needed(&self) -> bool {
+        self.results.iter().any(|r| matches!(r.verdict, HealNeededVerdict::Needed { .. }))
+    }
+}
+
+impl std::fmt::Display for HealNeededReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for result in &self.results {
+            writeln!(f, "{}: {}", result.agent, result.verdict)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for HealNeededVerdict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HealNeededVerdict::Needed { reason } => write!(f, "needed ({reason})"),
+            HealNeededVerdict::Clean => f.write_str("clean"),
+            HealNeededVerdict::Skipped(reason) => write!(f, "skipped ({reason})"),
+        }
+    }
+}
+
 /// What an agent backend can host. Each surface flag is `true` iff the backend's
 /// `reconcile` actually writes/manages that surface for a plugin declaring it
 /// (a conditionally-gated surface — e.g. one a native registry may already cover —
@@ -448,6 +522,20 @@ pub trait PluginHost {
     /// [`PluginHost::install_report`]: only the lock or a missing data root.
     fn self_heal_report() -> Result<AgentReport> {
         crate::selfheal::self_heal_report(&Self::descriptor(), Self::DEFAULT_SOURCE)
+    }
+
+    /// Spawn-free pre-check for [`PluginHost::self_heal`]: one verdict per
+    /// configured agent — `Needed` (self_heal would act, with a short reason),
+    /// `Clean` (self_heal would change nothing, the restart flag included), or
+    /// `Skipped` (a backend self_heal skips: undetected, no surface at this
+    /// scope, or a github source it cannot serve) — answered from files alone,
+    /// so a host's hook can run the CLI only when a heal would actually act.
+    /// Non-`claude` backends answer `Needed` (there is no spawn-free check for
+    /// them), so a host with any of them keeps the current behavior; collapse
+    /// with [`HealNeededReport::needed`]. Never returns `Err` today; reserved for
+    /// a whole-call precondition.
+    fn heal_needed_report() -> Result<HealNeededReport> {
+        crate::selfheal::heal_needed_report(&Self::descriptor(), Self::DEFAULT_SOURCE)
     }
 
     /// `Some(message)` when an update landed that the running CC session has not

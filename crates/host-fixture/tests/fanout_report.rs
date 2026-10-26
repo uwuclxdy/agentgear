@@ -156,6 +156,24 @@ fn github_source_skips_config_backends_visibly() {
     assert!(!out.contains("[fail]"), "no check may fail on a healthy github-source host:\n{out}");
 }
 
+/// The spawn-free pre-check mirrors the same github-source skip: a config-merge
+/// backend under `default_source = "github"` reads `Skipped(SourceUnsupported)`
+/// from `heal-needed`, exactly as it does from `self-heal-report` — never
+/// `Needed` (which would pin the host to the two-spawn floor for that agent).
+#[test]
+fn github_source_skips_config_backends_visibly_in_heal_needed() {
+    let env = Env::new("github-heal-needed");
+
+    let (ok, out) = env.run(GITHUB_BIN, &["heal-needed"]);
+    assert!(ok, "heal-needed failed: {out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(
+        lines.contains(&"gemini: skipped (cannot serve a github source; use an embedded or path source)"),
+        "gemini must skip visibly in heal-needed:\n{out}"
+    );
+    assert!(lines.contains(&"claude: skipped (not installed on this machine)"), "claude line missing:\n{out}");
+}
+
 /// Uninstall on a zero-embed github host with a DETECTED config backend that was
 /// never installed: the backend has no local tree to render a strip-set from, so
 /// it must skip visibly — never `failed: invalid plugin tree: embedded blob is
