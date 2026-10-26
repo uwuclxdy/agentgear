@@ -213,6 +213,17 @@ Every fallible call in the crate returns `Result<T, Error>` (`type Result<T> = s
 | `Verify(String)` | a mutating CLI call exited 0 but `list --json` does not reflect the expected end state |
 | `Lock { path, source }` | failed to acquire the shared `flock` |
 
+For the variants that carry a `source` field, `Display` names the failed operation only; the cause
+hangs off `Error::source()`. `Error::report()` renders what a host prints — the message plus every
+cause, joined with `: ` — so a host that formats through `anyhow`, or any other chain-aware
+renderer, never sees a cause twice:
+
+```rust
+if let Err(e) = KitchenSink::install(Scope::User, Source::Embedded) {
+    eprintln!("error: {}", e.report());
+}
+```
+
 `Backend` is the one variant an out-of-crate `AgentBackend` should return for its own failures,
 since every other variant carries in-crate semantics (CLI orchestration, tree parsing, config
 merging) that don't fit a tool this crate never shipped a backend for. It does double duty
