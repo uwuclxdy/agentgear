@@ -15,8 +15,7 @@ How a capability reaches a harness depends on which of two models the backend us
 
 - **Plugin-native** (`claude`, `copilot-cli`). agentgear materializes the plugin tree and hands it
   to the tool's own plugin CLI (`claude plugin` / `copilot plugin`). The tool copies the whole tree
-  and reads every surface itself, so there is no per-capability translation — every capability is
-  served natively or not at all by that tool.
+  and reads every surface itself, so there is no per-capability translation for the five tree surfaces — instructions is the one render either way: `claude` delivers the text through the MCP `initialize.instructions` channel (no file), `copilot-cli` writes the shared tagged block into `$COPILOT_HOME/copilot-instructions.md` (see [Instructions](Capability-Instructions)).
 - **Config-merge** (the other 23 backends). No tool here has a plugin concept, so each backend
   read-modify-writes the tool's own config file, rendering each capability into that tool's native
   shape. A backend writes a capability only when the tool has a surface for it; a missing surface is
@@ -35,7 +34,7 @@ The plugin surfaces, most-to-least widely hosted. "Hosts" counts backends that l
 | Commands | `commands/**/*.md` | 14 | [Commands](Capability-Commands) |
 | Agents | `agents/**/*.md` | 13 | [Agents](Capability-Agents) |
 | Skills | `skills/<name>/SKILL.md` | 13 | [Skills](Capability-Skills) |
-| Instructions | `PluginHost::instructions` (not a tree file) | 10 | [Instructions](Capability-Instructions) |
+| Instructions | `PluginHost::instructions` (not a tree file) | 20 | [Instructions](Capability-Instructions) |
 
 
 Counts move as coverage lands; the linked page carries the exact per-harness list and the reason

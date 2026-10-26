@@ -65,7 +65,7 @@ Attributes:
 | `github_repo` | required for github | `"owner/repo"` |
 | `agents` | `["claude"]` | which backends `setup` wires; an empty list is rejected at compile time |
 | `embed` | `true` | bake the compressed tree in via `include_bytes!`; set `false` (with `default-features = false` on the crate) for a `default_source = "github"` host that ships no baked tree |
-| `instructions_fn` | none | a path to a `fn() -> Option<String>`, called from `PluginHost::instructions`. Host-authored always-loaded guidance, delivered through each harness's native context channel: opencode gets a dedicated registered file; zed, codex, kilo and kimi get a tagged block in the harness's own global `AGENTS.md`; gemini and qwen-code the same block in their global context files; crush the same block in the global `CRUSH.md` beside `crush.json`; cursor an always-apply rule in `.cursor/rules/`; see [Instructions](Capability-Instructions) |
+| `instructions_fn` | none | a path to a `fn() -> Option<String>`, called from `PluginHost::instructions`. Host-authored always-loaded guidance, delivered through each harness's native context channel: a tagged block in the harness's own always-loaded context file (the `AGENTS.md` family, `GEMINI.md`, `QWEN.md`, `CRUSH.md`, goose's `.goosehints`, copilot-cli's `copilot-instructions.md`); the same block in a plugin-owned file inside a scanned rules dir (cline, augment, kiro); opencode gets a dedicated registered file; cursor an always-apply rule in `.cursor/rules/`; see [Instructions](Capability-Instructions) |
 
 > [!IMPORTANT]
 > Every id in `agents = [...]` needs its cargo feature enabled on the `agentgear` dependency. The feature name is the id (`qwen-code`, `vscode-copilot`), and `claude` is on by default:

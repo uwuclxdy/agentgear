@@ -156,25 +156,24 @@ Grouped by what each surface translates:
 |---|---|
 | plugin lifecycle (mcp, hooks, commands, agents, skills) | `claude`, `copilot-cli` |
 | mcp, hooks, commands, agents, skills, instructions | `cursor`, `qwen-code` |
-| mcp, hooks, commands, agents, skills | `devin`, `droid` |
+| mcp, hooks, commands, agents, skills, instructions | `devin`, `droid` |
 | mcp, hooks, commands, agents, instructions | `gemini`, `codex` |
-| mcp, hooks, commands, agents | `augment` |
+| mcp, hooks, commands, agents, instructions | `augment` |
 | mcp, hooks, commands, skills, instructions | `crush` |
 | mcp, commands, agents, skills, instructions | `kilo` |
 | mcp, hooks, agents | `vscode-copilot` |
-| mcp, hooks, commands | `cline` |
+| mcp, hooks, commands, instructions | `cline` |
 | mcp, commands, agents, instructions | `opencode` |
-| mcp, commands, agents | `omp` |
+| mcp, commands, agents, instructions | `omp` |
 | mcp, hooks, skills, instructions | `kimi` |
-| mcp, hooks, skills | `goose` |
+| mcp, hooks, skills, instructions | `goose` |
 | mcp, hooks | `antigravity-cli` |
 | mcp, skills, instructions | `zed` |
-| mcp, skills | `kiro`, `openclaw` |
+| mcp, skills, instructions | `kiro`, `openclaw` |
 | mcp only | `jetbrains-copilot`, `antigravity`, `amp` |
 | detect-only, no surface | `pi` |
 
-Skills translate on 13 of 25 backends now (see above). One surface sits outside that grid because
-the host declares it instead of shipping it in the tree: instructions (always-loaded guidance from `PluginHost::instructions`) translate on 9 backends — `opencode` via a dedicated file registered in its `instructions[]`; `zed`, `codex`, `kilo`, `kimi`, `gemini`, `qwen-code` and `crush` via a tagged block in the harness's own global context file (`AGENTS.md`, `GEMINI.md`, `QWEN.md`, `CRUSH.md`), delimited by agentgear markers so the user's own lines and a second plugin's block survive install and uninstall byte-identical; and `cursor` via a tag-owned `alwaysApply: true` rule in `.cursor/rules/` (both scopes), a foreign file at the same name skipped whole. Status lines are manual: a host ships a
+Skills translate on 13 of 25 backends now (see above). One surface sits outside that grid because the host declares it instead of shipping it in the tree: instructions (always-loaded guidance from `PluginHost::instructions`) translate on 19 backends — 14 via a tagged block in the harness's own always-loaded context file (`AGENTS.md` for zed, codex, kilo, kimi, devin, droid, amp, omp and openclaw; `GEMINI.md` for gemini; `QWEN.md` for qwen-code; `CRUSH.md` for crush; `.goosehints` for goose; `copilot-instructions.md` for copilot-cli, a file VS Code and JetBrains Copilot also read), delimited by agentgear markers so the user's own lines and a second plugin's block survive install and uninstall byte-identical; 3 via the same block in a whole plugin-owned file inside a scanned rules dir (`cline`, `augment`, `kiro`); `opencode` via a dedicated file registered in its `instructions[]`; and `cursor` via a tag-owned `alwaysApply: true` rule in `.cursor/rules/` (both scopes), a foreign file at the same name skipped whole. Status lines are manual: a host ships a
 statusline print subcommand, and the user wires it into their harness config themselves —
 agentgear writes no harness's status-line slot (a pre-existing one is left untouched). Of the 24
 non-Claude backends, 14 accept both scopes and 9 are user-scope only (`copilot-cli` among them,

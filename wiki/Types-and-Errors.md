@@ -99,7 +99,7 @@ the tool it targets, not runtime detection.
 | `commands` | `bool` | can host slash-command definitions |
 | `agents` | `bool` | can host agent (subagent) definitions |
 | `skills` | `bool` | can host skill directories |
-| `instructions` | `bool` | can receive host-authored always-loaded guidance through its own native context channel (a dedicated file plus any registration); `false` for a plugin-native backend, which delivers guidance through its own channel instead |
+| `instructions` | `bool` | can receive host-authored always-loaded guidance through its own native context channel (a dedicated file plus any registration); a plugin-native backend that writes no config file still reports `false` unless it renders that guidance file itself |
 | `scopes` | `&'static [&'static str]` | which of `"user"`/`"project"` this backend can target |
 
 `setup` reads this to report a partial fit ("this agent hosts MCP servers, not hooks") instead of
