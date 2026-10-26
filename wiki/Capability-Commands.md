@@ -36,7 +36,7 @@ analog as a skill (kimi) rather than a flat command dir.
 - **Frontmatter fidelity varies.** cursor/crush/cline strip the CC frontmatter (their loaders don't
   split it); gemini/qwen-code re-render into TOML/namespaced forms.
 - **Real but untranslated.** `pi` (`~/.pi/agent/prompts/*.md`) and `vscode-copilot`
-  (`.github/prompts/*.prompt.md`) have a command surface agentgear does not yet target.
+  (`<project>/.github/prompts/*.prompt.md`) have a command surface agentgear does not yet target.
 
 ## See also
 

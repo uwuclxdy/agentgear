@@ -10,16 +10,16 @@ integration is to let the tool read the CC tree, not to write its config.
 
 | harness | reads | scope of ingestion |
 |---|---|---|
-| codex | `codex plugin marketplace add`/`add` parse `.claude-plugin/marketplace.json` + `plugin.json` | full tree. mcp live-merged at read, hooks copied but never fire |
-| cursor | aggregator reads `~/.claude/plugins/installed_plugins.json`, then loads `.claude-plugin/plugin.json` per install | full tree with `${CLAUDE_PLUGIN_ROOT}` substitution (source-proven, undocumented) |
-| droid | `droid plugin marketplace add` reads `.claude-plugin/marketplace.json` + `plugin.json` | full tree → `~/.factory/plugins/` (binary-proven end to end) |
-| qwen-code | `qwen extensions install` converts a `.claude-plugin/plugin.json` dir into a qwen extension | full tree, install-time and manual; carries skills through |
+| codex | `codex plugin marketplace add`/`add` parse `<plugin>/.claude-plugin/marketplace.json` + `plugin.json` | full tree. mcp live-merged at read, hooks copied but never fire |
+| cursor | aggregator reads `~/.claude/plugins/installed_plugins.json`, then loads `<plugin>/.claude-plugin/plugin.json` per install | full tree with `${CLAUDE_PLUGIN_ROOT}` substitution (source-proven, undocumented) |
+| droid | `droid plugin marketplace add` reads `<plugin>/.claude-plugin/marketplace.json` + `plugin.json` | full tree → `~/.factory/plugins/` (binary-proven end to end) |
+| qwen-code | `qwen extensions install` converts a `<plugin>/.claude-plugin/plugin.json` dir into a qwen extension | full tree, install-time and manual; carries skills through |
 | omp | first-class `claude-plugins` provider reads `~/.claude/plugins/installed_plugins.json` | agents only |
 | openclaw | `plugins.load.paths` append, or drop the tree at `~/.openclaw/extensions/<id>/` (auto-detect) | full tree, "Claude-compatible bundles"; hooks still register nothing |
-| jetbrains-copilot | bundled agent's marketplace service reads `.claude-plugin/plugin.json`, `hooks/hooks.json`, `${CLAUDE_PLUGIN_ROOT}` | full tree per the format descriptor (source-proven, no IDE launched) |
+| jetbrains-copilot | bundled agent's marketplace service reads `<plugin>/.claude-plugin/plugin.json`, `<plugin>/hooks/hooks.json`, `${CLAUDE_PLUGIN_ROOT}` | full tree per the format descriptor (source-proven, no IDE launched) |
 | antigravity-cli | `agy plugin import <path>` copies the source dir verbatim | full tree, path-only. skills + agents ingest; hooks copied raw and never fire; `mcpServers` dropped |
-| augment | `auggie plugin marketplace add` / `--plugin-dir` read `.augment-plugin/` or `.claude-plugin/` | full tree (vendor-documented; not exercised past the auth wall) |
-| vscode-copilot | VS Code core discovers `.claude-plugin/marketplace.json` + `plugin.json`, expands `${CLAUDE_PLUGIN_ROOT}` | full tree, plus default-on loose `.claude/` hooks, agents, skills |
+| augment | `auggie plugin marketplace add` / `--plugin-dir` read `<plugin>/.augment-plugin/` or `<plugin>/.claude-plugin/` | full tree (vendor-documented; not exercised past the auth wall) |
+| vscode-copilot | VS Code core discovers `<plugin>/.claude-plugin/marketplace.json` + `plugin.json`, expands `${CLAUDE_PLUGIN_ROOT}` | full tree, plus default-on loose `.claude/` hooks, agents, skills |
 | devin | `read_config_from.claude` live-merges `~/.claude.json`, `.claude/settings.json`, `~/.claude/skills`, `~/.claude/agents`, `CLAUDE.md` | loose config only, **not** plugin bundles |
 | amp | reads `.claude/skills`, `~/.claude/skills`, and CC's plugin-cache skills (`~/.claude/plugins/cache/**/skills/*`) | **partial**: skills only, but a plugin's skills surface via the cache |
 

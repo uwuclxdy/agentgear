@@ -1,6 +1,6 @@
 # Skills
 
-A skill is a `skills/<name>/` directory with a `SKILL.md` (plus any assets) — a model-invocable
+A skill is a `<plugin>/skills/<name>/` directory with a `SKILL.md` (plus any assets) — a model-invocable
 capability the agent loads on demand. agentgear writes each as a loose, tag-owned `<name>/SKILL.md`
 in the target tool's skill root through one shared renderer.
 
@@ -13,7 +13,7 @@ qwen-code, zed — render the `SkillDir` IR through the shared `skillsdir` rende
 
 | harness | where written | notes |
 |---|---|---|
-| claude | `skills/<name>/` (native) | `SKILL.md` is the one thing CC hot-reloads |
+| claude | `<plugin>/skills/<name>/` (native) | `SKILL.md` is the one thing CC hot-reloads |
 | copilot-cli | native, verbatim | live-proven (`copilot skill list` sees a plugin skill) |
 | crush | `~/.config/crush/skills/<name>/SKILL.md` (user) · `<project>/.crush/skills/<name>/SKILL.md` (project) | tag-owned |
 | cursor | `~/.cursor/skills/<name>/SKILL.md` (both scopes) | tag-owned |
@@ -39,8 +39,8 @@ writing there.
 - **Real but untranslated.** amp, antigravity, augment, cline, codex, gemini, omp, opencode, pi, and
   vscode-copilot each have a skill surface agentgear does not write yet (the tool reads a `SKILL.md`
   root, just not one agentgear targets). These are open upgrades, not harness limits.
-- **A loose `skills/foo.md` is ignored.** The directory level is required — a skill needs its own
-  `skills/<name>/` dir with a `SKILL.md` inside. See [Plugin tree](Plugin-Tree#what-is-parsed-from-where).
+- **A loose `<plugin>/skills/foo.md` is ignored.** The directory level is required — a skill needs its own
+  `<plugin>/skills/<name>/` dir with a `SKILL.md` inside. See [Plugin tree](Plugin-Tree#what-is-parsed-from-where).
 - **Tag-owned means safe to remove.** Each written `SKILL.md` carries an ownership tag, so `remove`
   and the retired-path sweep delete only agentgear's files; a user's same-named skill survives.
 

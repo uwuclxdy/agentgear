@@ -25,7 +25,7 @@ open upstream (issue #1807).
 | omp | `<base>/agents/<plugin>-<stem>.md` | `description` mandatory — its absence is a **silent drop**. Write **retires** when CC's registry already covers the plugin (see [Native ingestion](Capability-Native-Ingestion)) |
 | opencode | `<base>/agents/<plugin>-<stem>.md` | `mode: subagent` injected (its default is `all`) |
 | qwen-code | `agents/<plugin>-<name>.md` | keyed by frontmatter `name` (plugin-prefixed) |
-| vscode-copilot | `.github/agents/<plugin>-<stem>.agent.md` | YAML frontmatter + body |
+| vscode-copilot | `<project>/.github/agents/<plugin>-<stem>.agent.md` | YAML frontmatter + body |
 
 ## Gotchas
 

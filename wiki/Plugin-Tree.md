@@ -4,7 +4,7 @@ The tree you ship is a stock Claude Code plugin. Anthropic owns that format: the
 
 ## Layout
 
-The tree defaults to `plugin/` next to `Cargo.toml`. `.claude-plugin/plugin.json` is the only required file; every other directory is optional.
+The tree defaults to `plugin/` next to `Cargo.toml`. `<plugin>/.claude-plugin/plugin.json` is the only required file; every other directory is optional.
 
 ```text
 mytool/
@@ -91,11 +91,11 @@ The parser walks the flattened tree once and fills the five `PluginComponents` s
 
 | surface | read from | notes |
 |---|---|---|
-| mcp servers | `.claude-plugin/plugin.json` `mcpServers`, then `.mcp.json`, then `.claude-plugin/.mcp.json` | first occurrence of a server name wins, so `plugin.json` beats both files |
-| hooks | `hooks/hooks.json` and `.claude-plugin/hooks.json` | both are read when both exist, and their bindings concatenate. Nothing dedups, so a hook declared in both files is registered twice by every backend |
+| mcp servers | `<plugin>/.claude-plugin/plugin.json` `mcpServers`, then `<plugin>/.mcp.json`, then `<plugin>/.claude-plugin/.mcp.json` | first occurrence of a server name wins, so `plugin.json` beats both files |
+| hooks | `<plugin>/hooks/hooks.json` and `<plugin>/.claude-plugin/hooks.json` | both are read when both exist, and their bindings concatenate. Nothing dedups, so a hook declared in both files is registered twice by every backend |
 | commands | `commands/**/*.md` | nested paths are kept; the name is the file stem |
 | agents | `agents/**/*.md` | same shape as commands |
-| skills | `skills/<name>/**` | the directory level is required. A loose `skills/foo.md` has no skill dir, so it is ignored |
+| skills | `<plugin>/skills/<name>/**` | the directory level is required. A loose `<plugin>/skills/foo.md` has no skill dir, so it is ignored |
 
 Two shapes are accepted for the mcp surface that upstream does not spell out:
 

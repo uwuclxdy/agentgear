@@ -29,7 +29,7 @@ and kiro hosts hooks only inside user-owned agent files, which agentgear will no
 | goose | `~/.agents/plugins/<plugin>/hooks/hooks.json` | CC's exact shape | none: auto-discovered, auto-enabled |
 | kimi | `~/.kimi-code/config.toml` `[[hooks]]` | `{event,matcher?,command,timeout?}` | none. live-fire proven; the only trust gate is `/plugins install` |
 | qwen-code | `settings.json` `hooks.<Event>` | `[{matcher?,hooks:[{type:"command",command}]}]`, CC-identical | project needs folder trust, user unconditional |
-| vscode-copilot | `.github/hooks/<plugin>.json` | `{hooks:{Event:[{type:"command",command}]}}`, CC `matcher` dropped | none, loads on a default `chat.hookFilesLocations` path |
+| vscode-copilot | `<project>/.github/hooks/<plugin>.json` | `{hooks:{Event:[{type:"command",command}]}}`, CC `matcher` dropped | none, loads on a default `chat.hookFilesLocations` path |
 
 ## Event map
 

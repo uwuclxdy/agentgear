@@ -20,7 +20,7 @@ The rendered server body differs by tool. The families:
 - **`[mcp_servers.<name>]` inline table** — codex (TOML).
 - **`extensions.<name>` block** — goose (YAML, `{name, type:stdio, cmd, args, envs, enabled, timeout}`).
 
-`copilot-cli` renders no MCP shape at all: its plugin engine reads `.claude-plugin/plugin.json`
+`copilot-cli` renders no MCP shape at all: its plugin engine reads `<plugin>/.claude-plugin/plugin.json`
 directly.
 
 ## Remote (http/sse) fidelity
@@ -64,7 +64,7 @@ The file and the key path each backend writes, with the stdio body and the remot
 
 | harness | file | key path | stdio shape | remote shape |
 |---|---|---|---|---|
-| claude | plugin tree `.claude-plugin/plugin.json` (or `.mcp.json`) | `mcpServers` | `{command,args,env}`, `${CLAUDE_PLUGIN_ROOT}` expands | native, no translation |
+| claude | plugin tree `<plugin>/.claude-plugin/plugin.json` (or `<plugin>/.mcp.json`) | `mcpServers` | `{command,args,env}`, `${CLAUDE_PLUGIN_ROOT}` expands | native, no translation |
 | amp | `settings.json` (or `.jsonc`) | `amp.mcpServers` (literal flat-dotted key) | `{command,args,env}` | `{type,url,headers}`, `type` inert |
 | antigravity | `~/.gemini/config/mcp_config.json` | `mcpServers` | `{command,args,env}` | `{serverUrl}` sse-only, http skipped |
 | antigravity-cli | `~/.gemini/config/mcp_config.json` (user) · `<root>/.agents/mcp_config.json` (project) | `mcpServers.<name>` | `{command,args,env}` | `{serverUrl}` sse-only, http skipped |

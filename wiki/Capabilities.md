@@ -33,7 +33,7 @@ The plugin surfaces, most-to-least widely hosted. "Hosts" counts backends that l
 | Hooks | `hooks/hooks.json` | 15 | [Hooks](Capability-Hooks) |
 | Commands | `commands/**/*.md` | 14 | [Commands](Capability-Commands) |
 | Agents | `agents/**/*.md` | 13 | [Agents](Capability-Agents) |
-| Skills | `skills/<name>/SKILL.md` | 13 | [Skills](Capability-Skills) |
+| Skills | `<plugin>/skills/<name>/SKILL.md` | 13 | [Skills](Capability-Skills) |
 | Instructions | `PluginHost::instructions` (not a tree file) | 20 | [Instructions](Capability-Instructions) |
 
 
