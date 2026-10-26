@@ -2,9 +2,10 @@
 # droid (Factory) docker leg: the real droid CLI ingesting our written config. Built +
 # run by tests/docker/run.sh droid (context = repo root). The config-file parse is the
 # auth-free source of truth (agentgear writes `~/.factory/mcp.json` directly, exactly the
-# shape droid loads); `droid` needs a FACTORY_API_KEY for anything model-facing and has
-# no documented auth-free `mcp list`, so there is no native second opinion here. The CLI
-# is version-pinned and the build refuses to ship an image running anything else.
+# shape droid loads). `droid mcp list` is auth-free at this pin and spawns each stdio
+# server, so its `ez-fixture  stdio  connected` line backs the parse as a native second
+# opinion. The CLI is version-pinned and the build refuses to ship an image running
+# anything else.
 
 # Stage 1: build the fixture host (all backends) from the workspace.
 FROM rust:1-slim-bookworm AS build
@@ -96,9 +97,8 @@ cat > "$MCP" <<'JSON'
 JSON
 
 # A key droid owns in its own settings file plus a user status line, seeded by hand:
-# nothing auth-free makes the CLI write this file (checked by md5 across `droid
-# --version` in this image), so there is no copilot-style two-writer coexistence to
-# prove here. The seeded statusLine is the retired-slot contract: setup and uninstall
+# no auth-free droid subcommand writes this file (the read sweep below asserts it), so
+# there is no copilot-style two-writer coexistence to prove here. The seeded statusLine is the retired-slot contract: setup and uninstall
 # must both leave the whole file byte-identical.
 cat > "$SETTINGS" <<'JSON'
 { "theirSetting": "keep me", "statusLine": { "type": "command", "command": "their-line", "padding": 2 } }
@@ -118,24 +118,37 @@ if ! grep -q 'name: ez-fixture-plugin-ez-helper' "$DROID"; then echo "FAIL: cust
 if [ ! -f "$SKILL" ]; then echo "FAIL: translated skill SKILL.md missing"; exit 1; fi
 if ! grep -q 'x-agentgear' "$SKILL"; then echo "FAIL: skill ownership tag missing"; exit 1; fi
 
-# Run the real CLI before the byte-identity assert, so the assert covers a droid that
-# starts writing settings.json as well as our own write. Auth-free and file-inert today
-# (rc 0, and a seeded settings.json comes back md5-identical), which is exactly the
-# property that would silently stop holding. Hard failure rather than best-effort: the
-# build pins this binary and already made it print its version, so a failure here is the
-# CLI breaking under the leg's own HOME, which is a result worth reding on.
-if ! out=$(droid --version 2>&1); then
-  echo "FAIL: droid --version errored under the leg HOME: $out"; exit 1
-fi
-echo "droid --version ok: $out"
-
 # Retired-slot contract: the seeded settings file, user statusLine included, must be
 # byte-identical after setup — nothing this backend writes lives in it anymore.
 cmp -s "$SETTINGS" /tmp/settings-seed || { echo "FAIL: settings.json changed across setup"; diff /tmp/settings-seed "$SETTINGS"; exit 1; }
 
-# No native second opinion on the config itself: `droid` gates on FACTORY_API_KEY for
-# model-facing work and documents no auth-free `mcp list`, so the file asserts above are
-# authoritative and the version call is only a liveness + file-inertness check.
+# Auth-free read sweep. Every config-reading subcommand here opens settings.json,
+# mcp.json and hooks.json read-only at this pin; `--version` opens no config file, so on
+# its own it proves nothing about loading. The json files converge by parsed value, but
+# the command, droid and skill files converge by bytes, and `exec --list-tools` writes
+# droid's own builtins into the same droids/ dir — so a droid that starts rewriting any
+# file this backend owns on read fails the cmp below and would otherwise read as drift
+# on every probe.
+OWNED=("$SETTINGS" "$MCP" "$HOOKS" "$COMMAND" "$DROID" "$SKILL")
+mkdir -p /tmp/read-sweep-seed
+for f in "${OWNED[@]}"; do cp "$f" "/tmp/read-sweep-seed/$(basename "$f")"; done
+# `mcp list` spawns each stdio server and exits 0 even on a malformed mcp.json, so its
+# `connected` line, never its exit code, is the native second opinion on the parse.
+if ! out=$(droid mcp list 2>&1); then
+  echo "FAIL: droid mcp list errored under the leg HOME: $out"; exit 1
+fi
+printf '%s\n' "$out"
+printf '%s\n' "$out" | grep -q 'ez-fixture *stdio *connected' \
+  || { echo "FAIL: droid mcp list did not report ez-fixture connected"; exit 1; }
+for cmd in "--version" "mcp permissions list" "plugin list" "plugin marketplace list" "exec --list-tools -o json"; do
+  # shellcheck disable=SC2086 # word-split on purpose: each entry is one argv
+  out=$(droid $cmd 2>&1) || { echo "FAIL: droid $cmd errored: $out"; exit 1; }
+done
+for f in "${OWNED[@]}"; do
+  cmp -s "/tmp/read-sweep-seed/$(basename "$f")" "$f" \
+    || { echo "FAIL: $f changed across the auth-free read sweep"; diff "/tmp/read-sweep-seed/$(basename "$f")" "$f"; exit 1; }
+done
+echo "auth-free read sweep: owned files byte-identical"
 
 # Instructions surface: the tagged block in droid's global ~/.factory/AGENTS.md (a
 # personal global instruction tier loaded at session bootstrap). The user's own line
