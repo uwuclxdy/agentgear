@@ -32,7 +32,8 @@ use crate::host::Plugin;
 /// with one blank separator line, terminating the user's last line first when it
 /// lacks a newline; existing bytes are never rewritten. Our markers present ->
 /// exactly the span between them is replaced by the fresh render. `None`
-/// instructions -> no-op. Returns whether anything changed (a converged file
+/// instructions -> the block is stripped, so a host that withdrew its guidance
+/// converges to "block gone". Returns whether anything changed (a converged file
 /// writes zero bytes).
 pub(crate) fn reconcile(path: &Path, plugin: &Plugin) -> Result<bool> {
     // A host that withdrew its guidance converges to "block gone" instead of stranding
@@ -92,21 +93,17 @@ pub(crate) fn remove(path: &Path, plugin: &Plugin) -> Result<bool> {
 }
 
 /// Classify the instructions surface for `probe`: `None` when the plugin declares
-/// no guidance (contributes nothing to the composite); `Absent` when the file or
-/// our markers are missing, so a hand-deleted block self-heals back in;
-/// `Healthy` when the block byte-matches the render; `NeedsRepair` when it
-/// drifted. Keys off the same [`block_span`] + [`render_block`] reconcile uses,
-/// so probe never demands bytes reconcile did not write.
+/// no guidance (contributes nothing to the composite — a block left behind by a
+/// withdrawn guidance text is cleaned up by the next reconcile, never reported here,
+/// because a lone `NeedsRepair` would drive a heal to reinstall a plugin the user may
+/// have removed); `Absent` when the file or our markers are missing, so a hand-deleted
+/// block self-heals back in; `Healthy` when the block byte-matches the render;
+/// `NeedsRepair` when it drifted. Keys off the same [`block_span`] + [`render_block`]
+/// reconcile uses, so probe never demands bytes reconcile did not write.
 pub(crate) fn probe(path: &Path, plugin: &Plugin) -> Result<Option<BackendState>> {
+    let Some(text) = &plugin.instructions else { return Ok(None) };
     let id = plugin.id();
-    let bytes = read(path)?;
-    let Some(text) = &plugin.instructions else {
-        // Nothing declared: a leftover span is stale state the next heal must clear,
-        // and no span means this surface contributes nothing.
-        let stranded = bytes.as_deref().is_some_and(|b| block_span(b, &id).is_some());
-        return Ok(stranded.then_some(BackendState::NeedsRepair));
-    };
-    let Some(bytes) = bytes else { return Ok(Some(BackendState::Absent)) };
+    let Some(bytes) = read(path)? else { return Ok(Some(BackendState::Absent)) };
     let Some((start, end)) = block_span(&bytes, &id) else { return Ok(Some(BackendState::Absent)) };
     let expected = render_block(&id, text);
     Ok(Some(if bytes[start..end] == expected { BackendState::Healthy } else { BackendState::NeedsRepair }))

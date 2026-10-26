@@ -3,7 +3,7 @@
 //! separator), true-NoOp convergence, drift repair that leaves outside bytes
 //! byte-identical, ownership scoped to our marker id (a rival block and user
 //! lines survive every op), CRLF user content passing through verbatim around
-//! our LF block, and the `None`-instructions no-op.
+//! our LF block, and the withdrawn-guidance strip.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -168,15 +168,20 @@ fn withdrawing_the_guidance_reconciles_the_block_away() {
 }
 
 #[test]
-fn a_stranded_block_reads_needs_repair_when_the_guidance_is_withdrawn() {
+fn a_withdrawn_guidance_text_still_has_its_block_taken_back() {
+    // probe must NOT report the stranded block: a lone NeedsRepair would drive a heal
+    // to reconcile — and reconcile reinstalls a plugin the user may have removed. The
+    // block is cleaned up by the explicit reconcile/remove paths instead.
     let path = scratch("stranded-AGENTS.md");
     std::fs::write(&path, block(ID)).unwrap();
-    assert!(
-        matches!(probe(&path, &plugin(None)).unwrap(), Some(BackendState::NeedsRepair)),
-        "a block left by withdrawn guidance is stale state a heal must clear"
-    );
-    assert!(remove(&path, &plugin(None)).unwrap(), "the markers, not the declared text, decide what remove takes");
+    assert!(probe(&path, &plugin(None)).unwrap().is_none(), "withdrawn guidance contributes no probe entry, stale block or not");
+    assert!(reconcile(&path, &plugin(None)).unwrap(), "the next reconcile takes the stranded block back");
     assert!(!path.exists(), "removing the only content takes the file our own removal emptied");
+
+    // The same strip is what uninstall runs, markers alone deciding.
+    std::fs::write(&path, block(ID)).unwrap();
+    assert!(remove(&path, &plugin(None)).unwrap());
+    assert!(!path.exists());
 }
 
 #[test]

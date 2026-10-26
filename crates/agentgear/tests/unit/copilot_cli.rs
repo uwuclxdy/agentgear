@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use super::{BackendState, PresentAction, classify, github_marketplace_source, present_action};
+use super::{BackendState, PresentAction, classify, github_marketplace_source, install_is_frozen, present_action};
 use crate::cli::{CopilotMarketplace, CopilotPlugin, parse_marketplace_list, parse_plugin_list, parse_version_anywhere};
 use crate::host::Source;
 
@@ -152,6 +152,23 @@ fn present_action_github_outranks_the_freeze() {
     // freezing on it would silently stop writing the slot for every github host whose
     // default branch moved ahead of the baked version.
     assert_eq!(present_action(&github(), Some("9.9.9"), "0.2.0", true), PresentAction::NoOp);
+}
+
+#[test]
+fn install_is_frozen_never_applies_to_github() {
+    // `present_action` matches the github arm first, so a github install is never
+    // Frozen however its tracked version compares — and the probe must keep folding the
+    // guidance block in for it, because reconcile does write that block.
+    assert!(!install_is_frozen(&github(), Some(&plugin("p", "m", Some("9.9.9"))), "0.2.0"), "a github install never freezes");
+    assert!(
+        install_is_frozen(&Source::Embedded, Some(&plugin("p", "m", Some("0.3.0"))), "0.2.0"),
+        "a strictly-newer local install freezes"
+    );
+    assert!(!install_is_frozen(&Source::Embedded, Some(&plugin("p", "m", Some("0.2.0"))), "0.2.0"), "an equal version is ours to manage");
+    assert!(
+        !install_is_frozen(&Source::Embedded, Some(&plugin("p", "m", None)), "0.2.0"),
+        "an unparsed version is not evidence of a newer install"
+    );
 }
 
 #[test]

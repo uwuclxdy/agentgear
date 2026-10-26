@@ -98,7 +98,9 @@ impl AgentBackend for CopilotCliBackend {
         // A frozen install — strictly newer than this binary — is left alone by
         // `present_action`, so no surface this binary would write may classify it
         // NeedsRepair: doing so spawns a heal every session for a no-op to throw away.
-        if install_is_frozen(entry.as_ref(), plugin.version) {
+        // github never freezes (its version tracks a default branch), so it keeps the
+        // fold: reconcile does write the block for it.
+        if install_is_frozen(source, entry.as_ref(), plugin.version) {
             return Ok(registry);
         }
         // The registry alone decides presence; the guidance block folds in as one more
@@ -414,7 +416,7 @@ fn classify(source: &Source, entry: Option<&CopilotPlugin>, embedded: &str, tree
         // a strictly-newer install holds a newer binary's tree, which never matches our
         // hash, so classifying it NeedsRepair would spawn a reconcile every session for
         // the `Frozen` no-op to throw away.
-        Some(_) if install_is_frozen(entry, embedded) => BackendState::Healthy,
+        Some(_) if install_is_frozen(source, entry, embedded) => BackendState::Healthy,
         Some(_) if !tree_current => BackendState::NeedsRepair,
         Some(_) => BackendState::Healthy,
     }
@@ -422,8 +424,10 @@ fn classify(source: &Source, entry: Option<&CopilotPlugin>, embedded: &str, tree
 
 /// Is the registered install strictly newer than this binary? `present_action` returns
 /// `Frozen` for exactly this state, leaving the install to the binary that owns it.
-fn install_is_frozen(entry: Option<&CopilotPlugin>, embedded: &str) -> bool {
-    entry.and_then(|e| e.version.as_deref()).is_some_and(|v| version_lt(Some(embedded), v))
+fn install_is_frozen(source: &Source, entry: Option<&CopilotPlugin>, embedded: &str) -> bool {
+    // `present_action` matches the github arm first, so a github install is never
+    // Frozen however its tracked version compares.
+    !matches!(source, Source::GitHub { .. }) && entry.and_then(|e| e.version.as_deref()).is_some_and(|v| version_lt(Some(embedded), v))
 }
 
 // --- remove ------------------------------------------------------------------
