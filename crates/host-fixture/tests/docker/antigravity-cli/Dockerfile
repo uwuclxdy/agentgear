@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1
 # antigravity-cli docker leg: the real `agy` CLI ingesting our written config.
 # Built + run by tests/docker/run.sh antigravity-cli (context = repo root).
-# Config-file parse is the source of truth: `agy` has NO documented auth-free
-# `mcp list`/`mcp validate` (only an interactive `/mcp` overlay + Google Sign-In),
-# so we assert the files land where the CLI reads them and prove `agy` installed.
+# `agy mcp` (1.4.8) ships headless add/remove/list/enable/disable, so the leg runs
+# agy's OWN native writer (`mcp add`) against the shared mcp_config.json agentgear
+# writes, then asserts our entries, the user's seeded keys and agy's own entry all
+# survive it — and that uninstall still removes only ours.
 
 # Stage 1: build the fixture host (all backends) from the workspace.
 FROM rust:1-slim-bookworm AS build
@@ -12,8 +13,9 @@ COPY . .
 RUN cargo build -p host-fixture --release
 
 # Stage 2: real antigravity-cli + the fixture binary; assert the lifecycle end-to-end.
+# jq: debian-slim ships no node/jq, and the parsed mcp_config.json asserts need one.
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates bash \
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates bash jq \
     && rm -rf /var/lib/apt/lists/*
 
 # pin = the agy version this leg's asserts were last checked against. Unpinned, an
@@ -33,9 +35,9 @@ RUN bash <<'SH'
 # -e, no fallback: an image that could not install the pinned CLI must fail the build
 # rather than run the asserts against whatever else it happened to get.
 set -euo pipefail
-version=1.1.7
-url=https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.7-5951805767680000/linux-x64/cli_linux_x64.tar.gz
-sha512=720d5a7ff256aa5dd6712513cd5eb6fe031cf9e7523a33bcbda7755120ced53bb64ff985b402ce068e5895e0ffb348c2632545039a1dde6daad591f164d5852f
+version=1.4.8
+url=https://storage.googleapis.com/antigravity-public/antigravity-cli/1.4.8-5447777392656384/linux-x64/cli_linux_x64.tar.gz
+sha512=b23683771438e72bffe0a2231168f65a16a0d73ed2c7a8460b311dc5fe0c3c9d9dfc6cbfb7d8755173340071aa4cc5c7a552fb5d1be3fdd31c2b7559d67e404a
 
 # linux-x64 only, by choice and not by oversight: the vendor script auto-detected every
 # platform, but a second pinned arch cannot be exercised by this project or by CI (both
@@ -80,6 +82,48 @@ SH
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 
 RUN <<'SH'
+cat > /usr/local/bin/agy-mcp-check.jq <<'JQ'
+# Parsed check of ~/.gemini/config/mcp_config.json for one lifecycle phase. Emits
+# one key-path per line for every missing/wrong key; empty output = all present.
+def srv($n): .mcpServers[$n];
+
+# `$post` matches `$pre` up to an empty args/env/headers the writer dropped. This is
+# agentgear's own equivalence (mcpjson::matches_rendered): every key in the post-writer
+# entry must exist in the pre-writer one and equal it, and a pre-writer key missing from
+# post is tolerated only as an empty args/env/headers.
+# jq compares numbers by value (1 == 1.0) where serde_json's Value equality does not; our entries carry no numeric field, and the self-heal NoOp step right after this identity runs the real Rust comparison.
+def matches_rendered($pre; $post):
+  ($post | type == "object") and ($pre | type == "object")
+  and ($post | to_entries | all(.[]; .key as $k | ($pre | has($k)) and $pre[$k] == .value))
+  and ($pre | keys | all(.[]; . as $k |
+        ($post | has($k)) or
+        ((["args","env","headers"] | index($k)) != null and ($pre[$k] == {} or $pre[$k] == []))));
+
+def seeded_missing:
+  (if (.theme == "dark") then empty else "theme" end),
+  (if ((srv("theirs") | .command == "their-server") and (srv("theirs") | .args == ["keep"]) and (srv("theirs") | .env == {"K": "V"})) then empty else "mcpServers.theirs" end);
+
+def ours_present_missing:
+  (if ((srv("ez-fixture") | .command == "host_fixture") and (srv("ez-fixture") | .args == ["mcp"])) then empty else "mcpServers.ez-fixture" end),
+  (if (srv("ez-fixture-sse") | .serverUrl == "http://127.0.0.1:39622/sse") then empty else "mcpServers.ez-fixture-sse" end);
+
+def ours_identity_missing:
+  (if matches_rendered($pre[0].mcpServers["ez-fixture"]; srv("ez-fixture")) then empty else "mcpServers.ez-fixture (changed by the native writer)" end),
+  (if matches_rendered($pre[0].mcpServers["ez-fixture-sse"]; srv("ez-fixture-sse")) then empty else "mcpServers.ez-fixture-sse (changed by the native writer)" end);
+
+def ours_absent_missing:
+  (if (srv("ez-fixture") == null) then empty else "mcpServers.ez-fixture (uninstall left it)" end),
+  (if (srv("ez-fixture-sse") == null) then empty else "mcpServers.ez-fixture-sse (uninstall left it)" end);
+
+def writer_missing:
+  (if ((srv("agy-native-server") | .command == "echo") and (srv("agy-native-server") | .args == ["hello"])) then empty else "mcpServers.agy-native-server" end);
+
+seeded_missing,
+(if $phase == "setup" then ours_present_missing
+ elif $phase == "writer" then (ours_identity_missing, writer_missing)
+ else (ours_absent_missing, writer_missing) end)
+JQ
+
 cat > /usr/local/bin/antigravity-cli-leg.sh <<'TEST'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -90,66 +134,131 @@ export HOME=/tmp/antigravity-home
 MCP="$HOME/.gemini/config/mcp_config.json"
 HOOKS="$HOME/.gemini/config/hooks.json"
 # agy's own settings profile, user scope only. Nothing this backend writes lives in it
-# anymore (the automatic status-line wiring is retired), so the whole file must survive
-# every lifecycle op byte-identical.
+# anymore (the automatic status-line wiring is retired), so the seeded bytes below must
+# survive the whole leg byte-identical: the leg compares the file against a single seed
+# copy taken right after seeding, and again after every agy or host_fixture call
+# (`agy --version`, setup, `agy mcp list`, `agy mcp add`, self-heal, uninstall).
 SETTINGS="$HOME/.gemini/antigravity-cli/settings.json"
 # Pre-create the CLI-specific dir so the backend's detect() passes deterministically
 # (agy-on-PATH is the other signal; this keeps the leg independent of PATH quirks).
 mkdir -p "$HOME/.gemini/antigravity-cli" "$HOME/.gemini/config"
 
-# A key agy owns in its own settings file plus a user status line, seeded by hand. agy
-# DOES rewrite this file in a real session (`antigravity_cli.rs` records 1.1.6
-# normalizing it and dropping unknown keys), but neither auth-free command this leg can
-# reach touches it. The seeded statusLine is the retired-slot contract: setup and
-# uninstall must both leave the whole file byte-identical.
+# A key agy owns in its own settings file plus a user status line, seeded by hand. The
+# statusLine is the retired-slot contract: these exact bytes are the seed the leg
+# compares the file against after every agy or host_fixture step, so a write any one of
+# them makes is caught where it happens even if a later step reverts it byte-exactly.
 cat > "$SETTINGS" <<'JSON'
 { "theirSetting": "keep me", "statusLine": { "type": "command", "command": "their-line", "enabled": false } }
 JSON
 cp "$SETTINGS" /tmp/settings-seed
 
+settings_unchanged() {
+  cmp -s "$SETTINGS" /tmp/settings-seed || { echo "FAIL: settings.json changed across $1"; diff /tmp/settings-seed "$SETTINGS"; exit 1; }
+}
+
 # Hard failure rather than best-effort: the build pins this binary and already made it
 # print its version, so a failure here is the CLI breaking under the leg's own HOME.
 agy --version || { echo "FAIL: agy --version errored under the leg HOME"; exit 1; }
+settings_unchanged 'agy --version'
 
-# Seed a foreign mcp server + an unrelated key that must survive install/uninstall.
+# Seed a foreign mcp server with non-empty args/env plus an unrelated root key. The
+# non-empty seed keeps the survive assert non-degenerate: agy 1.4.8's writer drops
+# empty args/env during re-serialization, so an empty seed would read as surviving
+# through the drop rather than through the assert. Both must survive install/uninstall.
 cat > "$MCP" <<'JSON'
-{ "theme": "dark", "mcpServers": { "theirs": { "command": "their-server", "args": [] } } }
+{ "theme": "dark", "mcpServers": { "theirs": { "command": "their-server", "args": ["keep"], "env": { "K": "V" } } } }
 JSON
 
 host_fixture setup --agent antigravity-cli
+settings_unchanged setup
 
-if ! grep -q 'ez-fixture' "$MCP";  then echo "FAIL: our mcp server not registered"; cat "$MCP"; exit 1; fi
-if ! grep -q 'theirs'     "$MCP";  then echo "FAIL: seeded server clobbered on install"; exit 1; fi
-if ! grep -q '"theme"'    "$MCP";  then echo "FAIL: seeded key clobbered on install"; exit 1; fi
+check_mcp() {
+  local phase="$1" missing
+  missing="$(jq -r --arg phase "$phase" --slurpfile pre /tmp/mcp-pre-writer -f /usr/local/bin/agy-mcp-check.jq "$MCP")"
+  if [ -n "$missing" ]; then
+    echo "FAIL: mcp_config.json after $phase is wrong, missing/wrong keys:"
+    printf '%s\n' "$missing"
+    cat "$MCP"
+    exit 1
+  fi
+}
+
+# The writer phase's identity check reads the pre-writer copy; the setup check only
+# needs the file to exist for the slurpfile.
+echo '{}' > /tmp/mcp-pre-writer
+check_mcp setup
+
 if [ ! -f "$HOOKS" ];              then echo "FAIL: hooks.json missing from the customization root"; exit 1; fi
 if ! grep -q 'ez-fixture-plugin' "$HOOKS"; then echo "FAIL: our plugin hook key missing"; cat "$HOOKS"; exit 1; fi
-if ! grep -q 'PreInvocation'     "$HOOKS"; then echo "FAIL: UserPromptSubmit did not land on PreInvocation"; cat "$HOOKS"; exit 1; fi
-# Only agy's five legal events may be written; a dead name reads as wired and never
-# fires. The validator has no teeth on hooks, so this grep is the gate.
-for dead in SessionStart BeforeAgent SessionEnd Notification; do
+if ! jq -e '."ez-fixture-plugin".PreInvocation | any(.[]; .type == "command" and .command == "host_fixture check-restart")' "$HOOKS" >/dev/null; then
+  echo "FAIL: UserPromptSubmit did not land on PreInvocation (no host_fixture check-restart under ez-fixture-plugin.PreInvocation)"; cat "$HOOKS"; exit 1
+fi
+# agy 1.4.8 lists six legal hook events: PreToolUse, PostToolUse, SessionStart,
+# PreInvocation, PostInvocation, Stop. A CC event with no analog in that set reads as
+# wired and never fires, so the dead names below stay banned; the validator has no
+# teeth on hooks, so this grep is the gate.
+for dead in BeforeAgent SessionEnd Notification; do
   if grep -q "$dead" "$HOOKS"; then echo "FAIL: dead hook event $dead written"; cat "$HOOKS"; exit 1; fi
 done
+# agentgear maps CC's UserPromptSubmit onto PreInvocation and wires no SessionStart
+# hook for agy today; 1.4.8 lists SessionStart as legal, so it is not dead above.
+# This assert pins current behaviour, not a harness rule.
+if grep -q 'SessionStart' "$HOOKS"; then echo "FAIL: agentgear wrote a SessionStart hook for agy (unexpected)"; cat "$HOOKS"; exit 1; fi
 
-# Native second opinion (best-effort; auth-free, lists plugins not
-# mcp servers, so it can only prove the CLI parses its config tree without erroring).
-if out=$(agy plugin list 2>&1); then
-  echo "agy plugin list ran (config tree parsed): $out"
-else
-  echo "note: agy plugin list unavailable (likely needs auth); relied on config-file assert"
+# The real CLI ingests the config agentgear wrote: `agy mcp list` (auth-free at the
+# pin) must list our stdio server by whole-token match and leave the file byte-identical.
+cp "$MCP" /tmp/mcp-pre-list
+list="$(agy mcp list)"
+if ! printf '%s\n' "$list" | awk '$1 == "ez-fixture" { found = 1 } END { if (!found) exit 1 }'; then
+  echo "FAIL: agy mcp list does not list ez-fixture"; printf '%s\n' "$list"; exit 1
 fi
+cmp -s "$MCP" /tmp/mcp-pre-list || { echo "FAIL: agy mcp list rewrote mcp_config.json"; diff /tmp/mcp-pre-list "$MCP"; exit 1; }
+settings_unchanged 'agy mcp list'
 
-# Retired-slot contract: the seeded settings file, user statusLine included, must be
-# byte-identical after setup — nothing this backend writes lives in it anymore.
-cmp -s "$SETTINGS" /tmp/settings-seed || { echo "FAIL: settings.json changed across setup"; diff /tmp/settings-seed "$SETTINGS"; exit 1; }
+# The harness's OWN native writer against the shared mcp_config.json agentgear wrote:
+# `agy mcp add` adds a server of its own beside ours. Its failure fails the leg, and
+# `! cmp -s` against the pre-writer copy fails the leg if it wrote nothing.
+cp "$MCP" /tmp/mcp-pre-writer
+cp "$HOOKS" /tmp/hooks-pre-writer
+agy mcp add agy-native-server echo hello
+if cmp -s "$MCP" /tmp/mcp-pre-writer; then
+  echo "FAIL: agy mcp add wrote nothing (mcp_config.json unchanged)"
+  exit 1
+fi
+cmp -s "$HOOKS" /tmp/hooks-pre-writer || { echo "FAIL: agy mcp add rewrote hooks.json"; diff /tmp/hooks-pre-writer "$HOOKS"; exit 1; }
+settings_unchanged 'agy mcp add'
+
+# All three mcp entries (the user's, ours, agy's own) plus the seeded root key must
+# survive the native writer at their seeded paths, ours by identity up to the empty
+# args/env the writer drops.
+check_mcp writer
+
+# agentgear's own probe must still read its entries as healthy after the native
+# writer; NoOp also proves it rewrites nothing.
+cp "$MCP" /tmp/mcp-pre-heal
+cp "$HOOKS" /tmp/hooks-pre-heal
+heal="$(printf '%s' '{"source":"startup"}' | host_fixture self-heal)"
+if [ "$heal" != "NoOp" ]; then
+  echo "FAIL: self-heal after the native writer printed '$heal', want 'NoOp': agentgear no longer reads its own entries as healthy"
+  exit 1
+fi
+if ! cmp -s "$MCP" /tmp/mcp-pre-heal; then
+  echo "FAIL: self-heal rewrote mcp_config.json"; diff /tmp/mcp-pre-heal "$MCP"; exit 1
+fi
+if ! cmp -s "$HOOKS" /tmp/hooks-pre-heal; then
+  echo "FAIL: self-heal rewrote hooks.json"; diff /tmp/hooks-pre-heal "$HOOKS"; exit 1
+fi
+settings_unchanged self-heal
 
 host_fixture uninstall
+settings_unchanged uninstall
 
-if grep -q 'ez-fixture' "$MCP";           then echo "FAIL: our server survived uninstall"; exit 1; fi
-if ! grep -q 'theirs'   "$MCP";           then echo "FAIL: uninstall removed the seeded server"; exit 1; fi
+# uninstall removes only ours: agy's own entry and the user's seeded keys stay.
+check_mcp uninstall
+
+if grep -q 'ez-fixture' "$MCP"; then echo "FAIL: our server survived uninstall"; cat "$MCP"; exit 1; fi
+
 if grep -q 'ez-fixture-plugin' "$HOOKS";  then echo "FAIL: our hook key survived uninstall"; exit 1; fi
-
-# Same byte-identity across uninstall.
-cmp -s "$SETTINGS" /tmp/settings-seed || { echo "FAIL: settings.json changed across uninstall"; diff /tmp/settings-seed "$SETTINGS"; exit 1; }
 
 echo "antigravity-cli docker leg: OK"
 TEST
