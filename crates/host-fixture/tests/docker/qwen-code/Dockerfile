@@ -17,7 +17,7 @@ RUN cargo build -p host-fixture --release
 FROM node:22-slim
 # Pinned to a known-good tag (docker leg green on it). qwen-code's release cadence is
 # fast.
-RUN npm install -g @qwen-code/qwen-code@0.26.1
+RUN npm install -g @qwen-code/qwen-code@0.26.2
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 
 RUN <<'SH'
@@ -62,7 +62,7 @@ function writerPresent() {
 }
 
 // Our mcp entries and hooks must survive the native writer byte-for-byte against
-// the pre-writer copy. qwen's writer preserves key order (measured 0.26.1), so
+// the pre-writer copy. qwen's writer preserves key order (measured 0.26.1, 0.26.2), so
 // raw JSON.stringify equality is the identity check.
 function writerIdentity() {
   for (const k of ["ez-fixture", "ez-fixture-http", "ez-fixture-sse"])
@@ -89,7 +89,7 @@ if (phase === "setup") {
 } else if (phase === "uninstall") {
   oursAbsent();
   writerPresent();
-  // qwen's own non-server key, stamped by mcp list before mcp add runs (0.26.1); uninstall must keep it.
+  // qwen's own non-server key, stamped by mcp list before mcp add runs (0.26.1, 0.26.2); uninstall must keep it.
   if (settings["$version"] !== 4) fail("$version (uninstall changed or dropped qwen's version key)");
 } else {
   console.error("unknown phase: " + phase);
