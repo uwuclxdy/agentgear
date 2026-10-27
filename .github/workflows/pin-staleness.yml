@@ -1,0 +1,29 @@
+name: pin-staleness
+
+# Scheduled only, never a push/pull_request leg: the check reaches three vendor
+# endpoints plus the npm registry, so a vendor outage must red a schedule run instead
+# of a PR.
+# Daily, because a patch release inside a pinned series is exactly the silent drift
+# this catches, and a run costs six registry queries plus three GETs.
+# GitHub disables a public repo's scheduled workflow after 60 days without repository
+# activity and the alarm then stops silently: re-enable it from the Actions tab.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The runner's own npm would do; pinned to the node the repo's other
+      # npm-driven legs already use so `npm view` output shape cannot drift with it.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: compare every docker leg pin with its vendor
+        run: bash crates/host-fixture/tests/docker/pin-staleness.sh
