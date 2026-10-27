@@ -1499,6 +1499,90 @@ fn copilot_cli_setup_refuses_a_foreign_newer_enabled_registration_on_the_frozen_
     assert_eq!(fs::read(&state_path).unwrap(), state_before, "the failed setup must leave the row untouched");
 }
 
+/// A same-named marketplace registered at a foreign path with our plugin NOT
+/// listed is the one state the unlisted reconcile arm reached without asking
+/// ownership: `plugin install` would install the user's plugin as ours. Setup
+/// must refuse it before spawning any install; self-heal must no-op.
+#[test]
+fn copilot_cli_setup_refuses_a_foreign_marketplace_when_our_plugin_is_not_listed() {
+    let env = Env::new("absent-foreign-local");
+    let state_path = env.copilot_home.join("fake-copilot-state.json");
+    let calls_log = env.copilot_home.join(FAKE_COPILOT_CALL_LOG);
+
+    let seed = serde_json::json!({
+        "plugins": [],
+        "marketplaces": [{"name": "ez-fixture-plugin", "path": "/tmp/foreign"}],
+    });
+    fs::write(&state_path, serde_json::to_vec_pretty(&seed).unwrap()).unwrap();
+    let state_before = fs::read(&state_path).unwrap();
+    fs::write(&calls_log, "").unwrap();
+
+    let (ok, _out, err) = env.fixture_err(&["setup", "--agent", "copilot-cli"]);
+    assert!(!ok, "an explicit setup over a foreign unlisted marketplace must fail");
+    let ours = env.data.join(PLUGIN_NAME).join("current@copilot-cli");
+    let want = format!(
+        "error: copilot-cli: ez-fixture-plugin@ez-fixture-plugin is not installed, and marketplace `ez-fixture-plugin` is registered but not this host's to manage: it is registered at `/tmp/foreign` but this host's is `{}`; run `copilot plugin marketplace remove ez-fixture-plugin` (it uninstalls every plugin from that marketplace), then re-run setup",
+        ours.display()
+    );
+    assert_eq!(err, want, "the setup error must name the foreign marketplace and fix");
+    assert_eq!(fs::read(&state_path).unwrap(), state_before, "the failed setup must leave the state untouched");
+    assert!(!env.data.join(PLUGIN_NAME).join("markers").exists(), "the failed setup must not write a marker");
+    let calls = fs::read_to_string(&calls_log).unwrap_or_default();
+    assert_eq!(
+        calls, "plugin list\nplugin marketplace list\n",
+        "the failed setup must spawn reads only, never a mutating subcommand (`plugin install/enable`, `marketplace add/remove`, `config --rm`):\n{calls}"
+    );
+
+    // self-heal over the same state: probe reads Absent (our row not listed) and
+    // no-ops, spawning only the read.
+    fs::write(&calls_log, "").unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal must not fail over an unlisted foreign marketplace: {out}");
+    assert_eq!(out, "NoOp", "self-heal must no-op over an unlisted foreign marketplace, got {out}");
+    let calls = fs::read_to_string(&calls_log).unwrap_or_default();
+    assert_eq!(calls, "plugin list\n", "self-heal must only read the row, got:\n{calls}");
+}
+
+/// The github spelling of the same class: a same-named marketplace at another
+/// repo with our plugin not listed must refuse setup and no-op self-heal.
+#[test]
+fn copilot_cli_github_setup_refuses_a_foreign_repo_when_our_plugin_is_not_listed() {
+    let env = Env::new("gh-foreign-unlisted");
+    let state_path = env.copilot_home.join("fake-copilot-state.json");
+    let calls_log = env.copilot_home.join(FAKE_COPILOT_CALL_LOG);
+    let calls = || fs::read_to_string(&calls_log).unwrap_or_default();
+
+    let seed = serde_json::json!({
+        "plugins": [],
+        "marketplaces": [{"name": "ez-fixture-plugin", "repo": "someone/fork"}],
+    });
+    fs::write(&state_path, serde_json::to_vec_pretty(&seed).unwrap()).unwrap();
+    let state_before = fs::read(&state_path).unwrap();
+
+    // The call log traces every spawn, so the read-only equality below also
+    // catches a mutating subcommand that fails before writing state.
+    fs::write(&calls_log, "").unwrap();
+    let (ok, out) = env.github_fixture(&["self-heal"]);
+    assert!(ok, "self-heal must not fail over an unlisted foreign github repo: {out}");
+    assert_eq!(out, "NoOp", "self-heal must no-op over an unlisted foreign github repo, got {out}");
+    assert_eq!(fs::read(&state_path).unwrap(), state_before, "self-heal must not mutate an unlisted foreign github repo");
+    assert_eq!(calls(), "plugin list\n", "self-heal must spawn the row read alone, got:\n{}", calls());
+
+    fs::write(&calls_log, "").unwrap();
+    let (ok, out) = env.github_fixture(&["setup-report"]);
+    assert!(!ok, "an explicit setup over an unlisted foreign github repo must fail");
+    let want_fail = "copilot-cli: failed: ez-fixture-plugin@ez-fixture-plugin is not installed, and marketplace `ez-fixture-plugin` is registered but not this host's to manage: it is registered as `(GitHub: someone/fork)` but this host's is `uwuclxdy/agentgear`; run `copilot plugin marketplace remove ez-fixture-plugin` (it uninstalls every plugin from that marketplace), then re-run setup";
+    assert!(out.lines().any(|l| l == want_fail), "setup must name the unlisted foreign github repo by equality, got:\n{out}");
+    assert_eq!(fs::read(&state_path).unwrap(), state_before, "setup must leave the unlisted foreign github repo untouched");
+    assert!(!env.data.join(PLUGIN_NAME).join("markers").exists(), "setup must not write a marker for an unlisted foreign github repo");
+    assert_eq!(
+        calls(),
+        "plugin list\nplugin marketplace list\n",
+        "the refused setup must spawn reads only, never a mutating subcommand (`plugin install/enable`, `marketplace add/remove`, `config --rm`):\n{}",
+        calls()
+    );
+}
+
 /// A healthy install's probe reads the row and the marketplace ownership alone:
 /// computing the sibling set (`config enabledPlugins` + a second `plugin list`)
 /// is uninstall's job, never a session-start probe's.

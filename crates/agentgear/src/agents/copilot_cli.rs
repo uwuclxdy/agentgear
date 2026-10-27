@@ -291,6 +291,15 @@ fn reconcile(plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcom
             // source registers a marketplace under the name in the repo's root
             // marketplace.json, which is `plugin.marketplace`, so the id keyed on here
             // matches.
+            // A same-named marketplace this backend did not add is the user's own on
+            // every source: an unlisted row goes straight to `plugin install`, which
+            // would install the user's plugin as ours, so ask ownership first.
+            if let MarketplaceOwnership::Foreign(reason) = marketplace_ownership(&cli, plugin, &desired.source)? {
+                return Err(Error::CopilotMarketplaceForeign(format!(
+                    "{} is not installed, and marketplace `{}` is registered but not this host's to manage: {reason}; run `copilot plugin marketplace remove {}` (it uninstalls every plugin from that marketplace), then re-run setup",
+                    id, plugin.marketplace, plugin.marketplace
+                )));
+            }
             cli.ensure_min_version()?;
             ensure_marketplace(&cli, plugin, &desired.source)?;
             plugin_install(&cli, &id)?;
@@ -913,22 +922,45 @@ fn report_checks(plugin: &Plugin, source: &Source) -> Vec<DoctorCheck> {
 
 /// A dotted plugin id leaves an `enabledPlugins.<id>` key no copilot subcommand
 /// can clear (`config --rm` cannot descend past the dot), so doctor names it.
+/// The key is copilot's own record of the installed plugin (a healthy install
+/// reads `true`), so it is stale only once our row is gone — the leftover a
+/// dotted-id uninstall leaves.
 fn check_stale_enabled_key(cli: &CopilotCli, plugin: &Plugin, checks: &mut Vec<DoctorCheck>) {
     if !plugin.id().contains('.') {
         return;
     }
     let name = "stale enabledPlugins key";
+    let listed = match find_plugin(cli, plugin) {
+        Ok(row) => row.is_some(),
+        Err(e) => {
+            checks.push(DoctorCheck { name, status: CheckStatus::Warn(format!("could not read `copilot plugin list`: {e}")) });
+            return;
+        }
+    };
     match enabled_plugins_key(cli, plugin) {
-        Ok(EnabledPluginsKey::Absent) => {}
-        Ok(EnabledPluginsKey::Disabled | EnabledPluginsKey::Enabled) => checks.push(DoctorCheck {
-            name,
-            status: CheckStatus::Warn(format!(
-                "`enabledPlugins.{}` still names our id; `copilot config --rm` cannot clear a dotted key",
-                plugin.id()
-            )),
-        }),
+        Ok(key) => {
+            if let Some(problem) = stale_dotted_key(plugin, listed, key) {
+                checks.push(DoctorCheck { name, status: CheckStatus::Warn(problem) });
+            }
+        }
         Err(e) => {
             checks.push(DoctorCheck { name, status: CheckStatus::Warn(format!("could not read `copilot config enabledPlugins`: {e}")) })
+        }
+    }
+}
+
+/// The stale dotted-key decision, split out so the warn/not-warn pair is
+/// unit-pinned without a dotted fixture host. `listed` is whether our row is
+/// still in `plugin list`; a healthy install lists it, so the key is copilot's
+/// own record of the install, never stale.
+fn stale_dotted_key(plugin: &Plugin, listed: bool, key: EnabledPluginsKey) -> Option<String> {
+    if !plugin.id().contains('.') || listed {
+        return None;
+    }
+    match key {
+        EnabledPluginsKey::Absent => None,
+        EnabledPluginsKey::Disabled | EnabledPluginsKey::Enabled => {
+            Some(format!("`enabledPlugins.{}` still names our id; `copilot config --rm` cannot clear a dotted key", plugin.id()))
         }
     }
 }

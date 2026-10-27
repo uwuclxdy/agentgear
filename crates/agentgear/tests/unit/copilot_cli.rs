@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use super::{
     BackendState, EnabledPluginsKey, PresentAction, StaleKey, classify, enabled_plugins_key_from, enabled_plugins_rm_key,
     github_marketplace_source, install_is_frozen, local_marketplace_is_ours, marketplace_foreign_reason, marketplace_siblings,
-    present_action, shared_sibling_clause, stale_key_note, stale_key_plan,
+    present_action, shared_sibling_clause, stale_dotted_key, stale_key_note, stale_key_plan,
 };
 use crate::cli::{
     CopilotMarketplace, CopilotPlugin, Output, copilot_meets_floor, parse_marketplace_list, parse_plugin_list, parse_version_anywhere,
@@ -349,6 +349,24 @@ fn stale_key_note_names_a_dotted_leftover_by_equality() {
         stale_key_note(&dotted),
         "agentgear: `enabledPlugins.my.plugin@my.marketplace` still names our id and `copilot config --rm` cannot clear a dotted key; remove it by hand if it is yours"
     );
+}
+
+#[test]
+fn stale_dotted_key_warns_only_when_our_row_is_gone() {
+    let dotted = test_plugin("my.plugin", "my.marketplace");
+    let plain = test_plugin("ez-fixture-plugin", "ez-fixture-plugin");
+    let want = "`enabledPlugins.my.plugin@my.marketplace` still names our id; `copilot config --rm` cannot clear a dotted key";
+    // A healthy dotted-id install lists our row AND holds the key (`true`): the
+    // key is copilot's own record of the install, never stale.
+    assert_eq!(stale_dotted_key(&dotted, true, EnabledPluginsKey::Enabled), None);
+    // Our row gone but the key still naming the dotted id is the leftover a
+    // dotted-id uninstall leaves — the only state worth warning about.
+    assert_eq!(stale_dotted_key(&dotted, false, EnabledPluginsKey::Enabled), Some(want.to_string()));
+    assert_eq!(stale_dotted_key(&dotted, false, EnabledPluginsKey::Disabled), Some(want.to_string()));
+    // No key names the dotted id -> nothing stale, whatever the row.
+    assert_eq!(stale_dotted_key(&dotted, false, EnabledPluginsKey::Absent), None);
+    // A plain id's key is addressable by `config --rm`, never this warning.
+    assert_eq!(stale_dotted_key(&plain, false, EnabledPluginsKey::Enabled), None);
 }
 
 #[test]
