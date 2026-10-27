@@ -237,6 +237,34 @@ fn mcp_probe_classifies_absent_healthy_and_needs_repair() {
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
+#[test]
+fn reconcile_settings_noops_on_an_entry_missing_empty_args_env() {
+    let path = scratch("settings.json");
+    let servers = [server("ez-fixture", "host_fixture")];
+    let seed = r#"{"mcpServers":{"ez-fixture":{"command":"host_fixture"}}}"#;
+    std::fs::write(&path, seed).unwrap();
+    let before = std::fs::read(&path).unwrap();
+
+    let changed = reconcile_settings(&path, &servers, &[]).unwrap();
+    assert!(!changed, "an entry missing only empty `args`/`env` must reconcile as NoOp");
+    assert_eq!(std::fs::read(&path).unwrap(), before, "reconcile rewrote an entry missing only empty defaults");
+
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn reconcile_settings_rewrites_an_entry_that_drifted_from_the_render() {
+    let path = scratch("settings.json");
+    let servers = [server("ez-fixture", "host_fixture")];
+    std::fs::write(&path, r#"{"mcpServers":{"ez-fixture":{"command":"host_fixture","args":["old"]}}}"#).unwrap();
+
+    assert!(reconcile_settings(&path, &servers, &[]).unwrap(), "an entry whose args drifted must be rewritten");
+    let back: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(back["mcpServers"]["ez-fixture"], serde_json::json!({"command":"host_fixture","args":[],"env":{}}));
+
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
 // --- ${AGENTGEAR_CLIENT} portability token -----------------------------------
 
 /// Recursively true if any file under `root` has contents containing `needle`.

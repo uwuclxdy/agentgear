@@ -1,7 +1,8 @@
-//! Shared json-`mcpServers` renderer/reconciler for the json family
-//! (gemini/cursor/cline/devin). opencode + codex render bespoke bodies. Every
-//! write goes through [`confedit::json_edit`], so it is atomic and merge-safe:
-//! only our own server keys are touched, the user's survive.
+//! Shared json mcp-server renderer, probe, reconciler and remover: each backend
+//! passes the container `key_path` its harness reads and its `ServerShape`
+//! dialect. Every write goes through
+//! [`confedit::json_edit`], so it is atomic and merge-safe: only our own server
+//! keys are touched, the user's survive.
 
 use std::path::Path;
 
@@ -168,6 +169,33 @@ fn env_value(server: &McpServer) -> Value {
     Value::Object(env)
 }
 
+/// Body keys a harness writer may drop when empty (agy 1.4.8's `mcp add` drops `args`/`env`).
+const EMPTY_DEFAULTS: [&str; 3] = ["args", "env", "headers"];
+
+/// Whether `existing` matches `rendered` up to an empty default the writer
+/// dropped. probe and reconcile both call this, so a spelling one accepts cannot
+/// be the one the other rewrites back: probe would read `Healthy` while reconcile
+/// re-inserted the key on every run.
+pub(crate) fn matches_rendered(rendered: &Value, existing: &Value) -> bool {
+    let (Value::Object(rendered), Value::Object(existing)) = (rendered, existing) else {
+        return false;
+    };
+    if existing.iter().any(|(key, value)| rendered.get(key) != Some(value)) {
+        return false;
+    }
+    rendered.iter().all(|(key, value)| {
+        existing.contains_key(key) || (EMPTY_DEFAULTS.contains(&key.as_str()) && is_empty_collection(value))
+    })
+}
+
+fn is_empty_collection(value: &Value) -> bool {
+    match value {
+        Value::Array(items) => items.is_empty(),
+        Value::Object(map) => map.is_empty(),
+        _ => false,
+    }
+}
+
 /// Insert/update exactly our servers under `key_path`, leaving others. `NoOp` when
 /// the file already matches (no write).
 pub(crate) fn reconcile(path: &Path, key_path: &[&str], servers: &[McpServer], shape: ServerShape) -> Result<Outcome> {
@@ -177,6 +205,9 @@ pub(crate) fn reconcile(path: &Path, key_path: &[&str], servers: &[McpServer], s
         // forget to.
         for server in writable(servers, shape) {
             if let Some(body) = render_server(server, shape) {
+                if obj.get(&server.name).is_some_and(|existing| matches_rendered(&body, existing)) {
+                    continue;
+                }
                 obj.insert(server.name.clone(), body);
             }
         }
@@ -210,7 +241,7 @@ pub(crate) fn probe(path: &Path, key_path: &[&str], servers: &[McpServer], shape
     for server in &ours {
         if let Some(existing) = obj.and_then(|o| o.get(&server.name)) {
             present += 1;
-            if render_server(server, shape).is_some_and(|r| r == *existing) {
+            if render_server(server, shape).is_some_and(|r| matches_rendered(&r, existing)) {
                 matching += 1;
             }
         }

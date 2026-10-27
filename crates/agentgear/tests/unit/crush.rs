@@ -235,6 +235,34 @@ fn probe_classifies_absent_healthy_needsrepair() {
 }
 
 #[test]
+fn reconcile_noops_on_an_entry_missing_empty_args_env() {
+    let path = scratch("crush.json");
+    let servers = [stdio("ez-fixture", "host_fixture", &[])];
+    let seed = r#"{"mcp":{"ez-fixture":{"type":"stdio","command":"host_fixture"}}}"#;
+    std::fs::write(&path, seed).unwrap();
+    let before = std::fs::read(&path).unwrap();
+
+    let changed = reconcile_config(&path, &servers, &[]).unwrap();
+    assert!(!changed, "an entry missing only empty `args`/`env` must reconcile as NoOp");
+    assert_eq!(std::fs::read(&path).unwrap(), before, "reconcile rewrote an entry missing only empty defaults");
+
+    cleanup(&path);
+}
+
+#[test]
+fn reconcile_rewrites_an_entry_that_drifted_from_the_render() {
+    let path = scratch("crush.json");
+    let servers = [stdio("ez-fixture", "host_fixture", &["mcp"])];
+    std::fs::write(&path, r#"{"mcp":{"ez-fixture":{"type":"stdio","command":"host_fixture","args":["old"]}}}"#).unwrap();
+
+    assert!(reconcile_config(&path, &servers, &[]).unwrap(), "an entry whose args drifted must be rewritten");
+    let back: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(back["mcp"]["ez-fixture"], json!({"type":"stdio","command":"host_fixture","args":["mcp"],"env":{}}));
+
+    cleanup(&path);
+}
+
+#[test]
 fn render_command_drops_frontmatter_writes_body_only() {
     // crush's own loader (`internal/commands/commands.go`) does not split
     // frontmatter — the whole file becomes the literal prompt text — so a render

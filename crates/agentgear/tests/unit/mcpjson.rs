@@ -1,13 +1,16 @@
 //! mcpjson tests: render for the stdio + remote dialects, reconcile idempotency
-//! (Installed on first write, NoOp on the second), and remove ownership (a server
-//! we never wrote is never deleted). Explicit temp paths, no env mutation.
+//! (Installed on first write, NoOp on the second), remove ownership (a server
+//! we never wrote is never deleted), and the probe/reconcile equivalence — an
+//! entry missing only an empty `args`/`env`/`headers` reads Healthy and is not
+//! rewritten, while any other drift (a dropped non-empty value, an extra key, or
+//! `env: null`) reads NeedsRepair. Explicit temp paths, no env mutation.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
-use super::{ServerShape, reconcile, remove, render_server};
+use super::{BackendState, ServerShape, probe, reconcile, remove, render_server};
 use crate::components::{McpKind, McpServer};
 use crate::host::Outcome;
 
@@ -118,6 +121,92 @@ fn remove_never_touches_a_server_we_could_not_have_written() {
     let back: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert!(back["mcpServers"].get("ez").is_none(), "our key survived remove");
     assert_eq!(back["mcpServers"]["other"], json!({"command":"x"}), "unrelated server was deleted");
+
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn a_writer_dropping_empty_defaults_neither_churns_probe_nor_reconcile() {
+    let path = scratch("mcp_config.json");
+    let bare = McpServer { name: "ez".into(), kind: McpKind::Stdio, command: "host".into(), args: vec![], env: BTreeMap::new() };
+    let servers = [bare];
+    let shape = ServerShape::plain();
+    // agy 1.4.8's `mcp add` re-serializes the file and drops an empty `args`/`env`.
+    std::fs::write(&path, r#"{"mcpServers":{"ez":{"command":"host"}}}"#).unwrap();
+    let before = std::fs::read(&path).unwrap();
+
+    assert!(
+        matches!(probe(&path, &["mcpServers"], &servers, shape).unwrap(), BackendState::Healthy),
+        "an entry missing only empty defaults must read Healthy"
+    );
+    assert_eq!(reconcile(&path, &["mcpServers"], &servers, shape).unwrap(), Outcome::NoOp);
+    assert_eq!(std::fs::read(&path).unwrap(), before, "reconcile rewrote an entry probe reads as healthy");
+
+    // A dropped NON-empty value is real drift, not a canonical spelling.
+    std::fs::write(&path, r#"{"mcpServers":{"ez":{"command":"host","args":["mcp"]}}}"#).unwrap();
+    assert!(
+        matches!(probe(&path, &["mcpServers"], &[server()], shape).unwrap(), BackendState::NeedsRepair),
+        "an entry missing a non-empty env must read NeedsRepair"
+    );
+
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn extra_key_reads_needs_repair_and_is_rewritten() {
+    let path = scratch("extra-key.json");
+    let bare = McpServer { name: "ez".into(), kind: McpKind::Stdio, command: "host".into(), args: vec![], env: BTreeMap::new() };
+    let servers = [bare];
+    let shape = ServerShape::plain();
+    // A key we never render (agy 1.1.3's `plugin import` writes `cwd`) is real drift, not a canonical spelling.
+    std::fs::write(&path, r#"{"mcpServers":{"ez":{"command":"host","cwd":""}}}"#).unwrap();
+
+    assert!(
+        matches!(probe(&path, &["mcpServers"], &servers, shape).unwrap(), BackendState::NeedsRepair),
+        "an entry carrying a key we never render must read NeedsRepair"
+    );
+    assert_eq!(reconcile(&path, &["mcpServers"], &servers, shape).unwrap(), Outcome::Installed);
+    let back: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(back["mcpServers"]["ez"], json!({"command":"host","args":[],"env":{}}), "the extra key must be dropped on rewrite");
+
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn missing_headers_reads_healthy_and_reconcile_noops() {
+    let path = scratch("headers.json");
+    let http = remote_server("h", McpKind::Http { url: "https://x/mcp".into() });
+    let servers = [http];
+    let shape = ServerShape::plain();
+    std::fs::write(&path, r#"{"mcpServers":{"h":{"type":"http","url":"https://x/mcp"}}}"#).unwrap();
+    let before = std::fs::read(&path).unwrap();
+
+    assert!(
+        matches!(probe(&path, &["mcpServers"], &servers, shape).unwrap(), BackendState::Healthy),
+        "a remote entry missing only empty `headers` must read Healthy"
+    );
+    assert_eq!(reconcile(&path, &["mcpServers"], &servers, shape).unwrap(), Outcome::NoOp);
+    assert_eq!(std::fs::read(&path).unwrap(), before, "reconcile rewrote a headers-less remote entry");
+
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn env_null_reads_needs_repair_and_is_rewritten() {
+    let path = scratch("env-null.json");
+    let bare = McpServer { name: "ez".into(), kind: McpKind::Stdio, command: "host".into(), args: vec![], env: BTreeMap::new() };
+    let servers = [bare];
+    let shape = ServerShape::plain();
+    // `env: null` (agy 1.1.3's `plugin import` writes it) is not the `{}` we render, so it reads as drift.
+    std::fs::write(&path, r#"{"mcpServers":{"ez":{"command":"host","args":[],"env":null}}}"#).unwrap();
+
+    assert!(
+        matches!(probe(&path, &["mcpServers"], &servers, shape).unwrap(), BackendState::NeedsRepair),
+        "an `env: null` must read NeedsRepair, never Healthy"
+    );
+    assert_eq!(reconcile(&path, &["mcpServers"], &servers, shape).unwrap(), Outcome::Installed);
+    let back: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(back["mcpServers"]["ez"], json!({"command":"host","args":[],"env":{}}), "`env: null` must be rewritten to the empty object");
 
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
