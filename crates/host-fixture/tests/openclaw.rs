@@ -209,6 +209,12 @@ fn openclaw_instructions_block_lifecycle() {
     let installed = format!("{seed}\n{}", instr_block());
     assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "install must append exactly our block after a blank line");
 
+    // The Ok line pins the `instructions.is_some()` gate, the push and the user-scope path it is handed.
+    let (ok, out) = env.fixture(&["doctor"]);
+    assert!(ok, "doctor failed over a healthy install: {out}");
+    let want = format!("[ ok ] guidance block present: block present in {}", agents.display());
+    assert!(out.lines().any(|l| l == want), "the doctor report lacks an ok guidance-block check over a healthy install:\n{out}");
+
     let (ok, out) = env.fixture(&["setup", "--agent", "openclaw"]);
     assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
     assert_eq!(fs::read_to_string(&agents).unwrap(), installed, "a no-op setup must not rewrite the workspace AGENTS.md");

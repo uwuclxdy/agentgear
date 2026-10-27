@@ -375,6 +375,12 @@ fn cursor_instructions_mdc_lifecycle() {
     assert!(ok, "setup failed: {out}");
     assert_eq!(fs::read_to_string(&mdc).unwrap(), instr_mdc(), "setup must author the rule file with exactly our render");
 
+    // The Ok line pins the `instructions.is_some()` gate, the push and the user-scope path it is handed.
+    let (ok, out) = env.fixture(&["doctor"]);
+    assert!(ok, "doctor failed over a healthy install: {out}");
+    let want = format!("[ ok ] always-apply rule present: rule present at {}", mdc.display());
+    assert!(out.lines().any(|l| l == want), "the doctor report lacks an ok always-apply-rule check over a healthy install:\n{out}");
+
     let (ok, out) = env.fixture(&["setup", "--agent", "cursor"]);
     assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
     assert_eq!(fs::read_to_string(&mdc).unwrap(), instr_mdc(), "a no-op setup must not rewrite the rule");

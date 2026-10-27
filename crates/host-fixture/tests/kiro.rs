@@ -218,6 +218,12 @@ fn kiro_instructions_steering_file_lifecycle() {
     assert_eq!(out, "Installed", "first setup should install, got {out}");
     assert_eq!(fs::read_to_string(&ours).unwrap(), instr_block(), "install must write exactly our tagged block");
 
+    // The Ok line pins the `instructions.is_some()` gate, the push and the user-scope path it is handed.
+    let (ok, out) = env.fixture(&["doctor"]);
+    assert!(ok, "doctor failed over a healthy install: {out}");
+    let want = format!("[ ok ] guidance block present: block present in {}", ours.display());
+    assert!(out.lines().any(|l| l == want), "the doctor report lacks an ok guidance-block check over a healthy install:\n{out}");
+
     let (ok, out) = env.fixture(&["setup", "--agent", "kiro"]);
     assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
     assert_eq!(fs::read_to_string(&ours).unwrap(), instr_block(), "a no-op setup must not rewrite the steering file");

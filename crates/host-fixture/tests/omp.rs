@@ -351,12 +351,11 @@ fn omp_instructions_owns_only_its_file() {
     assert!(ok, "setup failed: {out}");
     assert_eq!(fs::read_to_string(&agents).unwrap(), instr_block(), "a file we created holds exactly our block, no leading blank line");
 
-    // The doctor arm is wired, not merely declared: a full report names our block.
-    // Without this, dropping the check or inverting its `instructions.is_some()` gate
-    // leaves the whole suite green.
+    // The Ok line pins the `instructions.is_some()` gate, the push and the user-scope path it is handed.
     let (ok, out) = env.fixture(&["doctor"]);
     assert!(ok, "doctor failed over a healthy install: {out}");
-    assert!(out.contains("guidance block present"), "the doctor report never checks the guidance block:\n{out}");
+    let want = format!("[ ok ] guidance block present: block present in {}", agents.display());
+    assert!(out.lines().any(|l| l == want), "the doctor report lacks an ok guidance-block check over a healthy install:\n{out}");
 
     let (ok, out) = env.fixture(&["uninstall"]);
     assert!(ok, "uninstall failed: {out}");

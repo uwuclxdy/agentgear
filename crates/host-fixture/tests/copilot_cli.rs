@@ -315,6 +315,12 @@ fn copilot_cli_instructions_owns_only_its_file() {
         "a file we created holds exactly our block, no leading blank line"
     );
 
+    // The Ok line pins the `instructions.is_some()` gate, the push and the user-scope path it is handed.
+    let (ok, out) = env.fixture(&["doctor"]);
+    assert!(ok, "doctor failed over a healthy install: {out}");
+    let want = format!("[ ok ] guidance block present: block present in {}", instructions.display());
+    assert!(out.lines().any(|l| l == want), "the doctor report lacks an ok guidance-block check over a healthy install:\n{out}");
+
     let (ok, out) = env.fixture(&["uninstall"]);
     assert!(ok, "uninstall failed: {out}");
     assert!(!instructions.exists(), "uninstall must remove the file our removal emptied");

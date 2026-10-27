@@ -169,6 +169,16 @@ fn opencode_full_lifecycle() {
         assert!(p.starts_with(&env.root), "backend wrote outside the temp root: {}", p.display());
     }
 
+    // The Ok lines pin the `instructions.is_some()` gate, both pushes and the user-scope file path.
+    let (ok, out) = env.fixture(&["doctor"]);
+    assert!(ok, "doctor failed over a healthy install: {out}");
+    let file_line = format!("[ ok ] instructions file present: {} present", instr_file.display());
+    assert!(out.lines().any(|l| l == file_line), "the doctor report lacks an ok instructions-file check over a healthy install:\n{out}");
+    assert!(
+        out.lines().any(|l| l == "[ ok ] instructions registered: registered in opencode.json `instructions[]`"),
+        "the doctor report lacks an ok instructions-registration check over a healthy install:\n{out}"
+    );
+
     // idempotent: a second identical reconcile is a true NoOp (no write).
     let (ok, out) = env.fixture(&["setup", "--agent", "opencode"]);
     assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
