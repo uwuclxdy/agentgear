@@ -1417,6 +1417,22 @@ fn fake_copilot_marketplace_add_refuses_an_existing_name() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("already registered"), "the refusal must name the existing marketplace");
 }
 
+/// Real copilot (measured 1.0.92/1.0.104) refuses `marketplace remove` of a name
+/// that is not registered; the double must fail the same way, or a backend
+/// regression that removes a name copilot never registered passes hermetically and
+/// only reds against a real CLI.
+#[test]
+fn fake_copilot_marketplace_remove_refuses_an_unregistered_name() {
+    let env = Env::new("mkt-remove-unregistered");
+
+    let mut cmd = Command::new(FAKE_COPILOT);
+    cmd.args(["plugin", "marketplace", "remove", "nope"]);
+    env.apply(&mut cmd);
+    let out = cmd.output().unwrap();
+    assert!(!out.status.success(), "removing an unregistered marketplace must fail");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("is not registered"), "the refusal must carry copilot's own wording");
+}
+
 /// The backend's post-enable re-read: when `plugin enable` exits 0 without flipping
 /// the row (real copilot's "no plugin named ..." warning), an explicit setup fails
 /// loud instead of reporting `Repaired` over a still-disabled row.

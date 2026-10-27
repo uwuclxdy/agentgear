@@ -276,11 +276,19 @@ fn enable(id: &str) -> ExitCode {
     })
 }
 
+/// Real copilot refuses `marketplace remove` of a name it has not registered
+/// (measured 1.0.92, 1.0.104); without the guard a backend regression that removes a
+/// name copilot never registered would pass hermetically.
 fn marketplace_remove(name: &str) -> ExitCode {
-    mutate(|state| {
-        state.marketplaces.retain(|m| m["name"] != json!(name));
-        state.plugins.retain(|p| p["id"].as_str().and_then(|s| s.split_once('@')).map(|(_, mkt)| mkt != name).unwrap_or(true));
-    })
+    let mut state = State::load();
+    if !state.marketplaces.iter().any(|m| m["name"] == json!(name)) {
+        eprintln!("fake-copilot: marketplace `{name}` is not registered");
+        return ExitCode::FAILURE;
+    }
+    state.marketplaces.retain(|m| m["name"] != json!(name));
+    state.plugins.retain(|p| p["id"].as_str().and_then(|s| s.split_once('@')).map(|(_, mkt)| mkt != name).unwrap_or(true));
+    state.save();
+    ExitCode::SUCCESS
 }
 
 fn config_rm(key: &str) -> ExitCode {
