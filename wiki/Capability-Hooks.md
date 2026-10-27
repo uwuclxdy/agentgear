@@ -20,7 +20,7 @@ and kiro hosts hooks only inside user-owned agent files, which agentgear will no
 | augment | `~/.augment/settings.json` `hooks.<Event>` | `[{matcher?,hooks:[{type:"command",command}]}]` | none, fires immediately |
 | cline | `<store>/Hooks/<Event>` (user) · `.clinerules/hooks/<Event>` (project) | event-named executable, no extension; stdin = event JSON | none found; scanned once present + executable |
 | codex | `hooks.json` | CC's exact shape | `/hooks` TUI content-hash trust, else `--dangerously-bypass-hook-trust`. **inert until then** |
-| copilot-cli | native — `hooks/hooks.json` copies into the tree verbatim, CC's shape | CC's exact shape, event names untouched | whether the copied file fires is unconfirmed (no headless hooks-list) |
+| copilot-cli | native — `hooks/hooks.json` loads live from the local marketplace dir, CC's shape | CC's exact shape, event names untouched | whether the loaded file fires is unconfirmed (no headless hooks-list) |
 | crush | `crush.json` root `hooks.PreToolUse[]` | flat `{command,matcher?}` | none. an `allow` decision pre-approves the permission prompt |
 | cursor | `hooks.json` | flat `{command,matcher?}` per event array | none, both scopes live |
 | devin | `config.json` `hooks.<Event>` | CC shape verbatim | loads on presence; execution gate untested |
@@ -55,8 +55,7 @@ matches the harness's own tool names (gemini, antigravity-cli), so a matcher-sco
 trigger. `ᵈ` = the matcher is dropped entirely (cline, vscode-copilot), so the hook fires for
 **every** tool, not just the matched one.
 
-`copilot-cli` is not in the map: it copies the whole `hooks/hooks.json` verbatim, CC event names
-included, rather than going through the event mapper.
+`copilot-cli` is not in the map: it loads the whole `hooks/hooks.json` from the local marketplace dir verbatim, CC event names included, rather than going through the event mapper.
 
 ## Gotchas
 
@@ -71,9 +70,7 @@ included, rather than going through the event mapper.
 - **Matcher drift (`⚠️`).** gemini's `BeforeTool`/`AfterTool` and the antigravity-cli tool events
   take a CC tool-name matcher that never matches the harness's own tool names. cline and
   vscode-copilot drop the `matcher` entirely.
-- **antigravity-cli** accepts only five event names (`PreToolUse`, `PostToolUse`, `PreInvocation`,
-  `PostInvocation`, `Stop`), so `SessionStart` is skipped and `UserPromptSubmit` lands on
-  `PreInvocation`.
+- **antigravity-cli** lists six event names at 1.4.8 (`PreToolUse`, `PostToolUse`, `SessionStart`, `PreInvocation`, `PostInvocation`, `Stop`). agentgear maps nothing onto agy's `SessionStart` until a run shows it firing, so a CC `SessionStart` hook is skipped, and `UserPromptSubmit` lands on `PreInvocation`.
 - **cline** hooks are event-named executables in a dir the CLI scans — `~/Documents/Cline/Hooks/`
   (user) and `.clinerules/hooks/` (project), a sibling of `Rules`, not a child.
 - **cursor keeps one key on uninstall.** Removal takes back every hook agentgear wrote, prunes the

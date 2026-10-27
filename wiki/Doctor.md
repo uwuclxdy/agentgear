@@ -33,12 +33,15 @@ On a zero-embed host (`embed = false`, github source) check 5 reports `github so
 
 ## copilot-cli checks
 
-The other plugin-native backend adds two:
+The other plugin-native backend adds up to five: the three below, `stale enabledPlugins key` for a dotted plugin id, and `guidance block present` when the host declares instructions:
 
 | check | passes when |
 |---|---|
-| copilot version | `copilot --version` is at or above the floor `1.0.71`, where the `plugin` lifecycle landed |
-| plugin registered | `copilot plugin list` lists `name@marketplace` |
+| copilot version | `copilot --version` is at or above the floor `1.0.92`, the first version whose `config` subcommand can clear the stale `enabledPlugins` key a disable-only uninstall leaves |
+| plugin registered | `copilot plugin list` lists `name@marketplace` from this host's own marketplace. The detail shows `v<version> (enabled)` or `(disabled)`, and a disabled install still passes. A same-named marketplace registered elsewhere fails, naming `copilot plugin marketplace remove <name>` |
+| marketplace served from pointer | our marketplace is registered at this host's `current@copilot-cli` pointer. An older agentgear's plain `current` registration fails, naming the host's own `uninstall`, then `setup`. Skipped for a github source |
+| stale enabledPlugins key | a dotted plugin id whose row is gone leaves no `enabledPlugins.<id>` key behind; a leftover one (which `copilot config --rm` cannot clear past the dot) is named as a warning, and a healthy installed dotted-id plugin's own key does not warn |
+| guidance block present | the host's instructions block sits in `copilot-instructions.md` (checked only when the host declares instructions) |
 
 An unreadable or unparseable version is a warning, not a failure, and the run proceeds. `copilot`
 off PATH means the backend is undetected, so the slice collapses to the shared `not installed on
@@ -52,7 +55,7 @@ A detected config-merge backend contributes its own slice:
 |---|---|
 | `<id>` detected | the tool's CLI or config dir is present |
 | config file | the tool's config file parses, or does not exist yet |
-| mcp server registered | the plugin's server sits under the tool's mcp key in that config |
+| mcp server registered | every server this harness's shape can write sits under the tool's mcp key. A server it cannot host is named on the same `[ ok ]` line (`skipped <name>: this harness cannot host that transport`), and a `${CLAUDE_PLUGIN_ROOT}` drop turns it into `[warn]` (see [Plugin tree](Plugin-Tree#noticing-a-skip)) |
 | mcp command on PATH | the server's bare command resolves on PATH |
 | translated files present | the commands/agents/hooks agentgear wrote for the tool are on disk |
 

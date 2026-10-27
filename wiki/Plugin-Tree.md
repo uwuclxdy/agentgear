@@ -138,19 +138,20 @@ The check covers an MCP server's `command` and `args`, and a hook's `command`. A
 
 ### Noticing a skip
 
-Nothing fails, so the signal is what [Doctor](Doctor) does not say. Its mcp check names the servers it registered:
+Doctor's mcp check names the servers it registered, and names the ones it skipped on the same line — the skip is on the line, not something to infer from silence:
 
 ```text
 [ ok ] mcp server registered: mytool registered
+[ ok ] mcp server registered: mytool, mytool-sse registered; skipped mytool-http: this harness cannot host that transport
 ```
 
-When every server is non-portable, the same check still passes, with no server named:
+When every server is non-portable (a `${CLAUDE_PLUGIN_ROOT}` command), the check names the drop and warns, since the host plugin could fix it:
 
 ```text
-[ ok ] mcp server registered: no portable mcp servers to register
+[warn] mcp server registered: no portable mcp servers to register; skipped mytool: ${CLAUDE_PLUGIN_ROOT} expands only inside Claude Code (use a bare command name)
 ```
 
-Hook checks follow the same shape where a backend has one, such as antigravity-cli's `hooks registered` reporting `no portable, mappable hooks to register`. A "no portable" detail on a plugin that declares servers or hooks means they were dropped on the portability rule.
+When the harness's shape can host none of the declared servers and at least one of them is portable, it reads `no mcp servers this harness can host` plus the skipped names. Hook checks follow the same shape where a backend has one, such as antigravity-cli's `hooks registered` reporting `no portable, mappable hooks to register`. A skipped name on a plugin that declares servers or hooks means they were dropped on the portability rule (a `${CLAUDE_PLUGIN_ROOT}` command — host-fixable, so the line warns) or on the transport the harness cannot host.
 
 ## `${AGENTGEAR_CLIENT}` per-harness client id
 
@@ -169,11 +170,7 @@ without hardcoding one harness's name:
 }
 ```
 
-For the 23 config-merge backends, only a hook's `command` and an MCP server's `command`/`args`
-expand the token — a matcher, an `env` value, or a markdown body are left verbatim. `claude` and
-`copilot-cli` substitute it across the *whole* materialized tree instead, since those two copy the
-tree verbatim rather than rendering each surface; the token can appear anywhere in those trees
-(env values, markdown, …) and still expands.
+For the 23 config-merge backends, only a hook's `command` and an MCP server's `command`/`args` expand the token — a matcher, an `env` value, or a markdown body are left verbatim. `claude` and `copilot-cli` substitute it across the *whole* materialized tree instead, since those two hand the tree over whole rather than rendering each surface; the token can appear anywhere in those trees (env values, markdown, …) and still expands.
 
 ## marketplace.json
 

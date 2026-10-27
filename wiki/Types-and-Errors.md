@@ -108,7 +108,7 @@ the tool it targets, not runtime detection.
 
 | field | type | meaning |
 |---|---|---|
-| `plugins` | `bool` | native plugin install (copies the whole tree); implies every other surface except `instructions` |
+| `plugins` | `bool` | native plugin install (`claude` copies the whole tree into its cache; `copilot-cli` loads a local-marketplace plugin live); implies every other surface except `instructions` |
 | `mcp` | `bool` | can host MCP servers |
 | `hooks` | `bool` | can host hook bindings |
 | `commands` | `bool` | can host slash-command definitions |
@@ -203,7 +203,8 @@ Every fallible call in the crate returns `Result<T, Error>` (`type Result<T> = s
 | `ClaudeNotFound` | `claude` is not on PATH |
 | `ClaudeTooOld { found, floor }` | `claude` is below the required version floor |
 | `CopilotNotFound` | `copilot` is not on PATH |
-| `CopilotTooOld { found }` | `copilot` is below 1.0.71, the plugin-management floor |
+| `CopilotTooOld { found }` | `copilot` is below 1.0.92, the plugin-management floor |
+| `CopilotMarketplaceForeign(String)` | the plugin's marketplace is not this host's to manage: `setup` over a same-named marketplace registered at another path/repo (the message names `copilot plugin marketplace remove <name>`, which uninstalls every plugin from it), a re-stage over an older agentgear's plain `current` registration (the message names the host's own `uninstall`, then setup), or an uninstall that kept a marketplace still serving another installed plugin (the message names those siblings) |
 | `Cli { bin, args, code, stderr }` | a CLI invocation exited nonzero |
 | `Json { what, source }` | a JSON parse failed |
 | `Io { context, source }` | a filesystem operation failed |

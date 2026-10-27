@@ -71,7 +71,7 @@ The file and the key path each backend writes, with the stdio body and the remot
 | augment | `~/.augment/settings.json` | `mcpServers.<name>` | `{command,args,env}`, no `type` | `{type,url,headers}` |
 | cline | `~/.cline/data/settings/cline_mcp_settings.json` | `mcpServers` (global only) | `{command,args,env}` | `{type:"streamableHttp"\|"sse",url,headers}` |
 | codex | `config.toml` | `[mcp_servers.<name>]` | `{command,args,env}` inline table | `{url}`, streamable-HTTP only |
-| copilot-cli | native — `copilot plugin install` copies the tree verbatim | n/a | native, no translation | native, no translation |
+| copilot-cli | native — loaded live from the local marketplace dir (never copied); a github marketplace is cloned | n/a | native, no translation | native, no translation |
 | crush | `crush.json` | root `mcp.<name>` | `{type:"stdio",command,args,env}` | `{type,url,headers}` |
 | cursor | `mcp.json` | `mcpServers` | `{type:"stdio",command,args,env}` | `{type,url,headers}`, `type` picks transport |
 | devin | `config.json` | `mcpServers` | `{command,args,env}` | `{url,transport}` |
@@ -92,18 +92,13 @@ The file and the key path each backend writes, with the stdio body and the remot
 
 ## Gotchas
 
-- **Portability skip.** A server whose `command` or `args` carry `${CLAUDE_PLUGIN_ROOT}` is silently
-  dropped on every config-merge backend — the token expands only inside Claude Code. Doctor's MCP
-  check then reports "no portable mcp servers to register" instead of naming a server. Write a bare
-  executable name. See [Plugin tree](Plugin-Tree#claude_plugin_root-portability).
+- **Portability skip.** A server whose `command` or `args` carry `${CLAUDE_PLUGIN_ROOT}` is dropped on every config-merge backend — the token expands only inside Claude Code. Doctor's MCP check names it on the line (`skipped <name>: ${CLAUDE_PLUGIN_ROOT} expands only inside Claude Code (use a bare command name)`), and when no portable server remains it reads "no portable mcp servers to register". Write a bare executable name. See [Plugin tree](Plugin-Tree#claude_plugin_root-portability).
 - **`${AGENTGEAR_CLIENT}` expands instead of skipping.** Each backend substitutes it for its own
   client id in the server's `command`/`args`. See
   [Plugin tree](Plugin-Tree#agentgear_client-per-harness-client-id).
 - **`pi`** ships no MCP surface at all; its `~/.pi/agent/mcp.json` belongs to a third-party extension,
   so agentgear writes nothing there.
-- **Skipped transports are silent by design.** antigravity http, and goose/zed/vscode-copilot sse,
-  have no faithful landing, so those servers are dropped rather than written to the wrong transport.
-  A remote server that never appears in the tool traces back to one of these.
+- **Skipped transports are named, not silent.** antigravity http, and goose/zed/vscode-copilot sse, have no faithful landing, so those servers are dropped rather than written to the wrong transport; doctor's MCP check names them on its ok line (`skipped <name>: this harness cannot host that transport`). A remote server that never appears in the tool traces back to one of these.
 - **A same-key entry elsewhere can outrank ours.** e.g. crush honors a same-name server in
   `$XDG_DATA_HOME/crush/crush.json` at higher precedence, which agentgear never writes.
 

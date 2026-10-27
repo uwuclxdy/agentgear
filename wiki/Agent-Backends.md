@@ -47,16 +47,7 @@ instead of dropping features silently. The trait is unsealed: an external crate 
 
 Two shapes:
 
-- **Claude Code and copilot-cli.** Both use the target tool's own plugin-management CLI
-  (`claude plugin` / `copilot plugin`): materialize the embedded tree, add or update the
-  marketplace source, install or update the plugin, read the result back through the CLI's own
-  list command. Full mcp, hooks, commands, agents, and skills, since the tool copies the whole
-  tree itself, so there is no per-surface translation and no write outside that model (the one
-  former exception — a host-declared [status line](Capability-Status-Line) in the user's own
-  `settings.json` — is retired; users wire a line manually). copilot-cli is user-scope only (no
-  `--scope` on the `copilot` CLI) and can't pin a GitHub ref (`owner/repo@ref` is misparsed; only
-  the bare repo registers, tracking copilot's default branch). Claude Code details:
-  [How It Works](How-It-Works).
+- **Claude Code and copilot-cli.** Both use the target tool's own plugin-management CLI (`claude plugin` / `copilot plugin`): materialize the embedded tree, add the marketplace source, install the plugin (claude also updates it; copilot re-stages the pointer), read the result back through the CLI's own list command. Full mcp, hooks, commands, agents, and skills, since the tool reads the whole tree itself (claude copies it into its cache; copilot loads a local-marketplace plugin live), so there is no per-surface translation and no write outside that model (the one former exception — a host-declared [status line](Capability-Status-Line) in the user's own `settings.json` — is retired; users wire a line manually). copilot-cli is user-scope only (no `--scope` on the `copilot` CLI) and can't pin a GitHub ref (`owner/repo@ref` is misparsed; only the bare repo registers, tracking copilot's default branch). Claude Code details: [How It Works](How-It-Works).
 - **The 23 config-merge agents.** None have a plugin or marketplace concept, so each backend
   read-modify-writes the tool's own config file: mcp servers keyed by name, hooks/commands/agent
   defs translated under a plugin-name-prefixed path. Only the entries agentgear wrote get touched,

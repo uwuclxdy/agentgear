@@ -34,7 +34,7 @@ per-surface translation); every column reads native for both.
 | cline | ✓ | ✓ (CC matcher dropped) | ✓ (workflows) | — (surface unimplemented) | — (surface unimplemented) |
 | opencode | ✓ | — (JS/TS plugin API only) | ✓ | ✓ | — (not translated) |
 | omp | ✓ | — (TS extension API only) | ✓ | ✓ | — (not translated) |
-| kimi | ✓ | ✓ | — (slash-command analog is a skill) | — (built-in sub-agents only) | ✓ |
+| kimi | ✓ | ✓ | — (slash-command analog is a skill) | — (user agent profiles exist at 2.3.3; not written) | ✓ |
 | goose | ✓ | ✓ | — | — | ✓ |
 | kiro | ✓ | — (kiro hosts hooks only inside user-owned agent configs; no target agentgear can own) | — | — | ✓ |
 | antigravity-cli | ✓ | ✓ (a CC tool-name matcher never matches `agy`'s own) | — | — | — |
@@ -45,15 +45,7 @@ per-surface translation); every column reads native for both.
 | amp | ✓ | — | — | — | — |
 | pi | — (no native mcp surface) | — | — | — | — |
 
-Every `✓` above carries one filter: `${CLAUDE_PLUGIN_ROOT}` expands only inside Claude Code's own
-runtime, so a config-merge backend skips any mcp server whose **command or args** carry the token,
-and any hook whose command does, rather than write an entry that would launch the literal path. The
-canonical plugin-shipped server puts the token in `args`
-(`{"command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/server.js"]}`), so that shape is the one that
-gets dropped everywhere except Claude Code. A `✓` says the surface translates; it does not promise
-every entry in it survives. `claude` and `copilot-cli` never run this filter, since both copy the
-tree verbatim: Claude Code expands the token in its own runtime, and whether copilot's raw-shape
-copy of `hooks/hooks.json` fires at all is unconfirmed.
+Every `✓` above carries one filter: `${CLAUDE_PLUGIN_ROOT}` expands only inside Claude Code's own runtime, so a config-merge backend skips any mcp server whose **command or args** carry the token, and any hook whose command does, rather than write an entry that would launch the literal path. The canonical plugin-shipped server puts the token in `args` (`{"command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/server.js"]}`), so that shape is the one that gets dropped everywhere except Claude Code. A `✓` says the surface translates; it does not promise every entry in it survives. `claude` and `copilot-cli` never run this filter, since both hand the tree over whole: Claude Code expands the token in its own runtime, and whether copilot fires its raw-shape `hooks/hooks.json` at all is unconfirmed.
 
 Two more surfaces sit outside these five, both declared by the host rather than shipped in the
 tree, so neither rides the components IR:
@@ -75,7 +67,7 @@ tree.
 | harness | user config file |
 |---|---|
 | claude | `<config>/plugins/` (via `claude plugin`; `CLAUDE_CONFIG_DIR`) |
-| copilot-cli | `~/.copilot/installed-plugins/<mkt>/<plugin>/` (via `copilot plugin`; native, whole tree copied; `COPILOT_HOME`) |
+| copilot-cli | `~/.copilot/` (via `copilot plugin`; native, loaded live from the local marketplace dir — never copied — and a github marketplace is cloned; `COPILOT_HOME`) |
 | amp | `~/.config/amp/settings.json` |
 | antigravity | `~/.gemini/config/mcp_config.json` |
 | antigravity-cli | `~/.gemini/config/` (`mcp_config.json`, `hooks.json`) |

@@ -28,7 +28,7 @@ The plugin tree ships as a compressed `.tar.br` blob baked into the binary (a pu
   markers/<hash>                      per-(plugin, scope, project) stamp
 ```
 
-The tree is written to a temp sibling and fsynced, then renamed onto the target, which is created once so a rename never lands on a non-empty directory. `current@claude` is flipped by renaming a fresh pointer over it. A crash mid-materialize leaves the previous `current@claude` intact. The directory name carries a hash of the tree's own bytes, so an unchanged tree is reused as-is and a tree edited at an unchanged plugin version still lands in its own directory and gets the pointer; the version's superseded directories are then pruned, and other versions are kept. `marketplace add` points at `current@claude`, which Claude Code copies into its own cache keyed by version. A same-version tree change is therefore handed back to the CLI as an uninstall + install, the only sequence that replaces that copy. The client scoping keeps Claude Code and copilot-cli from colliding on one shared dir, since both copy the tree verbatim and each needs its own `${AGENTGEAR_CLIENT}` substitution.
+The tree is written to a temp sibling and fsynced, then renamed onto the target, which is created once so a rename never lands on a non-empty directory. `current@claude` is flipped by renaming a fresh pointer over it. A crash mid-materialize leaves the previous `current@claude` intact. The directory name carries a hash of the tree's own bytes, so an unchanged tree is reused as-is and a tree edited at an unchanged plugin version still lands in its own directory and gets the pointer; the version's superseded directories are then pruned, and other versions are kept. `marketplace add` points at `current@claude`, which Claude Code copies into its own cache keyed by version. A same-version tree change is therefore handed back to the CLI as an uninstall + install, the only sequence that replaces that copy. The client scoping keeps Claude Code and copilot-cli from colliding on one shared dir, since each needs its own `${AGENTGEAR_CLIENT}` substitution (claude copies the tree into its cache; copilot loads a local-marketplace plugin live).
 
 ## Self-heal state table
 
@@ -38,17 +38,17 @@ The hook ships inside the plugin, so `self_heal` only ever runs on an install th
 |---|---|---|
 | absent | absent | no-op |
 | absent | present, healthy | adopt: write the marker |
-| absent | present, broken or disabled | adopt: repair a break (a disable stays disabled), write the marker |
+| absent | present, broken or disabled | adopt: repair a break (a deliberate disable stays disabled), write the marker |
 | present | absent (clean uninstall) | clear the marker, no-op (do not resurrect) |
 | present | disabled | no-op (never re-enable) |
 | present | broken, stale, or serving a tree the binary no longer ships | repair or update |
 | present | healthy, current, and serving the binary's own tree | no-op |
 
-The marker records the tree hash the harness was last handed, and Claude Code and copilot-cli read it back. With the marker gone there is nothing to check their copy against, so at the running binary's own version those two repair where the table says adopt: the tree is handed over again and the hash recorded, and the session after that is a no-op. They still adopt where no hash is needed, meaning a GitHub source and an install newer than the running binary that another build of the same tool owns. Every other harness compares its own config directly and adopts as written.
+The marker records the tree hash the harness was last handed, and Claude Code and copilot-cli read it back. With the marker gone there is nothing to check the harness's tree against, so at the running binary's own version those two repair where the table says adopt: the tree is handed over again and the hash recorded, and the session after that is a no-op. They still adopt where no hash is needed, meaning a GitHub source and an install newer than the running binary that another build of the same tool owns. Every other harness compares its own config directly and adopts as written.
 
 Two invariants sit on top:
 
-- **Never re-enable.** A disabled plugin is a deliberate choice; self-heal repairs structure, not enable state. An explicit `install`/`update` does re-enable, because that is a direct user request.
+- **Never re-enable.** A disabled plugin is a deliberate choice, and self-heal never re-enables one. The one enable self-heal does is copilot-cli finishing a half-install: a row copilot lists `(disabled)` but never recorded as installed (no `enabledPlugins` key), left by a first install that failed after `marketplace add`. An explicit `install`/`update` does re-enable, because that is a direct user request.
 - **Monotonic.** A registration at or above the embedded version is left alone when another build of the same tool owns it, so two coexisting binaries (a system package and a `cargo install` build) do not fight over the version each session, whether or not they share a data directory. What a newer version does not buy is protection for a registration nobody owns: one that is broken serves nothing, and a GitHub-sourced one under a binary that materializes its own tree serves the repo rather than any build. Both are repaired. Claude Code only: copilot-cli freezes on the version alone.
 
 ## Restart-pending flag

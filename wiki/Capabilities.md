@@ -13,9 +13,7 @@ For the mirror axis — one harness at a time, everything it does — see
 
 How a capability reaches a harness depends on which of two models the backend uses.
 
-- **Plugin-native** (`claude`, `copilot-cli`). agentgear materializes the plugin tree and hands it
-  to the tool's own plugin CLI (`claude plugin` / `copilot plugin`). The tool copies the whole tree
-  and reads every surface itself, so there is no per-capability translation for the five tree surfaces — instructions is the one render either way: `claude` delivers the text through the MCP `initialize.instructions` channel (no file), `copilot-cli` writes the shared tagged block into `$COPILOT_HOME/copilot-instructions.md` (see [Instructions](Capability-Instructions)).
+- **Plugin-native** (`claude`, `copilot-cli`). agentgear materializes the plugin tree and hands it to the tool's own plugin CLI (`claude plugin` / `copilot plugin`). `claude` copies the whole tree into its own cache; `copilot-cli` loads a local-marketplace plugin live from its directory (never copied) and clones a github marketplace. Either way the tool reads every surface itself, so there is no per-capability translation for the five tree surfaces — instructions is the one render either way: `claude` delivers the text through the MCP `initialize.instructions` channel (no file), `copilot-cli` writes the shared tagged block into `$COPILOT_HOME/copilot-instructions.md` (see [Instructions](Capability-Instructions)).
 - **Config-merge** (the other 23 backends). No tool here has a plugin concept, so each backend
   read-modify-writes the tool's own config file, rendering each capability into that tool's native
   shape. A backend writes a capability only when the tool has a surface for it; a missing surface is

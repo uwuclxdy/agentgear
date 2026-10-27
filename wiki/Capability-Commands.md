@@ -13,7 +13,7 @@ analog as a skill (kimi) rather than a flat command dir.
 | harness | where written | notes |
 |---|---|---|
 | claude | `commands/**/*.md` (plugin tree, native) | nested paths kept, name is the file stem |
-| copilot-cli | native, copied verbatim into `~/.copilot/installed-plugins/` | whether copilot's engine loads a plugin's `commands/` dir is unconfirmed |
+| copilot-cli | native, loaded live from the local marketplace dir (never copied) | `commands/*.md` load as skills (`copilot skill list` shows them under "Plugin skills") |
 | augment | `~/.augment/commands/<plugin>-<name>.md` | tool also reads `~/.claude/commands/` natively |
 | codex | `prompts/<plugin>-<name>.md` | user scope only, flat (no subdirs scanned) |
 | crush | `~/.config/crush/commands/<plugin>/*.md` (user) · `<project>/.crush/commands/<plugin>/*.md` (project) | body only (frontmatter dropped); **TUI palette only, never loaded by `crush run`** |

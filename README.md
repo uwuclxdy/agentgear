@@ -38,7 +38,7 @@ $ mytool doctor
 - **Self-heal that respects the user.** A SessionStart hook repairs a broken install without overriding a deliberate choice: it never resurrects an uninstall, re-enables a disable, or downgrades a newer install.
 - **Tells the model when to reload.** After an out-of-band `setup update`, a `UserPromptSubmit` hook surfaces a restart-pending flag so the model tells the user to run `/reload-plugins`; the next session's `self_heal` clears it once the new version is loaded.
 - **Atomic materialize.** The plugin tree ships as a compressed blob (a pure-Rust brotli archive, roughly a quarter of the raw text size). It decompresses into a content-keyed versioned directory with an atomic pointer flip, so a crash mid-install leaves the previous state intact.
-- **A changed tree lands even without a version bump.** Claude Code and copilot copy a plugin tree into their own cache once, at install time, and neither refreshes that copy on its own at an unchanged version. The directory a tree stages into is keyed on the tree's own bytes, and each backend compares that against what it last handed its harness, so an edited plugin reaches a box on its next session instead of waiting for a release.
+- **A changed tree lands even without a version bump.** Claude Code copies a plugin tree into its own cache once, at install time, and does not refresh that copy on its own at an unchanged version; copilot loads a local-marketplace plugin live from its directory (never copied), so an edit reaches it on its next session. The directory a tree stages into is keyed on the tree's own bytes, and each backend compares that against what it last handed its harness, so an edited plugin reaches a box on its next session instead of waiting for a release.
 - **Compile-time version guard.** A `build.rs` helper fails the build when `plugin.json` and `CARGO_PKG_VERSION` disagree, keeping the version usable as a pin for the release tag, a GitHub `ref`, and the never-downgrade comparison.
 
 ## How it works
@@ -108,7 +108,7 @@ if MyHost::heal_needed_report(session)?.needed() {
 
 The plugin tree lives at `<crate>/plugin/.claude-plugin/plugin.json` by default, with its `version` equal to `CARGO_PKG_VERSION`.
 
-The Claude Code backend needs `claude` ≥ 2.1.196 on PATH at runtime; the copilot-cli backend needs `copilot` ≥ 1.0.71 (its `plugin` subcommand didn't exist before). `setup` fails the version gate with a clear error below that version. The config-merge backends have no CLI requirement.
+The Claude Code backend needs `claude` ≥ 2.1.196 on PATH at runtime; the copilot-cli backend needs `copilot` ≥ 1.0.92 (the first version whose `config` subcommand can clear the stale `enabledPlugins` key a disable-only uninstall leaves). `setup` fails the version gate with a clear error below that version. The config-merge backends have no CLI requirement.
 
 ## Customization
 

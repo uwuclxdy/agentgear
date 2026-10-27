@@ -4,17 +4,14 @@ A skill is a `<plugin>/skills/<name>/` directory with a `SKILL.md` (plus any ass
 capability the agent loads on demand. agentgear writes each as a loose, tag-owned `<name>/SKILL.md`
 in the target tool's skill root through one shared renderer.
 
-**13 backends serve skills.** `claude` and `copilot-cli` carry them natively (the whole tree copies
-verbatim). The other **11 — crush, cursor, devin, droid, goose, kilo, kimi, kiro, openclaw,
-qwen-code, zed — render the `SkillDir` IR through the shared `skillsdir` renderer** as a tag-owned
-`<name>/SKILL.md`.
+**13 backends serve skills.** `claude` and `copilot-cli` carry them natively (claude copies the whole tree into its cache; copilot-cli loads a local-marketplace plugin live from its directory). The other **11 — crush, cursor, devin, droid, goose, kilo, kimi, kiro, openclaw, qwen-code, zed — render the `SkillDir` IR through the shared `skillsdir` renderer** as a tag-owned `<name>/SKILL.md`.
 
 ## Where each skill lands
 
 | harness | where written | notes |
 |---|---|---|
 | claude | `<plugin>/skills/<name>/` (native) | `SKILL.md` is the one thing CC hot-reloads |
-| copilot-cli | native, verbatim | live-proven (`copilot skill list` sees a plugin skill) |
+| copilot-cli | native, loaded live from the local marketplace dir | live-proven (`copilot skill list` sees a plugin skill) |
 | crush | `~/.config/crush/skills/<name>/SKILL.md` (user) · `<project>/.crush/skills/<name>/SKILL.md` (project) | tag-owned |
 | cursor | `~/.cursor/skills/<name>/SKILL.md` (both scopes) | tag-owned |
 | devin | shared `~/.agents/skills/<name>/SKILL.md` | tag-owned; one of devin's native scan roots |

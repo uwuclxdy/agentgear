@@ -18,7 +18,7 @@ honors.
 | augment | `auggie` on PATH, or `~/.augment/` | `~/.augment/` | `<cwd>/.augment/` (user-only backend) | none |
 | cline | `cline` on PATH, or `$CLINE_DIR`/`~/.cline`, `~/Documents/Cline`, legacy globalStorage | `$CLINE_DIR` else `~/.cline` + `~/Documents/Cline/` | `.cline/` + `.clinerules/` at repo root | `CLINE_MCP_SETTINGS_PATH` → `CLINE_DATA_DIR` → `CLINE_DIR` |
 | codex | `codex` on PATH, or `~/.codex`/`$CODEX_HOME` dir | `~/.codex/` | `<cwd>/.codex/`, trust-gated | `CODEX_HOME` (checked first) |
-| copilot-cli | `copilot` on PATH only (version floor 1.0.71) | `~/.copilot/` | none targeted (user-only install) | `COPILOT_HOME` (replaces the whole path) |
+| copilot-cli | `copilot` on PATH only (version floor 1.0.92) | `~/.copilot/` | none targeted (user-only install) | `COPILOT_HOME` (replaces the whole path) |
 | crush | `crush` on PATH, or `~/.config/crush` | `~/.config/crush` (Win `%LOCALAPPDATA%\crush`) | `<project>/crush.json` (walks cwd→git root) | `CRUSH_GLOBAL_CONFIG` (dir) |
 | cursor | `cursor-agent`/`cursor` on PATH, else `~/.cursor` | `~/.cursor` (HOME-keyed) | `<cwd>/.cursor`, no gate | none |
 | devin | `devin` on PATH, or `~/.config/devin`, or project `.devin/`/`.cognition/` | `~/.config/devin` (Win `%APPDATA%\devin`) | `.devin/` under cwd | — |

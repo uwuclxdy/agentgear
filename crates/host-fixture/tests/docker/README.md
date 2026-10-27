@@ -37,6 +37,9 @@ owned by that harness's workflow, disjoint from every other file:
 ## notes
 
 - keep the assertion inside the container so the leg is hermetic (no host state).
+- every leg dir must be classified exactly once in `pin-staleness.sh`: `LEGS` (pinned, checked) or `UNPINNED` (never parsed); a leg in neither list, in both, or listed without its Dockerfile fails that run. the scheduled `.github/workflows/pin-staleness.yml` compares every `LEGS` pin with its vendor daily and fails naming every stale pin.
+- the qwen-code and antigravity-cli legs run the harness's own writer between `setup` and `uninstall` (`qwen mcp add -s user`, `agy mcp add`), asserting our entries, the user's seeded keys and the native entry all survive it — the two-independent-writers proof no hermetic test can reach.
+- the augment, gemini and kimi legs fail on a nonzero exit from their native check and assert the mcp and hook bodies by parsed content (exact keys, `command`+`args`) instead of a `grep -q 'ez-fixture'` presence substring; absence after uninstall and the skill/command files are still checked by substring or file existence.
 - point the harness at a throwaway `$HOME` / config dir inside the image; never the
   builder's real config.
 - CI wires one matrix leg per harness calling `run.sh <harness>`; each Dockerfile lands with its backend.

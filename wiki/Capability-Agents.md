@@ -4,17 +4,14 @@ An agent is an `agents/**/*.md` file — a named subagent persona with its own i
 copies each into the target tool's own subagent directory, translating the frontmatter (injecting a
 `mode: subagent` or a required `name` where the tool needs one) and prefixing the plugin name.
 
-**13 backends host agents.** The rest have no file-writable subagent surface: some expose only
-built-in agents (kimi), some model subagents as recipes or isolated workspaces (goose, openclaw),
-some a rich JSON schema a markdown translate would lose (kiro), and crush's file surface is still
-open upstream (issue #1807).
+**13 backends host agents.** The rest have no file-writable subagent surface: some have a surface agentgear does not write yet (kimi 2.3.3's user agent profiles under `$KIMI_CODE_HOME/agents` and `~/.agents/agents`), some model subagents as recipes or isolated workspaces (goose, openclaw), some a rich JSON schema a markdown translate would lose (kiro), and crush's file surface is still open upstream (issue #1807).
 
 ## Where each agent lands
 
 | harness | where written | notes |
 |---|---|---|
 | claude | `agents/**/*.md` (native) | — |
-| copilot-cli | native, copied verbatim | untranslated CC frontmatter, live-proven |
+| copilot-cli | native, loaded live from the local marketplace dir (never copied) | untranslated CC frontmatter, live-proven |
 | augment | `~/.augment/agents/<plugin>-<name>.md` | `name` required, plugin-prefixed |
 | codex | `agents/<plugin>-<name>.toml` | `name` / `description` / `developer_instructions` |
 | cursor | `~/.cursor/agents/<plugin>-<name>.md` | cursor cross-reads `~/.claude/agents/` + `~/.codex/agents/` |
