@@ -95,6 +95,13 @@ fn writable(servers: &[McpServer], shape: ServerShape) -> Vec<&McpServer> {
     servers.iter().filter(|s| s.is_portable() && render_server(s, shape).is_some()).collect()
 }
 
+/// The names [`writable`] yields. doctor's "mcp server registered" check keys off
+/// the same set reconcile writes, so a server the dialect skips by design is never
+/// demanded as missing.
+pub(crate) fn writable_names(servers: &[McpServer], shape: ServerShape) -> Vec<&str> {
+    writable(servers, shape).into_iter().map(|s| s.name.as_str()).collect()
+}
+
 /// Render one server body per `shape`; `None` when the dialect has no faithful
 /// landing for the server's kind. A `None` server is skipped exactly like a
 /// non-portable one — never written, never owned, never removed — so rendering is

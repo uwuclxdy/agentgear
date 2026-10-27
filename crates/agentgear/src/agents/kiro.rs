@@ -36,6 +36,9 @@ use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 pub(crate) struct KiroBackend;
 
+/// Kiro's mcp body is the shared Plain `{command,args,env}` shape.
+const SHAPE: ServerShape = ServerShape::plain();
+
 impl AgentBackend for KiroBackend {
     fn id(&self) -> &'static str {
         "kiro"
@@ -72,7 +75,7 @@ impl AgentBackend for KiroBackend {
         // resolved for this agent (rehydrated `--path`, else the compile-time
         // default), so probe and reconcile render identical bytes.
         let comp = plugin.components(source)?.with_client(self.id());
-        let mcp = mcpjson::probe(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
+        let mcp = mcpjson::probe(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let skills = skillsdir::probe(&kiro_base(scope)?.join("skills"), plugin, &comp.skills)?;
         let instructions = match instructions_file(scope, plugin.name)? {
             Some(path) => agentsmd::probe(&path, plugin)?,
@@ -83,7 +86,7 @@ impl AgentBackend for KiroBackend {
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
         let comp = plugin.components(&desired.source)?.with_client(self.id());
-        let mut changed = mcpjson::reconcile(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        let mut changed = mcpjson::reconcile(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= skillsdir::reconcile(&kiro_base(scope)?.join("skills"), plugin, &comp.skills)?;
         if let Some(path) = instructions_file(scope, plugin.name)? {
             changed |= agentsmd::reconcile(&path, plugin)?;
@@ -93,7 +96,7 @@ impl AgentBackend for KiroBackend {
 
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
         let comp = plugin.components(source)?.with_client(self.id());
-        let mut changed = mcpjson::remove(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        let mut changed = mcpjson::remove(&mcp_path(scope)?, &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= skillsdir::remove(&kiro_base(scope)?.join("skills"), plugin, &comp.skills)?;
         if let Some(path) = instructions_file(scope, plugin.name)? {
             changed |= agentsmd::remove(&path, plugin)?;
@@ -176,8 +179,10 @@ fn report_checks(backend: &KiroBackend, plugin: &Plugin, source: &Source) -> Vec
         return checks;
     };
 
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
     checks.push(report::check_mcp_registered(
         &comp.mcp_servers,
+        &writable,
         root.as_ref(),
         &["mcpServers"],
         "not in mcp.json",

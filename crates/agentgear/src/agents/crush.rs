@@ -48,7 +48,7 @@ use super::mcpjson::{self, ServerShape};
 use super::report;
 use super::skillsdir;
 use super::{AgentBackend, BackendState};
-use crate::components::{HookBinding, MarkdownDoc, McpServer, portable_names};
+use crate::components::{HookBinding, MarkdownDoc, McpServer};
 // The unit test builds server fixtures with `super::McpKind`; production no longer
 // references it directly (the mcp checks moved to `report`), so the re-export is
 // test-only to avoid an unused-import warning.
@@ -59,6 +59,10 @@ use crate::error::{Error, IoContext, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 pub(crate) struct CrushBackend;
+
+/// Crush's mcp body carries an explicit per-server `type` (enum `stdio|http|sse`),
+/// the shared Typed shape.
+const SHAPE: ServerShape = ServerShape::typed();
 
 impl AgentBackend for CrushBackend {
     fn id(&self) -> &'static str {
@@ -95,7 +99,7 @@ impl AgentBackend for CrushBackend {
         // compile-time default), so probe and reconcile render identical bytes.
         let comp = plugin.components(source)?.with_client(self.id());
         let config = config_file(scope)?;
-        let mcp = mcpjson::probe_surface(&config, &["mcp"], &comp.mcp_servers, ServerShape::typed())?;
+        let mcp = mcpjson::probe_surface(&config, &["mcp"], &comp.mcp_servers, SHAPE)?;
         let hooks = report::probe_json_entries(&config, &hook_entries(&comp.hooks))?;
         let skills = skillsdir::probe(&skills_root(scope)?, plugin, &comp.skills)?;
         let cmd_root = commands_root(scope)?.join(plugin.name);
@@ -123,7 +127,7 @@ impl AgentBackend for CrushBackend {
 
     fn remove(&self, plugin: &Plugin, scope: &Scope, source: &Source) -> Result<Outcome> {
         let comp = plugin.components(source)?.with_client(self.id());
-        let mut changed = remove_config(&config_file(scope)?, &portable_names(&comp.mcp_servers), &comp.hooks)?;
+        let mut changed = remove_config(&config_file(scope)?, &mcpjson::writable_names(&comp.mcp_servers, SHAPE), &comp.hooks)?;
         changed |= skillsdir::remove(&skills_root(scope)?, plugin, &comp.skills)?;
         // We own the whole `commands/<plugin>/` subtree (crush walks it recursively),
         // so a recursive drop is exact and never reaches the user's own commands.
@@ -264,7 +268,7 @@ fn reconcile_config(config: &Path, servers: &[McpServer], hooks: &[HookBinding])
         if !portable.is_empty() {
             let mcp = json_obj_at(root, &["mcp"]);
             for server in &portable {
-                if let Some(body) = mcpjson::render_server(server, ServerShape::typed()) {
+                if let Some(body) = mcpjson::render_server(server, SHAPE) {
                     if mcp.get(&server.name).is_some_and(|existing| mcpjson::matches_rendered(&body, existing)) {
                         continue;
                     }
@@ -392,8 +396,10 @@ fn report_checks(backend: &CrushBackend, plugin: &Plugin, source: &Source) -> Ve
         return checks;
     };
 
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
     checks.push(report::check_mcp_registered(
         &comp.mcp_servers,
+        &writable,
         root.as_ref(),
         &["mcp"],
         "not under `mcp` in crush.json",

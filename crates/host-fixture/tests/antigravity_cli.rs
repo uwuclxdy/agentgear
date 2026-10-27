@@ -313,3 +313,26 @@ fn antigravity_cli_teardown_with_nothing_installed_writes_nothing() {
     assert_eq!(out, "NoOp", "a teardown with nothing of ours to undo must report no change, got {out}");
     assert_eq!(fs::read_to_string(&env.settings).unwrap(), before, "teardown wrote into a settings file it had nothing to undo in");
 }
+
+/// The fixture declares an http server, which agy has no landing for, so setup
+/// never writes it; doctor must judge only the servers this backend writes.
+#[test]
+fn doctor_never_demands_a_server_the_shape_skips() {
+    let env = Env::new("doctor-skipped-http");
+    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity-cli"]);
+    assert!(ok, "setup failed: {out}");
+
+    let (_, out) = env.fixture(&["doctor"]);
+    let section: Vec<&str> = out
+        .lines()
+        .skip_while(|l| !l.starts_with("[ ok ] antigravity-cli detected"))
+        .skip(1)
+        .take_while(|l| !l.ends_with("skipped"))
+        .collect();
+    let mcp = section.iter().find(|l| l.contains("] mcp server registered:")).unwrap_or_else(|| panic!("no mcp check in:\n{out}"));
+    assert_eq!(
+        *mcp,
+        "[ ok ] mcp server registered: ez-fixture, ez-fixture-sse registered; skipped ez-fixture-http: this harness cannot host that transport",
+        "doctor must pass with every written server present and name the skipped one, in:\n{out}"
+    );
+}

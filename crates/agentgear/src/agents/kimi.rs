@@ -318,8 +318,10 @@ fn report_checks(backend: &KimiBackend, plugin: &Plugin, source: &Source) -> Vec
         return checks;
     };
 
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
     checks.push(report::check_mcp_registered(
         &comp.mcp_servers,
+        &writable,
         root.as_ref(),
         &["mcpServers"],
         "not in mcp.json",

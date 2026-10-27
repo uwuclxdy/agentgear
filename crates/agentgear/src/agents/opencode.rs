@@ -423,8 +423,10 @@ fn report_checks(backend: &OpencodeBackend, plugin: &Plugin, source: &Source) ->
         return checks;
     };
 
+    let writable = portable_names(&comp.mcp_servers);
     checks.push(report::check_mcp_registered(
         &comp.mcp_servers,
+        &writable,
         root.as_ref(),
         &["mcp"],
         "not under `mcp` in opencode.json",

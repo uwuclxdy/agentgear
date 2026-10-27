@@ -66,6 +66,9 @@ use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 pub(crate) struct OmpBackend;
 
+/// Omp's mcp body is the shared Plain `{command,args,env}` shape.
+const SHAPE: ServerShape = ServerShape::plain();
+
 impl AgentBackend for OmpBackend {
     fn id(&self) -> &'static str {
         "omp"
@@ -103,7 +106,7 @@ impl AgentBackend for OmpBackend {
         // render identical bytes.
         let comp = plugin.components(source)?.with_client(self.id());
         let base = surface_base(scope)?;
-        let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
+        let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let commands =
             report::probe_files(&expected_docs(&base.join("commands"), plugin.name, &comp.commands, |doc| doc.raw.clone()), |_, _| true)?;
         // Retired agents own nothing on disk, so the surface contributes `None` (not
@@ -129,7 +132,7 @@ impl AgentBackend for OmpBackend {
         let base = surface_base(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
 
         // Commands are markdown + frontmatter in both CC and omp (omp reads
         // `frontmatter.description` or the first body line), so the verbatim bytes
@@ -157,7 +160,7 @@ impl AgentBackend for OmpBackend {
         let base = surface_base(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
 
         // `commands/` and `agents/` are shared with the user's own files (omp scans
         // them flat), so we delete only our plugin-prefixed files by name — never a
@@ -356,8 +359,10 @@ fn report_checks(backend: &OmpBackend, plugin: &Plugin, source: &Source) -> Vec<
         return checks;
     };
 
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
     checks.push(report::check_mcp_registered(
         &comp.mcp_servers,
+        &writable,
         root.as_ref(),
         &["mcpServers"],
         "not in mcp.json",

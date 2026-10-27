@@ -368,8 +368,10 @@ fn report_checks(backend: &DevinBackend, plugin: &Plugin, source: &Source) -> Ve
         return checks;
     };
 
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
     checks.push(report::check_mcp_registered(
         &comp.mcp_servers,
+        &writable,
         root.as_ref(),
         &["mcpServers"],
         "not in config.json",

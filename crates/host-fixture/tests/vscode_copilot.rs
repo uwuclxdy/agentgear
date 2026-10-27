@@ -109,3 +109,36 @@ fn vscode_copilot_is_detected_but_skipped_at_user_scope() {
     assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
     assert!(!env.vscode.join("mcp.json").exists(), "second setup wrote a user-scope mcp.json");
 }
+
+/// The fixture declares an sse server, which vscode-copilot has no faithful
+/// landing for, so project-scope setup never writes it; doctor must judge only
+/// the servers this backend writes. Doctor has no `--project` flag — this
+/// backend resolves the project root from the current directory — so the doctor
+/// run is pinned to the same project root setup wrote.
+#[test]
+fn vscode_copilot_doctor_never_demands_a_server_the_shape_skips() {
+    let env = Env::new("doctor-skipped-sse");
+    let project = env.root.join("project");
+    fs::create_dir_all(&project).unwrap();
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "vscode-copilot", "--project", project.to_str().unwrap()]);
+    assert!(ok, "setup failed: {out}");
+
+    let mut cmd = Command::new(BIN);
+    cmd.args(["doctor"]).current_dir(&project);
+    env.apply(&mut cmd);
+    let out = cmd.output().unwrap();
+    let out = String::from_utf8_lossy(&out.stdout).trim().to_string();
+
+    let mcp = out
+        .lines()
+        .skip_while(|l| !l.starts_with("[ ok ] vscode-copilot detected"))
+        .skip(1)
+        .find(|l| l.contains("] mcp server registered:"))
+        .unwrap_or_else(|| panic!("no mcp check in:\n{out}"));
+    assert_eq!(
+        mcp,
+        "[ ok ] mcp server registered: ez-fixture, ez-fixture-http registered; skipped ez-fixture-sse: this harness cannot host that transport",
+        "doctor must pass with every written server present and name the skipped one, in:\n{out}"
+    );
+}

@@ -33,7 +33,7 @@ use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remov
 use super::mcpjson::{self, ServerShape};
 use super::report;
 use super::{AgentBackend, BackendState};
-use crate::components::{HookBinding, MarkdownDoc, McpServer, portable_names};
+use crate::components::{HookBinding, MarkdownDoc, McpServer};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
@@ -45,6 +45,9 @@ pub(crate) struct AugmentBackend;
 const COMMAND_KEYS: &[&str] = &["description", "argument-hint", "model"];
 /// CC agent frontmatter keys augment recognises (`name` is set separately, namespaced).
 const AGENT_KEYS: &[&str] = &["description", "color", "model", "tools", "disabled_tools"];
+
+/// Augment's mcp body is the shared Plain `{command,args,env}` shape.
+const SHAPE: ServerShape = ServerShape::plain();
 
 impl AgentBackend for AugmentBackend {
     fn id(&self) -> &'static str {
@@ -82,7 +85,7 @@ impl AgentBackend for AugmentBackend {
         let comp = plugin.components(source)?.with_client(self.id());
         let base = augment_dir(scope)?;
         let settings = base.join("settings.json");
-        let mcp = mcpjson::probe_surface(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
+        let mcp = mcpjson::probe_surface(&settings, &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let hooks = report::probe_json_entries(&settings, &hook_entries(&comp.hooks))?;
         let commands = report::probe_files(
             &expected_docs(&base.join("commands"), plugin.name, &comp.commands, |doc| render_command(doc).into_bytes()),
@@ -128,7 +131,7 @@ impl AgentBackend for AugmentBackend {
         let base = augment_dir(scope)?;
 
         let mut changed = false;
-        changed |= remove_from_settings(&base.join("settings.json"), &portable_names(&comp.mcp_servers), &comp.hooks)?;
+        changed |= remove_from_settings(&base.join("settings.json"), &mcpjson::writable_names(&comp.mcp_servers, SHAPE), &comp.hooks)?;
 
         // `commands/` and `agents/` are shared with the user's own files, so we delete
         // only our plugin-prefixed files by name (never a `remove_dir_all`).
@@ -249,7 +252,7 @@ fn reconcile_settings(settings: &Path, servers: &[McpServer], hooks: &[HookBindi
         if !portable_servers.is_empty() {
             let mcp = json_obj_at(root, &["mcpServers"]);
             for server in &portable_servers {
-                if let Some(body) = mcpjson::render_server(server, ServerShape::plain()) {
+                if let Some(body) = mcpjson::render_server(server, SHAPE) {
                     if mcp.get(&server.name).is_some_and(|existing| mcpjson::matches_rendered(&body, existing)) {
                         continue;
                     }
@@ -371,8 +374,10 @@ fn report_checks(backend: &AugmentBackend, plugin: &Plugin, source: &Source) -> 
         return checks;
     };
 
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
     checks.push(report::check_mcp_registered(
         &comp.mcp_servers,
+        &writable,
         root.as_ref(),
         &["mcpServers"],
         "not in settings.json",

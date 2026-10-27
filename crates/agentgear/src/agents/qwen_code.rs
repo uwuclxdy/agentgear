@@ -369,8 +369,10 @@ fn report_checks(backend: &QwenCodeBackend, plugin: &Plugin, source: &Source) ->
         return checks;
     };
 
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
     checks.push(report::check_mcp_registered(
         &comp.mcp_servers,
+        &writable,
         root.as_ref(),
         &["mcpServers"],
         "not in settings.json",

@@ -44,6 +44,9 @@ use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 pub(crate) struct DroidBackend;
 
+/// Droid's mcp body is the shared Plain `{command,args,env}` shape.
+const SHAPE: ServerShape = ServerShape::plain();
+
 impl AgentBackend for DroidBackend {
     fn id(&self) -> &'static str {
         "droid"
@@ -80,7 +83,7 @@ impl AgentBackend for DroidBackend {
         // so probe and reconcile render identical bytes.
         let comp = plugin.components(source)?.with_client(self.id());
         let base = factory_dir(scope)?;
-        let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
+        let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let hooks = report::probe_json_entries(&base.join("hooks.json"), &hook_entries(&comp.hooks))?;
         let commands =
             report::probe_files(&expected_docs(&base.join("commands"), plugin.name, &comp.commands, |doc| doc.raw.clone()), |_, _| true)?;
@@ -101,7 +104,7 @@ impl AgentBackend for DroidBackend {
         let base = factory_dir(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= reconcile_hooks(&base.join("hooks.json"), &comp.hooks)?;
 
         // Commands are droid's own format already (markdown + frontmatter + $ARGUMENTS),
@@ -127,7 +130,7 @@ impl AgentBackend for DroidBackend {
         let base = factory_dir(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= remove_hooks(&base.join("hooks.json"), &comp.hooks)?;
 
         // We wrote each doc as one flat, plugin-prefixed file, so removing exactly those
@@ -339,8 +342,10 @@ fn report_checks(backend: &DroidBackend, plugin: &Plugin, source: &Source) -> Ve
         return checks;
     };
 
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
     checks.push(report::check_mcp_registered(
         &comp.mcp_servers,
+        &writable,
         root.as_ref(),
         &["mcpServers"],
         "not in mcp.json",

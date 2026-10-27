@@ -150,3 +150,26 @@ fn antigravity_full_lifecycle() {
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.mcp_config().contains("ez-fixture"), "re-install did not re-add our server");
 }
+
+/// The fixture declares an http server, which antigravity has no landing for, so
+/// setup never writes it; doctor must judge only the servers this backend writes.
+#[test]
+fn doctor_never_demands_a_server_the_shape_skips() {
+    let env = Env::new("doctor-skipped-http");
+    let (ok, out) = env.fixture(&["setup", "--agent", "antigravity"]);
+    assert!(ok, "setup failed: {out}");
+
+    let (_, out) = env.fixture(&["doctor"]);
+    let section: Vec<&str> = out
+        .lines()
+        .skip_while(|l| !l.starts_with("[ ok ] antigravity detected"))
+        .skip(1)
+        .take_while(|l| !l.ends_with("skipped") && !l.contains(" detected"))
+        .collect();
+    let mcp = section.iter().find(|l| l.contains("] mcp server registered:")).unwrap_or_else(|| panic!("no mcp check in:\n{out}"));
+    assert_eq!(
+        *mcp,
+        "[ ok ] mcp server registered: ez-fixture, ez-fixture-sse registered; skipped ez-fixture-http: this harness cannot host that transport",
+        "doctor must pass with every written server present and name the skipped one, in:\n{out}"
+    );
+}

@@ -71,6 +71,9 @@ use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 pub(crate) struct CursorBackend;
 
+/// Cursor's mcp body carries an explicit `type:"stdio"` — the shared Typed shape.
+const SHAPE: ServerShape = ServerShape::typed();
+
 impl AgentBackend for CursorBackend {
     fn id(&self) -> &'static str {
         "cursor"
@@ -116,7 +119,7 @@ impl AgentBackend for CursorBackend {
         // identical bytes.
         let comp = plugin.components(source)?.with_client(self.id());
         let base = cursor_dir(scope)?;
-        let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::typed())?;
+        let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let hooks = report::probe_json_entries(&base.join("hooks.json"), &hook_entries(&comp.hooks))?;
         let commands = report::probe_files(
             &expected_docs(&base.join("commands"), plugin.name, &comp.commands, |doc| command_body(doc).into_bytes()),
@@ -142,7 +145,7 @@ impl AgentBackend for CursorBackend {
         let base = cursor_dir(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::typed())? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= reconcile_hooks(&base.join("hooks.json"), &comp.hooks)?;
 
         let cmd_root = base.join("commands");
@@ -163,7 +166,7 @@ impl AgentBackend for CursorBackend {
         let base = cursor_dir(scope)?;
 
         let mut changed = false;
-        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::typed())? != Outcome::NoOp;
+        changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= remove_hooks(&base.join("hooks.json"), &comp.hooks)?;
 
         // `commands/` and `agents/` are shared with the user's own files, so we
@@ -517,8 +520,10 @@ fn report_checks(backend: &CursorBackend, plugin: &Plugin, source: &Source) -> V
         return checks;
     };
 
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
     checks.push(report::check_mcp_registered(
         &comp.mcp_servers,
+        &writable,
         root.as_ref(),
         &["mcpServers"],
         "not in mcp.json",

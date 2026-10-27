@@ -8,9 +8,10 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
-use super::{check_mcp_registered, probe_mcp, reconcile_mcp, remove_mcp, writable_names};
-use crate::agents::BackendState;
+use super::{MCP_KEY, SHAPE, probe_mcp, reconcile_mcp, remove_mcp};
+use crate::agents::{BackendState, mcpjson, report};
 use crate::components::{McpKind, McpServer};
+use crate::doctor::CheckStatus;
 use crate::host::Outcome;
 
 fn scratch(name: &str) -> std::path::PathBuf {
@@ -131,7 +132,7 @@ fn writable_names_includes_http_and_excludes_non_portable_and_sse() {
         env: BTreeMap::new(),
     };
     let servers = [stdio("ez-fixture", "host_fixture", &["mcp"]), stdio("rooted", "${CLAUDE_PLUGIN_ROOT}/bin/leaky", &[]), http, sse];
-    assert_eq!(writable_names(&servers), vec!["ez-fixture", "remote-http"]);
+    assert_eq!(mcpjson::writable_names(&servers, SHAPE), vec!["ez-fixture", "remote-http"]);
 }
 
 #[test]
@@ -168,15 +169,27 @@ fn reconcile_skips_non_portable_and_sse_servers_but_writes_http() {
 }
 
 #[test]
-fn a_dropped_server_warns_in_the_report() {
-    // Zed's own mcp check, not the shared one: pins that this site folds the
-    // skipped entries in rather than passing a bare `Ok` through.
-    let rooted = stdio("ez", "${CLAUDE_PLUGIN_ROOT}/bin/ez", &[]);
-    let sse = McpServer { name: "rm".into(), kind: McpKind::Sse { url: "https://x/sse".into() }, ..stdio("rm", "", &[]) };
-    let check = check_mcp_registered(&[rooted, sse], None);
-    let crate::doctor::CheckStatus::Warn(detail) = &check.status else {
-        panic!("a dropped server must warn, got {:?}", check.status);
+fn a_server_zed_never_writes_is_named_not_demanded() {
+    // zed writes http only, so doctor demands just that set: a declared sse server
+    // must never read as missing, and the drop is still named on the passing line.
+    let http = McpServer {
+        name: "remote-http".into(),
+        kind: McpKind::Http { url: "https://example.test/mcp".into() },
+        command: String::new(),
+        args: Vec::new(),
+        env: BTreeMap::new(),
     };
-    assert!(detail.contains("skipped ez: ${CLAUDE_PLUGIN_ROOT}"), "{detail}");
-    assert!(detail.contains("skipped rm: this harness cannot host that transport"), "{detail}");
+    let sse = McpServer {
+        name: "remote-sse".into(),
+        kind: McpKind::Sse { url: "https://example.test/sse".into() },
+        command: String::new(),
+        args: Vec::new(),
+        env: BTreeMap::new(),
+    };
+    let servers = [stdio("ez-fixture", "host_fixture", &["mcp"]), http, sse];
+    let root = json!({"context_servers": {"ez-fixture": {}, "remote-http": {}}});
+    let writable = mcpjson::writable_names(&servers, SHAPE);
+    let check = report::check_mcp_registered(&servers, &writable, Some(&root), MCP_KEY, "not in settings.json", "run the host's `setup`");
+    let CheckStatus::Ok(detail) = &check.status else { panic!("a server zed never writes must not fail, got {:?}", check.status) };
+    assert!(detail.contains("skipped remote-sse: this harness cannot host that transport"), "{detail}");
 }

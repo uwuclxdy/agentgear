@@ -147,12 +147,13 @@ fn retired_hooks_path(scope: &Scope) -> Result<Option<PathBuf>> {
 
 // --- hooks -------------------------------------------------------------------
 
-/// Map a CC hook event onto one of `agy`'s five legal events: `PreToolUse`,
-/// `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`. Anything outside that
-/// set is accepted by the file and silently never fires, which is worse than a skip
-/// (it reads as wired), so an event with no analog is dropped. `PreInvocation` runs
-/// before the model does, making it CC's `UserPromptSubmit` analog. `SessionStart`
-/// has none: `agy` carries no session-level hook at all.
+/// Map a CC hook event onto one of `agy`'s legal events: `PreToolUse`,
+/// `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`. Anything outside the
+/// legal set is accepted by the file and silently never fires, which is worse than a
+/// skip (it reads as wired), so an event with no analog is dropped. `PreInvocation`
+/// runs before the model does, making it CC's `UserPromptSubmit` analog. agy 1.4.8's
+/// embedded docs add a sixth event, `SessionStart`; it stays unmapped until a run
+/// shows it firing.
 fn map_event(cc_event: &str) -> Option<&'static str> {
     match cc_event {
         "UserPromptSubmit" => Some("PreInvocation"),
@@ -345,8 +346,10 @@ fn report_checks(backend: &AntigravityCliBackend, plugin: &Plugin, source: &Sour
         return checks;
     };
 
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
     checks.push(report::check_mcp_registered(
         &comp.mcp_servers,
+        &writable,
         root.as_ref(),
         &["mcpServers"],
         "not in mcp_config.json",

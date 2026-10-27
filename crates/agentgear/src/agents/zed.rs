@@ -19,8 +19,6 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
-
 use super::agentsmd;
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
@@ -171,13 +169,6 @@ const MCP_KEY: &[&str] = &[CONTEXT_SERVERS];
 /// streamable HTTP against an SSE endpoint) and is skipped by the dialect.
 const SHAPE: ServerShape = ServerShape::plain().with_remote(RemoteShape::UrlHeadersHttpOnly);
 
-/// Server keys `reconcile` actually writes (portable AND renderable under `SHAPE`).
-/// Doctor keys off the same set so a server we declared but never wrote (sse, or a
-/// `${CLAUDE_PLUGIN_ROOT}`-bearing entry) is never flagged as missing.
-fn writable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable() && mcpjson::render_server(s, SHAPE).is_some()).map(|s| s.name.as_str()).collect()
-}
-
 /// Insert/update our servers under `context_servers`, leaving the user's own.
 /// `NoOp` when the file already matches.
 fn reconcile_mcp(settings: &Path, servers: &[McpServer]) -> Result<Outcome> {
@@ -225,7 +216,15 @@ fn report_checks(backend: &ZedBackend, plugin: &Plugin, source: &Source) -> Vec<
         return checks;
     };
 
-    checks.push(check_mcp_registered(&comp.mcp_servers, root.as_ref()));
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
+    checks.push(report::check_mcp_registered(
+        &comp.mcp_servers,
+        &writable,
+        root.as_ref(),
+        MCP_KEY,
+        "not in settings.json",
+        "run the host's `setup`",
+    ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
 
     if plugin.instructions.is_some() {
@@ -233,27 +232,6 @@ fn report_checks(backend: &ZedBackend, plugin: &Plugin, source: &Source) -> Vec<
     }
 
     checks
-}
-
-fn check_mcp_registered(servers: &[McpServer], root: Option<&Value>) -> DoctorCheck {
-    let name = "mcp server registered";
-    let expected = writable_names(servers);
-    let skipped = report::skipped_mcp(servers, &expected);
-    if expected.is_empty() {
-        return report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(report::NO_MCP.into()) }, &skipped);
-    }
-    let obj = root.and_then(|r| r.get(CONTEXT_SERVERS)).and_then(Value::as_object);
-    let missing: Vec<&str> = expected.iter().copied().filter(|n| obj.is_none_or(|o| !o.contains_key(*n))).collect();
-    if !missing.is_empty() {
-        return DoctorCheck {
-            name,
-            status: CheckStatus::Fail {
-                problem: format!("mcp server(s) not in settings.json: {}", missing.join(", ")),
-                fix: "run the host's `setup`".into(),
-            },
-        };
-    }
-    report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", expected.join(", "))) }, &skipped)
 }
 
 #[cfg(test)]

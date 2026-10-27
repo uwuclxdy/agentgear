@@ -57,6 +57,9 @@ pub(crate) struct AmpBackend;
 /// key-path segment that itself contains a dot, not a nested `amp` object.
 const MCP_KEY: &[&str] = &["amp.mcpServers"];
 
+/// Amp's stdio body is the shared Plain `{command,args,env}` shape.
+const SHAPE: ServerShape = ServerShape::plain();
+
 impl AgentBackend for AmpBackend {
     fn id(&self) -> &'static str {
         "amp"
@@ -193,15 +196,15 @@ fn reconcile_mcp(settings: &Path, servers: &[McpServer]) -> Result<Outcome> {
                 .into(),
         });
     }
-    mcpjson::reconcile(settings, MCP_KEY, servers, ServerShape::plain())
+    mcpjson::reconcile(settings, MCP_KEY, servers, SHAPE)
 }
 
 fn probe_mcp(settings: &Path, servers: &[McpServer]) -> Result<BackendState> {
-    mcpjson::probe(settings, MCP_KEY, servers, ServerShape::plain())
+    mcpjson::probe(settings, MCP_KEY, servers, SHAPE)
 }
 
 fn remove_mcp(settings: &Path, servers: &[McpServer]) -> Result<Outcome> {
-    mcpjson::remove(settings, MCP_KEY, servers, ServerShape::plain())
+    mcpjson::remove(settings, MCP_KEY, servers, SHAPE)
 }
 
 // --- report ------------------------------------------------------------------
@@ -275,8 +278,10 @@ fn report_checks(backend: &AmpBackend, plugin: &Plugin, source: &Source) -> Vec<
         return checks;
     };
 
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
     checks.push(report::check_mcp_registered(
         &comp.mcp_servers,
+        &writable,
         root.as_ref(),
         &["amp.mcpServers"],
         "not under `amp.mcpServers` in settings.json",

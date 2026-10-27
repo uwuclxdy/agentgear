@@ -14,12 +14,9 @@
 
 use std::path::PathBuf;
 
-use serde_json::Value;
-
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
 use super::{AgentBackend, BackendState};
-use crate::components::{McpServer, portable_names};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
@@ -151,27 +148,6 @@ fn mcp_path() -> Result<PathBuf> {
 
 // --- report ------------------------------------------------------------------
 
-fn check_mcp_registered(servers: &[McpServer], root: Option<&Value>) -> DoctorCheck {
-    let name = "mcp server registered";
-    let portable: Vec<&str> = portable_names(servers);
-    let skipped = report::skipped_mcp(servers, &portable);
-    if portable.is_empty() {
-        return report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(report::NO_MCP.into()) }, &skipped);
-    }
-    let obj = root.and_then(|r| r.get("servers")).and_then(Value::as_object);
-    let missing: Vec<&str> = portable.iter().copied().filter(|n| obj.is_none_or(|o| !o.contains_key(*n))).collect();
-    if !missing.is_empty() {
-        return DoctorCheck {
-            name,
-            status: CheckStatus::Fail {
-                problem: format!("mcp server(s) not in mcp.json: {}", missing.join(", ")),
-                fix: "run the host's `setup`".into(),
-            },
-        };
-    }
-    report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", portable.join(", "))) }, &skipped)
-}
-
 fn report_checks(backend: &JetbrainsCopilotBackend, plugin: &Plugin, source: &Source) -> Vec<DoctorCheck> {
     let mut checks = Vec::new();
 
@@ -198,7 +174,15 @@ fn report_checks(backend: &JetbrainsCopilotBackend, plugin: &Plugin, source: &So
         return checks;
     };
 
-    checks.push(check_mcp_registered(&comp.mcp_servers, root.as_ref()));
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
+    checks.push(report::check_mcp_registered(
+        &comp.mcp_servers,
+        &writable,
+        root.as_ref(),
+        MCP_KEY,
+        "not in mcp.json",
+        "run the host's `setup`",
+    ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
 
     checks

@@ -195,6 +195,28 @@ fn zed_full_lifecycle() {
     assert!(env.settings().contains("ez-fixture"), "re-install did not re-add our server");
 }
 
+/// The fixture declares an sse server, which zed has no faithful landing for, so
+/// setup never writes it; doctor must judge only the servers this backend writes.
+#[test]
+fn zed_doctor_never_demands_a_server_the_shape_skips() {
+    let env = Env::new("doctor-skipped-sse");
+    let (ok, out) = env.fixture(&["setup", "--agent", "zed"]);
+    assert!(ok, "setup failed: {out}");
+
+    let (_, out) = env.fixture(&["doctor"]);
+    let mcp = out
+        .lines()
+        .skip_while(|l| !l.starts_with("[ ok ] zed detected"))
+        .skip(1)
+        .find(|l| l.contains("] mcp server registered:"))
+        .unwrap_or_else(|| panic!("no mcp check in:\n{out}"));
+    assert_eq!(
+        mcp,
+        "[ ok ] mcp server registered: ez-fixture, ez-fixture-http registered; skipped ez-fixture-sse: this harness cannot host that transport",
+        "doctor must pass with every written server present and name the skipped one, in:\n{out}"
+    );
+}
+
 /// A user's own (or a rival agentgear host's) skill sharing our plugin skill's name in
 /// the shared `~/.agents/skills` root — zed's ONLY skill path — must survive our install
 /// AND uninstall untouched: reconcile skips a foreign-occupied slot, remove deletes only

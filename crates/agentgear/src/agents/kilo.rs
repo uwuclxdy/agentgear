@@ -388,8 +388,10 @@ fn report_checks(backend: &KiloBackend, plugin: &Plugin, source: &Source) -> Vec
         return checks;
     };
 
+    let writable = portable_names(&comp.mcp_servers);
     checks.push(report::check_mcp_registered(
         &comp.mcp_servers,
+        &writable,
         root.as_ref(),
         &["mcp"],
         "not under `mcp` in kilo.json",

@@ -28,7 +28,7 @@ use super::confedit::{remove_file_idem, write_file_idem};
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
 use super::{AgentBackend, BackendState};
-use crate::components::{HookBinding, MarkdownDoc, McpServer, portable_names};
+use crate::components::{HookBinding, MarkdownDoc};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
@@ -299,27 +299,6 @@ fn render_agent(plugin: &str, doc: &MarkdownDoc) -> String {
 
 // --- report ------------------------------------------------------------------
 
-fn check_mcp_registered(servers: &[McpServer], root: Option<&Value>) -> DoctorCheck {
-    let name = "mcp server registered";
-    let portable = portable_names(servers);
-    let skipped = report::skipped_mcp(servers, &portable);
-    if portable.is_empty() {
-        return report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(report::NO_MCP.into()) }, &skipped);
-    }
-    let obj = root.and_then(|r| r.get("servers")).and_then(Value::as_object);
-    let missing: Vec<&str> = portable.iter().copied().filter(|n| obj.is_none_or(|o| !o.contains_key(*n))).collect();
-    if !missing.is_empty() {
-        return DoctorCheck {
-            name,
-            status: CheckStatus::Fail {
-                problem: format!("mcp server(s) not in mcp.json: {}", missing.join(", ")),
-                fix: "run the host's `setup` in the project root".into(),
-            },
-        };
-    }
-    report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(format!("{} registered", portable.join(", "))) }, &skipped)
-}
-
 /// `doctor` has no explicit project context, so a project-scoped backend reports
 /// against the current working directory (the natural "am I set up in this repo"
 /// question). Absent config there is a warning, not a failure.
@@ -379,7 +358,15 @@ fn report_checks(backend: &VscodeCopilotBackend, plugin: &Plugin, source: &Sourc
         return checks;
     };
 
-    checks.push(check_mcp_registered(&comp.mcp_servers, parsed.as_ref()));
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
+    checks.push(report::check_mcp_registered(
+        &comp.mcp_servers,
+        &writable,
+        parsed.as_ref(),
+        MCP_KEY,
+        "not in mcp.json",
+        "run the host's `setup` in the project root",
+    ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_agents_present(&comp.agents, &agents_dir(&root), plugin.name));
 

@@ -33,6 +33,9 @@ use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
 
 pub(crate) struct GeminiBackend;
 
+/// Gemini's mcp body is the shared Plain `{command,args,env}` shape.
+const SHAPE: ServerShape = ServerShape::plain();
+
 impl AgentBackend for GeminiBackend {
     fn id(&self) -> &'static str {
         "gemini"
@@ -68,7 +71,7 @@ impl AgentBackend for GeminiBackend {
         let comp = plugin.components(source)?.with_client(self.id());
         let base = gemini_dir(scope)?;
         let settings = base.join("settings.json");
-        let mcp = mcpjson::probe_surface(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
+        let mcp = mcpjson::probe_surface(&settings, &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let hooks = report::probe_json_entries(&settings, &hook_entries(&comp.hooks))?;
         let cmd_root = base.join("commands").join(plugin.name);
         let commands = report::probe_files(&expected_commands(&cmd_root, &comp.commands), |_, _| true)?;
@@ -87,7 +90,7 @@ impl AgentBackend for GeminiBackend {
         let settings = base.join("settings.json");
 
         let mut changed = false;
-        changed |= mcpjson::reconcile(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= mcpjson::reconcile(&settings, &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= reconcile_hooks(&settings, &comp.hooks)?;
 
         let cmd_root = base.join("commands").join(plugin.name);
@@ -113,7 +116,7 @@ impl AgentBackend for GeminiBackend {
         let settings = base.join("settings.json");
 
         let mut changed = false;
-        changed |= mcpjson::remove(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())? != Outcome::NoOp;
+        changed |= mcpjson::remove(&settings, &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= remove_hooks(&settings, &comp.hooks)?;
 
         // We own the whole `<commands>/<plugin>/` subtree, so a recursive drop is
@@ -362,8 +365,10 @@ fn report_checks(backend: &GeminiBackend, plugin: &Plugin, source: &Source) -> V
         return checks;
     };
 
+    let writable = mcpjson::writable_names(&comp.mcp_servers, SHAPE);
     checks.push(report::check_mcp_registered(
         &comp.mcp_servers,
+        &writable,
         root.as_ref(),
         &["mcpServers"],
         "not in settings.json",

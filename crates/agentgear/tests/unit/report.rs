@@ -1,7 +1,8 @@
 //! `report::compose` unit tests: the total precedence the per-surface probe
 //! composition rests on. Every row of the precedence table (incl. the mixed cases)
-//! is pinned here so a rule reorder reds immediately. Plus `registered_status`:
-//! a dropped entry must never read as a clean `Ok`.
+//! is pinned here so a rule reorder reds immediately. Plus `note_skipped` /
+//! `check_mcp_registered`: a dropped entry is always named, and a server the
+//! backend's shape never writes is never demanded.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -153,7 +154,7 @@ fn a_portable_entry_the_backend_cannot_render_reports_the_transport_reason() {
     let skipped = skipped_mcp(&servers, &["ez"]);
     assert_eq!(
         detail(&note_skipped(ok("ez registered"), &skipped)),
-        "warn: ez registered; skipped rm: this harness cannot host that transport"
+        "ok: ez registered; skipped rm: this harness cannot host that transport"
     );
 }
 
@@ -189,7 +190,7 @@ fn the_shared_mcp_check_wires_the_note_in() {
     // Pins the wiring, not just the helper: a backend that stopped calling
     // `note_skipped` would still pass every test above.
     let servers = [stdio("ez", "${CLAUDE_PLUGIN_ROOT}/bin/ez")];
-    let check = super::check_mcp_registered(&servers, None, &["mcpServers"], "not in mcp.json", "run setup");
+    let check = super::check_mcp_registered(&servers, &[], None, &["mcpServers"], "not in mcp.json", "run setup");
     assert_eq!(
         detail(&check),
         "warn: no portable mcp servers to register; skipped ez: ${CLAUDE_PLUGIN_ROOT} expands only inside Claude Code (use a bare command name)"
@@ -197,15 +198,66 @@ fn the_shared_mcp_check_wires_the_note_in() {
 }
 
 #[test]
-fn the_shared_mcp_check_fails_only_a_missing_portable_server() {
+fn the_shared_mcp_check_fails_only_a_missing_written_server() {
     let servers = [stdio("ez", "ez"), stdio("fx", "fx"), stdio("np", "${CLAUDE_PLUGIN_ROOT}/bin/np")];
+    let writable = ["ez", "fx"];
     let partial = serde_json::json!({"mcpServers": {"ez": {}}});
-    let check = super::check_mcp_registered(&servers, Some(&partial), &["mcpServers"], "not in mcp.json", "run setup");
+    let check = super::check_mcp_registered(&servers, &writable, Some(&partial), &["mcpServers"], "not in mcp.json", "run setup");
     assert_eq!(detail(&check), "fail: mcp server(s) not in mcp.json: fx");
     let full = serde_json::json!({"mcpServers": {"ez": {}, "fx": {}}});
-    let check = super::check_mcp_registered(&servers, Some(&full), &["mcpServers"], "not in mcp.json", "run setup");
+    let check = super::check_mcp_registered(&servers, &writable, Some(&full), &["mcpServers"], "not in mcp.json", "run setup");
     assert_eq!(
         detail(&check),
         "warn: ez, fx registered; skipped np: ${CLAUDE_PLUGIN_ROOT} expands only inside Claude Code (use a bare command name)"
     );
+}
+
+#[test]
+fn a_server_the_shape_never_writes_is_named_not_demanded() {
+    // The shape filters a portable sse server out, so setup never writes it; a
+    // config holding every written server is a pass, with the drop named.
+    let servers =
+        [stdio("ez", "ez"), McpServer { name: "rm".into(), kind: McpKind::Sse { url: "https://x/sse".into() }, ..stdio("rm", "") }];
+    let written = serde_json::json!({"mcpServers": {"ez": {}}});
+    let check = super::check_mcp_registered(&servers, &["ez"], Some(&written), &["mcpServers"], "not in mcp.json", "run setup");
+    assert_eq!(detail(&check), "ok: ez registered; skipped rm: this harness cannot host that transport");
+}
+
+#[test]
+fn a_skipped_server_never_excuses_a_missing_written_one() {
+    let servers =
+        [stdio("ez", "ez"), McpServer { name: "rm".into(), kind: McpKind::Sse { url: "https://x/sse".into() }, ..stdio("rm", "") }];
+    let check = super::check_mcp_registered(&servers, &["ez"], None, &["mcpServers"], "not in mcp.json", "run setup");
+    assert_eq!(detail(&check), "fail: mcp server(s) not in mcp.json: ez");
+}
+
+#[test]
+fn every_declared_server_portable_but_none_renderable_reads_no_hostable_mcp() {
+    // The all-unrenderable case (a harness that hosts only sse, given an http
+    // plugin): "no portable" would be false here — the server IS portable, the
+    // harness just cannot host its transport.
+    let servers = [McpServer { name: "rm".into(), kind: McpKind::Http { url: "https://x/mcp".into() }, ..stdio("rm", "") }];
+    let check = super::check_mcp_registered(&servers, &[], None, &["mcpServers"], "not in mcp.json", "run setup");
+    assert_eq!(detail(&check), "ok: no mcp servers this harness can host; skipped rm: this harness cannot host that transport");
+}
+
+#[test]
+fn a_missing_written_server_pins_the_callers_problem_and_fix() {
+    // vscode-copilot's exact failure wording, through the shared check: the
+    // "not in mcp.json" phrase and the project-root fix hint both ship as-is.
+    let servers = [stdio("ez", "ez"), stdio("fx", "fx")];
+    let written = serde_json::json!({"servers": {"ez": {}}});
+    let check = super::check_mcp_registered(
+        &servers,
+        &["ez", "fx"],
+        Some(&written),
+        &["servers"],
+        "not in mcp.json",
+        "run the host's `setup` in the project root",
+    );
+    let CheckStatus::Fail { problem, fix } = &check.status else {
+        panic!("a missing written server must fail, got {:?}", check.status);
+    };
+    assert_eq!(problem, "mcp server(s) not in mcp.json: fx");
+    assert_eq!(fix, "run the host's `setup` in the project root");
 }
