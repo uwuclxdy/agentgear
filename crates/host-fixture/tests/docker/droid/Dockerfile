@@ -98,8 +98,9 @@ JSON
 
 # A key droid owns in its own settings file plus a user status line, seeded by hand:
 # no auth-free droid subcommand writes this file (the read sweep below asserts it), so
-# there is no copilot-style two-writer coexistence to prove here. The seeded statusLine is the retired-slot contract: setup and uninstall
-# must both leave the whole file byte-identical.
+# there is no copilot-style two-writer coexistence to prove here. The seeded statusLine
+# is the retired-slot contract: setup and uninstall must both leave the whole file
+# byte-identical.
 cat > "$SETTINGS" <<'JSON'
 { "theirSetting": "keep me", "statusLine": { "type": "command", "command": "their-line", "padding": 2 } }
 JSON
