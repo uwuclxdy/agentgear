@@ -5,6 +5,9 @@ name: pin-staleness
 # of a PR.
 # Daily, because a patch release inside a pinned series is exactly the silent drift
 # this catches, and a run costs six registry queries plus three GETs.
+# A stale pin also opens one deduped issue (the schedule's failure page is easy to
+# miss): rc 1 only — a vendor outage (rc 3) or a misclassified leg (rc 2) stays a red
+# run, never a page. A green run closes the issue again.
 # GitHub disables a public repo's scheduled workflow after 60 days without repository
 # activity and the alarm then stops silently: re-enable it from the Actions tab.
 on:
@@ -14,6 +17,10 @@ on:
 
 permissions:
   contents: read
+  issues: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
   pins:
@@ -26,4 +33,42 @@ jobs:
         with:
           node-version: 22
       - name: compare every docker leg pin with its vendor
-        run: bash crates/host-fixture/tests/docker/pin-staleness.sh
+        id: pins
+        # The step keeps the run red and still hands the alarm steps the exit code:
+        # the log goes to a file, so the step's own status is the script's, not a
+        # pipe consumer's.
+        run: |
+          rc=0
+          bash crates/host-fixture/tests/docker/pin-staleness.sh > pin-staleness.log 2>&1 || rc=$?
+          cat pin-staleness.log
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit "$rc"
+      - name: open the staleness issue
+        if: failure() && steps.pins.outputs.rc == '1'
+        run: |
+          TITLE='pin-staleness: a docker leg pin is stale'
+          {
+            echo 'The scheduled pin-staleness run found a stale docker leg pin:'
+            echo
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo "\`\`\`"
+            grep '^pin-staleness: STALE' pin-staleness.log || true
+            echo "\`\`\`"
+            echo
+            echo "Bump the pin in \`crates/host-fixture/tests/docker/<leg>/Dockerfile\`, run \`crates/host-fixture/tests/docker/run.sh <leg>\` locally, and commit the bump."
+          } > issue-body.md
+          number=$(gh issue list --state open --json number,title --jq ".[] | select(.title == \"$TITLE\") | .number" | head -n1)
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body-file issue-body.md
+          else
+            gh issue create --title "$TITLE" --body-file issue-body.md
+          fi
+      - name: close the cleared staleness issue
+        if: success()
+        run: |
+          TITLE='pin-staleness: a docker leg pin is stale'
+          number=$(gh issue list --state open --json number,title --jq ".[] | select(.title == \"$TITLE\") | .number" | head -n1)
+          if [ -n "$number" ]; then
+            gh issue close "$number" --comment "Every pin is current again: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          fi
