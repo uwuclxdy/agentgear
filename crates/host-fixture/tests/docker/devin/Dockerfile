@@ -67,7 +67,7 @@ if ! grep -q 'x-agentgear' "$PLUGIN_SKILL"; then echo "FAIL: plugin skill owners
 if command -v devin >/dev/null 2>&1; then
   cp "$CONFIG" "$CONFIG.pre-native"
   if out=$(devin mcp list 2>&1); then
-    if echo "$out" | grep -q 'ez-fixture'; then
+    if grep -q 'ez-fixture' <<<"$out"; then
       echo "native devin mcp list confirmed ez-fixture"
     else
       echo "FAIL: devin mcp list ran but did not list ez-fixture"; echo "$out"; exit 1

@@ -44,7 +44,7 @@ if ! grep -q 'mode: subagent' "$AGENT_FILE"; then echo "FAIL: agent not translat
 
 # Native second opinion (best-effort; auth-free config parse above is authoritative).
 if out=$(opencode mcp list 2>&1); then
-  if echo "$out" | grep -q 'ez-fixture'; then
+  if grep -q 'ez-fixture' <<<"$out"; then
     echo "native opencode mcp list confirmed ez-fixture"
   else
     echo "FAIL: opencode mcp list ran but did not list ez-fixture"; echo "$out"; exit 1

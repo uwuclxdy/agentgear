@@ -134,7 +134,7 @@ if ! grep -q 'x-agentgear' "$SKILL";   then echo "FAIL: skill ownership tag miss
 # The real CLI ingests the config agentgear wrote: `qwen mcp list` (auth-free at the
 # pin) must list our stdio server. A nonzero exit or a missing row fails the leg.
 list="$(timeout 120 qwen mcp list)"
-if ! printf '%s\n' "$list" | grep -qF 'ez-fixture:'; then
+if ! grep -qF 'ez-fixture:' <<<"$list"; then
   echo "FAIL: qwen mcp list does not list ez-fixture"; printf '%s\n' "$list"; exit 1
 fi
 

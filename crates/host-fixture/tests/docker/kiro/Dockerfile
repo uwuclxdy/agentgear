@@ -67,7 +67,7 @@ if ! grep -q 'x-agentgear' "$SKILL"; then echo "FAIL: skill ownership tag missin
 
 # Native second opinion (best-effort; auth-free config parse above is authoritative).
 if out=$(kiro-cli mcp list 2>&1); then
-  if echo "$out" | grep -q 'ez-fixture'; then
+  if grep -q 'ez-fixture' <<<"$out"; then
     echo "native kiro-cli mcp list confirmed ez-fixture"
   else
     echo "note: kiro-cli mcp list ran but did not list ez-fixture (may gate on login)"; echo "$out"

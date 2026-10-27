@@ -66,7 +66,7 @@ if [ "$(host_fixture setup --agent cursor)" != "NoOp" ]; then echo "FAIL: second
 # Native second opinion (best-effort; auth-free config parse above is authoritative).
 if curl -fsSL https://cursor.com/install | bash >/dev/null 2>&1; then
   export PATH="$HOME/.local/bin:$PATH"
-  if out=$(cursor-agent mcp list 2>&1) && echo "$out" | grep -q 'ez-fixture'; then
+  if out=$(cursor-agent mcp list 2>&1) && grep -q 'ez-fixture' <<<"$out"; then
     echo "native cursor-agent mcp list confirmed ez-fixture"
   else
     echo "note: cursor-agent mcp list unavailable (likely needs auth); relied on config-file assert"

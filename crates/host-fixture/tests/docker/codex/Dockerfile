@@ -53,7 +53,7 @@ if [ ! -f "$HOOKS" ];        then echo "FAIL: translated hooks.json missing"; ex
 
 # Native second opinion (best-effort; auth-free config parse above is authoritative).
 if out=$(codex mcp list 2>&1); then
-  if echo "$out" | grep -q 'ez-fixture'; then
+  if grep -q 'ez-fixture' <<<"$out"; then
     echo "native codex mcp list confirmed ez-fixture"
   else
     echo "FAIL: codex mcp list ran but did not list ez-fixture"; echo "$out"; exit 1

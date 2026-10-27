@@ -141,7 +141,7 @@ if ! out=$(droid mcp list 2>&1); then
   echo "FAIL: droid mcp list errored under the leg HOME: $out"; exit 1
 fi
 printf '%s\n' "$out"
-printf '%s\n' "$out" | grep -q 'ez-fixture *stdio *connected' \
+grep -q 'ez-fixture *stdio *connected' <<<"$out" \
   || { echo "FAIL: droid mcp list did not report ez-fixture connected"; exit 1; }
 for cmd in "--version" "mcp permissions list" "plugin list" "plugin marketplace list" "exec --list-tools -o json"; do
   # shellcheck disable=SC2086 # word-split on purpose: each entry is one argv

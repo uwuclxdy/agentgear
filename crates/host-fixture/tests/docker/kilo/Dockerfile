@@ -50,7 +50,7 @@ if ! grep -q 'x-agentgear'   "$SKILL";    then echo "FAIL: skill ownership tag m
 
 # Native second opinion (best-effort; auth-free config parse above is authoritative).
 if out=$(kilo mcp list 2>&1); then
-  if echo "$out" | grep -q 'ez-fixture'; then
+  if grep -q 'ez-fixture' <<<"$out"; then
     echo "native kilo mcp list confirmed ez-fixture"
   else
     echo "FAIL: kilo mcp list ran but did not list ez-fixture"; echo "$out"; exit 1

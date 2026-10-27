@@ -47,7 +47,7 @@ if ! grep -q '"theme"'        "$SETTINGS"; then echo "FAIL: seeded key clobbered
 
 # Native second opinion (best-effort; auth-free config parse above is authoritative).
 if out=$(amp mcp list 2>&1); then
-  if echo "$out" | grep -q 'ez-fixture'; then
+  if grep -q 'ez-fixture' <<<"$out"; then
     echo "native amp mcp list confirmed ez-fixture"
   else
     echo "note: amp mcp list ran but did not list ez-fixture (may need thread auth); relied on config-file assert"

@@ -57,7 +57,7 @@ node -e 'JSON.parse(require("fs").readFileSync(process.env.SETTINGS,"utf8"))' \
 
 # Native second opinion (best-effort; auth-free config parse above is authoritative).
 if out=$(cline config mcp --json 2>&1); then
-  if echo "$out" | grep -q 'ez-fixture'; then
+  if grep -q 'ez-fixture' <<<"$out"; then
     echo "native cline config mcp confirmed ez-fixture"
   else
     echo "note: cline config mcp ran but did not list ez-fixture (likely a separate CLI store); relied on config-file assert"
