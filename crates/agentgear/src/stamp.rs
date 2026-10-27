@@ -149,7 +149,7 @@ pub(crate) fn write(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str
 /// Mark this agent as being between the two halves of a reinstall, BEFORE the uninstall
 /// runs. Its own write has to land first: what it defends against is the process never
 /// reaching the second half.
-#[cfg(any(feature = "claude", feature = "copilot-cli"))]
+#[cfg(feature = "claude")]
 pub(crate) fn begin_reinstall(plugin: &Plugin, scope: &Scope, source: &Source, agent: &str) -> Result<()> {
     amend(plugin, scope, source, agent, |marker| marker.reinstalling = true)
 }
