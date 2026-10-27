@@ -6,8 +6,8 @@
 //! tree-hash staleness gate — is otherwise reachable only from the docker leg, which
 //! needs a real (auth'd) `copilot` and cannot run under `cargo test`. This binary
 //! models just enough of the registry (`plugin list`/`install`/`update`/`uninstall`,
-//! `plugin marketplace list`/`add`, `--version`) for those tests to run in the
-//! normal `cargo test` job.
+//! `plugin marketplace list`/`add`/`remove`, `config --rm`, `--version`) for those
+//! tests to run in the normal `cargo test` job.
 //!
 //! It is a DOUBLE, never a spec: the docker leg against the real binary stays the
 //! authority on copilot's behavior.
@@ -16,10 +16,20 @@
 //! `crates/agentgear/tests/unit/copilot_cli.rs` are the ground truth for these shapes.
 //!
 //! It deliberately models the ordering constraint that matters (`plugin install` fails
-//! when the plugin's marketplace is not registered) and deliberately omits the `(v…)`
-//! version column from its rows, which the crate's tolerant parser reads as "unknown,
-//! never churn" rather than letting the double invent a version the backend would then
-//! compare against the baked one.
+//! when the plugin's marketplace is not registered). It omits the `(v…)` version column
+//! from its rows by default, which the crate's tolerant parser reads as "unknown, never
+//! churn" rather than letting the double invent a version the backend would then compare
+//! against the baked one; `FAKE_COPILOT_PLUGIN_VERSION` opts a row into a version so a
+//! test can drive the Update/Frozen reconcile arms.
+//!
+//! The version it reports (and the `plugin uninstall` behavior that version implies)
+//! switches on `FAKE_COPILOT_VERSION`, defaulting to `1.0.92`: at >= 1.0.81 uninstall
+//! DISABLES a local-marketplace plugin (the row stays, marked `(disabled)`, and
+//! `enabledPlugins[id]` flips false) instead of removing, and at >= 1.0.92 the
+//! `config --rm` subcommand exists. `plugin disable`/`plugin enable` model the
+//! deliberate disable the backend reads back as `Disabled` and re-enables only on an
+//! explicit install. This lets one test pin the teardown the backend must handle on a
+//! live-load copilot without a second binary.
 //!
 //! Every invocation is also appended to `<copilot-home>/fake-copilot-calls.log`, one
 //! line per call, for the tests whose subject is which calls ran.
@@ -41,13 +51,39 @@ use std::process::ExitCode;
 
 use serde_json::{Value, json};
 
-/// Exactly the crate's 1.0.71 floor, in copilot's own version-last shape
+/// The version the double reports via `--version`; a test overrides it to model the
+/// disable-only uninstall (at 1.0.81 and later) and, from 1.0.92, the `config`
+/// subcommand — without a second binary.
+const VERSION_ENV: &str = "FAKE_COPILOT_VERSION";
+
+/// An optional plugin version the double reports in `plugin list` rows; absent by
+/// default (no `(v…)` column) so the tolerant parser reads "unknown, never churn".
+const PLUGIN_VERSION_ENV: &str = "FAKE_COPILOT_PLUGIN_VERSION";
+
+/// Default = the crate's 1.0.92 floor, in copilot's own version-last shape
 /// (`copilot_meets_floor` compares `>=`, so equal passes).
-const VERSION_LINE: &str = "GitHub Copilot CLI 1.0.71.";
+const DEFAULT_VERSION: &str = "1.0.92";
+
+/// `plugin uninstall` switched from remove to disable-only at 1.0.81 (the
+/// path-sourced live-load model).
+const DISABLE_ONLY_FLOOR: (u64, u64, u64) = (1, 0, 81);
+
+/// The `config` subcommand (list/read/set/remove) ships at 1.0.92.
+const CONFIG_FLOOR: (u64, u64, u64) = (1, 0, 92);
 
 /// One line per invocation, beside the state file, for the tests whose subject is which
 /// calls ran rather than what the registry ended up holding.
 const CALL_LOG_FILENAME: &str = "fake-copilot-calls.log";
+
+/// When set (any non-empty value), `plugin enable` models real copilot's exit-0
+/// "no plugin named ..." warning: nothing flips, so the backend's post-enable
+/// re-read must fail loud.
+const REFUSE_ENABLE_ENV: &str = "FAKE_COPILOT_REFUSE_ENABLE";
+
+/// When set (any non-empty value), `plugin install` fails, so a test can leave the
+/// half-install a failed first setup does: marketplace added, plugin listed
+/// `(disabled)`.
+const REFUSE_INSTALL_ENV: &str = "FAKE_COPILOT_REFUSE_INSTALL";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -55,10 +91,11 @@ fn main() -> ExitCode {
     log_call(&argv);
     match argv.as_slice() {
         ["--version"] | ["-v"] => {
-            println!("{VERSION_LINE}");
+            println!("GitHub Copilot CLI {}.", version_raw());
             ExitCode::SUCCESS
         }
         ["plugin", rest @ ..] => plugin(rest),
+        ["config", rest @ ..] => config(rest),
         other => usage(other),
     }
 }
@@ -74,7 +111,9 @@ fn plugin(argv: &[&str]) -> ExitCode {
         // A local marketplace's source dir IS the live copy, so there is nothing to
         // refresh; the presence gate is the part worth modeling.
         ["update", id, ..] => require_installed(id, |_| {}),
-        ["uninstall", id, ..] => require_installed(id, |state| state.plugins.retain(|p| p["id"] != json!(id))),
+        ["uninstall", id, ..] => uninstall(id),
+        ["disable", id, ..] => disable(id),
+        ["enable", id, ..] => enable(id),
         other => usage(other),
     }
 }
@@ -85,21 +124,69 @@ fn marketplace(argv: &[&str]) -> ExitCode {
             print!("{}", render_marketplaces(&State::load().marketplaces));
             ExitCode::SUCCESS
         }
-        ["add", source, ..] => mutate(|state| {
-            let entry = marketplace_entry(source);
-            state.marketplaces.retain(|m| m["name"] != entry["name"]);
-            state.marketplaces.push(entry);
-        }),
-        // copilot exposes no `marketplace update` and no `marketplace remove`; the
-        // backend never calls either, so an invocation here is a regression to surface.
+        ["add", source, ..] => add_marketplace(source),
+        // `marketplace remove <name>` drops the marketplace and every installed plugin
+        // from it; the disable-only uninstall's stale `enabledPlugins` entry survives it,
+        // exactly as the real >= 1.0.81 CLI behaves (`config --rm` clears it after).
+        ["remove", name, ..] => marketplace_remove(name),
         other => usage(other),
     }
+}
+
+/// `copilot plugin marketplace add <source>`. Refuses an existing name with rc 1
+/// (`Marketplace "…" already registered`), matching real copilot: a marketplace
+/// must be removed before it can be re-pointed.
+fn add_marketplace(source: &str) -> ExitCode {
+    let entry = marketplace_entry(source);
+    let mut state = State::load();
+    let name = entry["name"].as_str().unwrap_or_default().to_string();
+    if state.marketplaces.iter().any(|m| m["name"] == json!(name)) {
+        eprintln!("Marketplace \"{name}\" already registered");
+        return ExitCode::FAILURE;
+    }
+    state.marketplaces.push(entry);
+    // Real 1.0.104 lists every plugin of a local marketplace as a `(disabled)`
+    // row right after `marketplace add`, before any install (measured); `plugin
+    // install` is what flips a row to enabled.
+    for plugin in marketplace_plugin_rows(source) {
+        state.plugins.retain(|p| p["id"] != plugin["id"]);
+        state.plugins.push(plugin);
+    }
+    state.save();
+    ExitCode::SUCCESS
+}
+
+fn config(argv: &[&str]) -> ExitCode {
+    match argv {
+        ["--rm", key, ..] => config_rm(key),
+        ["enabledPlugins", ..] => config_get_enabled_plugins(),
+        other => usage(other),
+    }
+}
+
+/// `config enabledPlugins`: read the group as JSON, like the real CLI's group
+/// read. No file is written (the backend gates `--rm` on this read's answer). An
+/// absent key exits 1 with no output (measured 1.0.92, 1.0.104); a present-but-empty
+/// `{}` exits 0 with `{}` (measured 1.0.104).
+fn config_get_enabled_plugins() -> ExitCode {
+    let state = State::load();
+    if !state.enabled_plugins_present {
+        return ExitCode::FAILURE;
+    }
+    let body = serde_json::to_string_pretty(&state.enabled_plugins).unwrap_or_else(|_| "{}".to_string());
+    print!("{body}");
+    ExitCode::SUCCESS
 }
 
 /// `plugin install <plugin>@<marketplace>`. Refuses when that marketplace is not
 /// registered — the one ordering constraint the backend's `ensure_marketplace` step
 /// exists to satisfy, so the double must not let a regression there pass.
+/// `FAKE_COPILOT_REFUSE_INSTALL` models a failed install after the add.
 fn install(id: &str) -> ExitCode {
+    if !std::env::var(REFUSE_INSTALL_ENV).unwrap_or_default().is_empty() {
+        eprintln!("Plugin install failed");
+        return ExitCode::FAILURE;
+    }
     let Some((_, wanted)) = id.split_once('@') else {
         eprintln!("fake-copilot: `{id}` is not <plugin>@<marketplace>");
         return ExitCode::FAILURE;
@@ -109,11 +196,120 @@ fn install(id: &str) -> ExitCode {
         eprintln!("fake-copilot: marketplace `{wanted}` is not registered");
         return ExitCode::FAILURE;
     }
-    if !state.plugins.iter().any(|p| p["id"] == json!(id)) {
-        state.plugins.push(json!({"id": id}));
+    match state.plugins.iter_mut().find(|p| p["id"] == json!(id)) {
+        Some(existing) => {
+            existing["disabled"] = json!(false);
+            if let Some(version) = plugin_version() {
+                existing["version"] = json!(version);
+            }
+        }
+        None => {
+            let mut entry = json!({"id": id, "disabled": false});
+            if let Some(version) = plugin_version() {
+                entry["version"] = json!(version);
+            }
+            state.plugins.push(entry);
+        }
     }
+    state.enabled_plugins[id] = json!(true);
     state.save();
     ExitCode::SUCCESS
+}
+
+fn uninstall(id: &str) -> ExitCode {
+    if disable_only() && plugin_marketplace_is_local(id) {
+        require_installed(id, |state| {
+            for plugin in &mut state.plugins {
+                if plugin["id"] == json!(id) {
+                    plugin["disabled"] = json!(true);
+                }
+            }
+            state.enabled_plugins[id] = json!(false);
+        })
+    } else {
+        require_installed(id, |state| {
+            state.plugins.retain(|p| p["id"] != json!(id));
+            if let Some(enabled) = state.enabled_plugins.as_object_mut() {
+                enabled.remove(id);
+            }
+        })
+    }
+}
+
+/// Whether the plugin's marketplace is a local directory (path-sourced), the
+/// kind whose uninstall disables instead of removes at >= 1.0.81.
+fn plugin_marketplace_is_local(id: &str) -> bool {
+    let Some((_, mkt)) = id.split_once('@') else {
+        return false;
+    };
+    State::load().marketplaces.iter().any(|m| m["name"] == json!(mkt) && m["path"].is_string())
+}
+
+/// `copilot plugin disable <id>`: a deliberate per-plugin disable, the state the
+/// backend must read back as `Disabled` and never re-enable on self_heal.
+fn disable(id: &str) -> ExitCode {
+    require_installed(id, |state| {
+        for plugin in &mut state.plugins {
+            if plugin["id"] == json!(id) {
+                plugin["disabled"] = json!(true);
+            }
+        }
+        state.enabled_plugins[id] = json!(false);
+    })
+}
+
+/// `copilot plugin enable <id>`: the explicit-setup counterpart, flipping the row
+/// back to enabled. `FAKE_COPILOT_REFUSE_ENABLE` models real copilot's exit-0
+/// "no plugin named ..." warning: nothing flips, the row stays disabled.
+fn enable(id: &str) -> ExitCode {
+    if !std::env::var(REFUSE_ENABLE_ENV).unwrap_or_default().is_empty() {
+        eprintln!("Warning: no plugin named \"{id}\" is currently configured, so no active plugin was enabled.");
+        return ExitCode::SUCCESS;
+    }
+    require_installed(id, |state| {
+        for plugin in &mut state.plugins {
+            if plugin["id"] == json!(id) {
+                plugin["disabled"] = json!(false);
+            }
+        }
+        state.enabled_plugins[id] = json!(true);
+    })
+}
+
+fn marketplace_remove(name: &str) -> ExitCode {
+    mutate(|state| {
+        state.marketplaces.retain(|m| m["name"] != json!(name));
+        state.plugins.retain(|p| p["id"].as_str().and_then(|s| s.split_once('@')).map(|(_, mkt)| mkt != name).unwrap_or(true));
+    })
+}
+
+fn config_rm(key: &str) -> ExitCode {
+    if !has_config() {
+        return usage(&["config", "--rm", key]);
+    }
+    let Some(id) = key.strip_prefix("enabledPlugins.") else {
+        eprintln!("fake-copilot: unknown config key `{key}`");
+        return ExitCode::FAILURE;
+    };
+    if id.contains('.') {
+        eprintln!("Error: Cannot descend past record leaf at \"enabledPlugins.{}\".", id.split('.').next().unwrap_or(id));
+        return ExitCode::FAILURE;
+    }
+    mutate(|state| {
+        if let Some(enabled) = state.enabled_plugins.as_object_mut() {
+            enabled.remove(id);
+        }
+    });
+    write_settings_lock();
+    ExitCode::SUCCESS
+}
+
+/// The real CLI's `config --rm` leaves a `settings.json.lock` in the config home
+/// even when nothing was there to clear. The backend gates `--rm` on the group
+/// read above, so a teardown that owns nothing must never reach this write.
+fn write_settings_lock() {
+    let path = copilot_home().join("settings.json.lock");
+    let _ = fs::write(&path, "");
 }
 
 /// Apply `edit` only when `id` is installed, else fail with copilot's own
@@ -142,6 +338,46 @@ fn usage(argv: &[&str]) -> ExitCode {
     ExitCode::from(2)
 }
 
+/// The version this double reports, honoring the `FAKE_COPILOT_VERSION` override.
+fn version_raw() -> String {
+    std::env::var(VERSION_ENV).unwrap_or_else(|_| DEFAULT_VERSION.to_string())
+}
+
+/// The optional plugin version this double reports in `plugin list` rows.
+fn plugin_version() -> Option<String> {
+    std::env::var(PLUGIN_VERSION_ENV).ok()
+}
+
+fn parsed_version() -> (u64, u64, u64) {
+    let raw = version_raw();
+    match parse_version(&raw) {
+        Some(v) => v,
+        None => {
+            eprintln!("fake-copilot: cannot parse FAKE_COPILOT_VERSION={raw:?}");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn disable_only() -> bool {
+    parsed_version() >= DISABLE_ONLY_FLOOR
+}
+
+fn has_config() -> bool {
+    parsed_version() >= CONFIG_FLOOR
+}
+
+/// Parse a leading `MAJOR.MINOR.PATCH`; trailing non-digits on the patch are
+/// tolerated (`1.0.104.`), matching the crate's tolerant parser.
+fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = s.trim().split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch: String = parts.next()?.chars().take_while(char::is_ascii_digit).collect();
+    let patch = patch.parse().ok()?;
+    Some((major, minor, patch))
+}
+
 /// A registered marketplace entry. A local dir carries `path` (what copilot's
 /// `(Local: <path>)` row renders); anything else is taken as `owner/repo` and rendered
 /// as a `(GitHub: <repo>)` row.
@@ -163,14 +399,44 @@ fn local_marketplace_name(dir: &Path) -> String {
     name.unwrap_or_else(|| dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
 }
 
-/// `copilot plugin list` output. No `(v…)` column: see the module doc.
+/// The plugins a local marketplace declares, as `(disabled)` rows — the shape real
+/// 1.0.104 lists right after `marketplace add`, before any `plugin install` (measured).
+fn marketplace_plugin_rows(source: &str) -> Vec<Value> {
+    let dir = Path::new(source);
+    if !dir.is_dir() {
+        return Vec::new();
+    }
+    let name = local_marketplace_name(dir);
+    let manifest =
+        fs::read(dir.join(".claude-plugin").join("marketplace.json")).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+    let Some(plugins) = manifest.and_then(|doc| doc.get("plugins").cloned()).and_then(|p| p.as_array().cloned()) else {
+        return Vec::new();
+    };
+    plugins
+        .into_iter()
+        .filter_map(|p| p.get("name").and_then(Value::as_str).map(str::to_string))
+        .map(|plugin| json!({"id": format!("{plugin}@{name}"), "disabled": true}))
+        .collect()
+}
+
+/// `copilot plugin list` output. No `(v…)` column: see the module doc. A disabled
+/// row carries the `(disabled)` suffix the real >= 1.0.81 CLI appends after a
+/// disable-only uninstall.
 fn render_plugins(plugins: &[Value]) -> String {
     if plugins.is_empty() {
         return "No plugins installed.\n".to_string();
     }
     let mut out = String::from("Installed plugins:\n");
-    for id in plugins.iter().filter_map(|p| p["id"].as_str()) {
-        out.push_str(&format!("  \u{2022} {id}\n"));
+    for plugin in plugins {
+        let Some(id) = plugin["id"].as_str() else { continue };
+        let version = plugin["version"].as_str();
+        let disabled = plugin["disabled"].as_bool().unwrap_or(false);
+        match (version, disabled) {
+            (Some(v), true) => out.push_str(&format!("  \u{2022} {id} (v{v}) (disabled)\n")),
+            (Some(v), false) => out.push_str(&format!("  \u{2022} {id} (v{v})\n")),
+            (None, true) => out.push_str(&format!("  \u{2022} {id} (disabled)\n")),
+            (None, false) => out.push_str(&format!("  \u{2022} {id}\n")),
+        }
     }
     out
 }
@@ -196,13 +462,25 @@ fn render_marketplaces(marketplaces: &[Value]) -> String {
 struct State {
     plugins: Vec<Value>,
     marketplaces: Vec<Value>,
+    enabled_plugins: Value,
+    /// Whether the loaded state file actually held an `enabledPlugins` key. Real
+    /// copilot reads an absent key as rc 1 with no output and a present-but-empty
+    /// `{}` as rc 0 with `{}` (measured 1.0.104), so the double models both.
+    enabled_plugins_present: bool,
 }
 
 impl State {
     fn load() -> Self {
         let root: Value = fs::read(state_path()).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or(Value::Null);
         let array = |key: &str| root.get(key).and_then(Value::as_array).cloned().unwrap_or_default();
-        Self { plugins: array("plugins"), marketplaces: array("marketplaces") }
+        let enabled_present = root.get("enabledPlugins").is_some();
+        let enabled = root.get("enabledPlugins").cloned().unwrap_or_else(|| json!({}));
+        Self {
+            plugins: array("plugins"),
+            marketplaces: array("marketplaces"),
+            enabled_plugins: enabled,
+            enabled_plugins_present: enabled_present,
+        }
     }
 
     fn save(&self) {
@@ -210,7 +488,13 @@ impl State {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let root = json!({"plugins": self.plugins, "marketplaces": self.marketplaces});
+        let mut root = json!({"plugins": self.plugins, "marketplaces": self.marketplaces});
+        // `enabledPlugins` is written only once it holds an entry (or the loaded
+        // file already carried the key): real `marketplace add` writes no such key
+        // (measured 1.0.104), so the double must not invent one.
+        if self.enabled_plugins_present || !self.enabled_plugins.as_object().is_none_or(|m| m.is_empty()) {
+            root["enabledPlugins"] = self.enabled_plugins.clone();
+        }
         if let Ok(bytes) = serde_json::to_vec_pretty(&root) {
             let _ = fs::write(&path, bytes);
         }

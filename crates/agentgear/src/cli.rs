@@ -142,7 +142,7 @@ pub(crate) fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
 }
 
 /// Parse one whitespace-free token as `MAJOR.MINOR.PATCH`, tolerating trailing
-/// non-digits on the patch (`1.2.3-beta`, `1.0.71.`).
+/// non-digits on the patch (`1.2.3-beta`, `1.0.92.`).
 fn parse_version_token(token: &str) -> Option<(u64, u64, u64)> {
     let mut parts = token.split('.');
     let major = parts.next()?.parse().ok()?;
@@ -159,12 +159,14 @@ fn parse_version_token(token: &str) -> Option<(u64, u64, u64)> {
 // `run_json`. Everything here is gated on the backend's own feature, so a
 // claude-only (default) build carries none of it.
 
-/// Minimum `copilot` for plugin management: the `plugin` lifecycle
-/// (list/uninstall/update) did not exist before 1.0.71.
+/// Minimum `copilot` the crate supports: 1.0.92 is the first version whose
+/// `config` subcommand can clear the stale `enabledPlugins.<id>` key that a
+/// 1.0.81+ disable-only `plugin uninstall` leaves, so a full teardown is only
+/// possible from here up.
 #[cfg(feature = "copilot-cli")]
-pub(crate) const MIN_COPILOT_VERSION: &str = "1.0.71";
+pub(crate) const MIN_COPILOT_VERSION: &str = "1.0.92";
 #[cfg(feature = "copilot-cli")]
-const COPILOT_FLOOR: (u64, u64, u64) = (1, 0, 71);
+const COPILOT_FLOOR: (u64, u64, u64) = (1, 0, 92);
 
 /// A located `copilot` executable.
 #[cfg(feature = "copilot-cli")]
@@ -173,23 +175,27 @@ pub(crate) struct CopilotCli {
 }
 
 /// One row of `copilot plugin list` (text — copilot has no `--json`), e.g.
-/// `• <plugin>@<marketplace> (v0.1.0)`.
+/// `• <plugin>@<marketplace> (v0.1.0)` or, disabled, `(v0.1.0) (disabled)`.
 #[cfg(feature = "copilot-cli")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CopilotPlugin {
     pub plugin: String,
     pub marketplace: String,
     pub version: Option<String>,
+    /// The row carried a `(disabled)` suffix.
+    pub disabled: bool,
 }
 
 /// One row under the `Registered marketplaces:` section of `copilot plugin
 /// marketplace list` (the built-in `Included with GitHub Copilot:` rows are never
-/// ours). `path` is the local dir of a `(Local: <path>)` entry, else `None`.
+/// ours). `path` is the local dir of a `(Local: <path>)` entry; `github` is the
+/// repo of a `(GitHub: <repo>)` entry. A `(URL: <url>)` row sets neither.
 #[cfg(feature = "copilot-cli")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CopilotMarketplace {
     pub name: String,
     pub path: Option<String>,
+    pub github: Option<String>,
 }
 
 #[cfg(feature = "copilot-cli")]
@@ -210,17 +216,21 @@ impl CopilotCli {
         Ok(String::from_utf8_lossy(&self.run(&["--version"], None)?).trim().to_string())
     }
 
-    /// Gate a plugin op on the 1.0.71 floor. `copilot --version` is
-    /// `GitHub Copilot CLI 1.0.71.`, so the version token is not first; an
-    /// unparseable version warns and proceeds (channels vary), matching claude.
-    pub fn ensure_min_version(&self) -> Result<()> {
+    /// Gate a plugin op on the 1.0.92 floor and return the version to name in a
+    /// later error, from the same single `copilot --version` spawn. An
+    /// unparseable version warns and proceeds, returning the raw first line,
+    /// matching claude.
+    pub fn ensure_min_version(&self) -> Result<String> {
         let raw = self.raw_version()?;
+        let version = parse_version_anywhere(&raw)
+            .map(|(major, minor, patch)| format!("{major}.{minor}.{patch}"))
+            .unwrap_or_else(|| raw.lines().next().unwrap_or(&raw).to_string());
         match copilot_meets_floor(&raw) {
-            Some(true) => Ok(()),
+            Some(true) => Ok(version),
             Some(false) => Err(Error::CopilotTooOld { found: raw }),
             None => {
                 eprintln!("agentgear: could not parse `copilot --version` output {raw:?}; proceeding");
-                Ok(())
+                Ok(version)
             }
         }
     }
@@ -238,8 +248,8 @@ impl CopilotCli {
     }
 }
 
-/// `Some(true)` when a `copilot --version` string meets the 1.0.71 plugin-management
-/// floor, `Some(false)` below it, `None` when unparseable.
+/// `Some(true)` when a `copilot --version` string meets the 1.0.92 floor,
+/// `Some(false)` below it, `None` when unparseable.
 #[cfg(feature = "copilot-cli")]
 pub(crate) fn copilot_meets_floor(raw: &str) -> Option<bool> {
     parse_version_anywhere(raw).map(|v| v >= COPILOT_FLOOR)
@@ -247,7 +257,7 @@ pub(crate) fn copilot_meets_floor(raw: &str) -> Option<bool> {
 
 /// Find the first whitespace token that parses as `MAJOR.MINOR.PATCH`. Unlike
 /// [`parse_version`] (first token only), copilot's `--version` puts the version last
-/// (`GitHub Copilot CLI 1.0.71.`).
+/// (`GitHub Copilot CLI 1.0.92.`).
 #[cfg(feature = "copilot-cli")]
 pub(crate) fn parse_version_anywhere(s: &str) -> Option<(u64, u64, u64)> {
     s.split_whitespace().find_map(parse_version_token)
@@ -280,7 +290,12 @@ fn parse_plugin_line(line: &str) -> Option<CopilotPlugin> {
     if plugin.is_empty() || marketplace.is_empty() {
         return None;
     }
-    Some(CopilotPlugin { plugin: plugin.to_string(), marketplace: marketplace.to_string(), version: parse_paren_version(rest) })
+    Some(CopilotPlugin {
+        plugin: plugin.to_string(),
+        marketplace: marketplace.to_string(),
+        version: parse_paren_version(rest),
+        disabled: rest.split_whitespace().any(|token| token == "(disabled)"),
+    })
 }
 
 /// Extract the version out of a `(v1.2.3)` suffix; `None` when absent/malformed.
@@ -331,7 +346,8 @@ fn parse_marketplace_line(line: &str) -> Option<CopilotMarketplace> {
         return None;
     }
     let path = detail.strip_prefix("Local:").map(|p| p.trim_end_matches(')').trim().to_string());
-    Some(CopilotMarketplace { name: name.to_string(), path })
+    let github = detail.strip_prefix("GitHub:").map(|r| r.trim_end_matches(')').trim().to_string());
+    Some(CopilotMarketplace { name: name.to_string(), path, github })
 }
 
 // The unit bodies exercise the shared process/version helpers, which exist only in a

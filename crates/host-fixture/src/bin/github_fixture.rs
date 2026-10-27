@@ -5,8 +5,9 @@
 //! native backend is a visible skip in every lifecycle report
 //! (`setup`/`self-heal`/`update`/`uninstall`) and a Warn in `doctor`, while the
 //! plugin-native pair (claude, copilot-cli) stays eligible. No test
-//! path ever reaches the network: the plugin-native backends are undetected in
-//! the hermetic env, and skipped agents never touch the source.
+//! path ever reaches the network: a plugin-native backend is either undetected
+//! in the hermetic env or driven against a CLI double, and skipped agents never
+//! touch the source.
 
 use std::process::ExitCode;
 
@@ -18,7 +19,7 @@ use agentgear::prelude::{PluginHost, Scope, SessionSource};
     default_source = "github",
     github_repo = "uwuclxdy/agentgear",
     embed = false,
-    agents = ["claude", "gemini"]
+    agents = ["claude", "gemini", "copilot-cli"]
 )]
 struct GithubFixture;
 

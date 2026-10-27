@@ -147,8 +147,9 @@ fn heal_agent(
         }
 
         (false, BackendState::Disabled | BackendState::NeedsRepair) => {
-            // Take over a disabled/broken install: reconcile (leaves a disable alone,
-            // repairs a break), record ownership.
+            // Take over a disabled/broken install: reconcile (leaves a key-`false`
+            // disable alone, converges a keyless never-enabled listing at our
+            // pointer, repairs a break), record ownership.
             let outcome = backend.reconcile(plugin, &desired, scope)?;
             flag_restart(plugin, is_claude, retire_notice, &outcome);
             stamp::write(plugin, scope, &desired.source, backend.id())?;

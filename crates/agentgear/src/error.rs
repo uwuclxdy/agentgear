@@ -30,12 +30,20 @@ pub enum Error {
     #[error("`copilot` CLI not found on PATH; install it with `npm install -g @github/copilot`")]
     CopilotNotFound,
 
-    /// The located `copilot` predates plugin-management support.
-    #[error("copilot >= 1.0.71 required for plugin management (found {found}); run `copilot update`")]
+    /// The located `copilot` is older than the supported floor.
+    #[error("copilot >= 1.0.92 required for plugin management (found {found}); run `copilot update`")]
     CopilotTooOld {
         /// The version `copilot --version` reported.
         found: String,
     },
+
+    /// Our plugin cannot be removed (teardown) or re-staged (reconcile) because
+    /// its marketplace is not this host's — a same-named marketplace registered
+    /// at another path/repo, or one still serving another installed plugin. An
+    /// environment state the user resolves through copilot's own commands, not a
+    /// bug.
+    #[error("{0}")]
+    CopilotMarketplaceForeign(String),
 
     /// A CLI call exited non-zero.
     #[error("`{bin} {args}` failed with exit {code}:\n{stderr}")]

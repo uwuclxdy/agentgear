@@ -1,11 +1,10 @@
 # syntax=docker/dockerfile:1
 # copilot-cli docker leg: the real GitHub Copilot CLI ingesting our plugin natively.
-# copilot >= 1.0.71 exposes a full `plugin` lifecycle (marketplace add / install /
-# list / uninstall) that copies the CC tree VERBATIM, so agentgear orchestrates the
-# CLI instead of translating config files. `plugin list` + `mcp list` are auth-free
-# (verified 2026-07-18), so both are
-# authoritative asserts. Built + run by tests/docker/run.sh copilot-cli (context =
-# repo root).
+# copilot's `plugin` lifecycle (marketplace add / install / list / uninstall) loads a
+# local-marketplace plugin live from its source dir (>= 1.0.81), so agentgear
+# orchestrates the CLI instead of translating config files. `plugin list` + `mcp list`
+# are auth-free (verified 2026-07-18), so both are authoritative asserts. Built + run
+# by tests/docker/run.sh copilot-cli (context = repo root).
 
 # Stage 1: build the fixture host (all backends) from the workspace.
 FROM rust:1-slim-bookworm AS build
@@ -16,9 +15,11 @@ RUN cargo build -p host-fixture --release
 # Stage 2: real copilot CLI (Node >=22) + the fixture binary; drive the native
 # plugin lifecycle under a throwaway HOME/COPILOT_HOME.
 FROM node:22-slim
-# pin = the plugin-management floor, verified against a live install.
-RUN npm install -g @github/copilot@1.0.71
+# pin = the version this leg runs against (the backend's own 1.0.92 floor is
+# enforced in the crate).
+RUN npm install -g @github/copilot@1.0.104
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
+COPY crates/host-fixture/plugin /plugin-tree
 
 RUN <<'SH'
 cat > /usr/local/bin/copilot-leg.sh <<'TEST'
@@ -30,6 +31,12 @@ export COPILOT_HOME="$HOME/.copilot"
 export XDG_DATA_HOME="$HOME/.local/share"
 mkdir -p "$COPILOT_HOME" "$XDG_DATA_HOME"
 
+# The pin must be what the binary actually reports, else the leg is green for the
+# wrong version (a runtime HOME cache can outlive the npm pin).
+ver=$(copilot --version) || { echo "FAIL: copilot --version errored"; exit 1; }
+got=${ver%%$'\n'*}
+[ "$got" = "GitHub Copilot CLI 1.0.104." ] || { echo "copilot pin drift: binary reports '$got', this Dockerfile pins '1.0.104'"; exit 1; }
+
 # settings.json is where real `copilot plugin marketplace add`/`plugin install` write
 # `extraKnownMarketplaces`/`enabledPlugins` (confirmed against a live container write,
 # not assumed). The automatic status-line wiring is retired: nothing this backend
@@ -38,34 +45,46 @@ mkdir -p "$COPILOT_HOME" "$XDG_DATA_HOME"
 # `fake_copilot` persists its own registry to `fake-copilot-state.json` and never
 # touches settings.json.
 #
-# `copilot plugin uninstall` preserves a foreign key intact (verified: a seeded
-# `theirSetting` and `extraKnownMarketplaces` both survive it; copilot exposes no
-# `marketplace remove`).
+# A foreign marketplace (seeded below through `copilot plugin marketplace add`, under a
+# name different from ours) and a seeded user `enabledPlugins` entry must survive our
+# teardown: `remove` takes back only OUR marketplace and OUR plugin id.
 #
 # Passed as argv, not env, so neither `host_fixture` nor `copilot` inherits a variable
 # this harness invented.
 SETTINGS="$COPILOT_HOME/settings.json"
 cat > "$SETTINGS" <<'JSON'
-{ "theirSetting": "keep me", "statusLine": { "type": "command", "command": "their-line", "padding": 2 } }
+{ "theirSetting": "keep me", "statusLine": { "type": "command", "command": "their-line", "padding": 2 }, "enabledPlugins": { "their-plugin@their-marketplace": true } }
 JSON
 
+# A foreign marketplace, registered through copilot's own command before setup; it must
+# survive the whole lifecycle untouched — remove() drops only OUR marketplace.
+mkdir -p /tmp/their-marketplace/.claude-plugin
+cat > /tmp/their-marketplace/.claude-plugin/marketplace.json <<'JSON'
+{ "name": "their-marketplace", "description": "theirs", "owner": { "name": "someone" }, "plugins": [ { "name": "their-plugin", "source": "./", "description": "theirs" } ] }
+JSON
+copilot plugin marketplace add /tmp/their-marketplace
+
 # install: agentgear materializes the CC tree, `copilot plugin marketplace add`s it,
-# then `copilot plugin install ez-fixture-plugin@ez-fixture`.
+# then `copilot plugin install ez-fixture-plugin@ez-fixture-plugin`.
 out=$(host_fixture setup --agent copilot-cli)
 if [ "$out" != "Installed" ]; then echo "FAIL: first setup was not Installed: $out"; exit 1; fi
 
 # native assert #1: copilot's own registry lists our plugin (proves the marketplace
 # add + install landed).
-if ! copilot plugin list | grep -q 'ez-fixture-plugin@ez-fixture'; then
-    echo "FAIL: copilot plugin list missing our plugin"; copilot plugin list; exit 1
+# Every copilot listing is captured before it is searched: piped straight into an
+# early-exiting `grep -q` under pipefail, copilot dies of EPIPE and the pipeline's
+# status flips, which reads a negative check as passed.
+plugins=$(copilot plugin list) || { echo "FAIL: copilot plugin list errored"; exit 1; }
+if ! grep -q 'ez-fixture-plugin@ez-fixture' <<<"$plugins"; then
+    echo "FAIL: copilot plugin list missing our plugin"; echo "$plugins"; exit 1
 fi
 
 # native assert #2 (auth-free): copilot loads the plugin's mcp server verbatim. It
 # must appear under `Plugin servers` — agentgear writes no user mcp-config.json now,
 # so a listed server proves NATIVE plugin ingestion, not the old translate path.
 mcp=$(copilot mcp list 2>&1) || { echo "FAIL: copilot mcp list errored"; echo "$mcp"; exit 1; }
-if ! echo "$mcp" | grep -q 'Plugin servers'; then echo "FAIL: no 'Plugin servers' section (native ingestion failed)"; echo "$mcp"; exit 1; fi
-if ! echo "$mcp" | grep -q 'ez-fixture'; then echo "FAIL: copilot mcp list missing plugin server"; echo "$mcp"; exit 1; fi
+if ! grep -q 'Plugin servers' <<<"$mcp"; then echo "FAIL: no 'Plugin servers' section (native ingestion failed)"; echo "$mcp"; exit 1; fi
+if ! grep -q 'ez-fixture' <<<"$mcp"; then echo "FAIL: copilot mcp list missing plugin server"; echo "$mcp"; exit 1; fi
 
 # Retired-slot contract, parsed for real rather than grepped: the user's seeded
 # statusLine must still be exactly what it was after setup, beside the
@@ -114,21 +133,40 @@ grep -q 'user own rule' "$INSTRUCTIONS" || { echo "FAIL: user copilot-instructio
 # Re-install so the leg's own uninstall step below exercises a full teardown.
 host_fixture setup --agent copilot-cli > /dev/null
 
-host_fixture uninstall
+out=$(host_fixture uninstall)
+[ "$out" = "Removed" ] || { echo "FAIL: final uninstall was not Removed: $out"; exit 1; }
 
-if copilot plugin list | grep -q 'ez-fixture-plugin@ez-fixture'; then echo "FAIL: our plugin survived uninstall"; exit 1; fi
-if copilot mcp list 2>&1 | grep -q 'ez-fixture'; then echo "FAIL: plugin mcp server survived uninstall"; exit 1; fi
+plugins=$(copilot plugin list) || { echo "FAIL: copilot plugin list errored after uninstall"; exit 1; }
+if grep -q 'ez-fixture-plugin@ez-fixture' <<<"$plugins"; then echo "FAIL: our plugin survived uninstall"; echo "$plugins"; exit 1; fi
+mcp=$(copilot mcp list 2>&1) || { echo "FAIL: copilot mcp list errored after uninstall"; echo "$mcp"; exit 1; }
+if grep -q 'ez-fixture' <<<"$mcp"; then echo "FAIL: plugin mcp server survived uninstall"; echo "$mcp"; exit 1; fi
 
-# Same retired-slot contract across uninstall: the user's statusLine survives
-# byte-identical. extraKnownMarketplaces is asserted unconditionally: copilot has no
-# `marketplace remove`, so it must survive OUR uninstall too, same as it survives
-# copilot's own (see the header comment above) — this file must exist and hold that key.
+# Our marketplace must be gone; the foreign one must survive.
+markets=$(copilot plugin marketplace list) || { echo "FAIL: copilot plugin marketplace list errored"; exit 1; }
+if grep -q 'ez-fixture-plugin' <<<"$markets"; then echo "FAIL: our marketplace survived uninstall"; echo "$markets"; exit 1; fi
+if ! grep -q 'their-marketplace' <<<"$markets"; then echo "FAIL: foreign marketplace did not survive"; echo "$markets"; exit 1; fi
+
+# After uninstall: our marketplace key is gone from extraKnownMarketplaces, our
+# enabledPlugins key is gone, the user's foreign enabledPlugins entry survives, and the
+# user's statusLine/theirSetting are byte-identical.
 node -e '
 const fs = require("fs");
 const [settingsPath] = process.argv.slice(1);
 const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
-if (!Object.hasOwn(settings, "extraKnownMarketplaces")) {
-  console.error("extraKnownMarketplaces written by copilot was lost");
+if (settings.extraKnownMarketplaces && Object.hasOwn(settings.extraKnownMarketplaces, "ez-fixture-plugin")) {
+  console.error("our marketplace key survived uninstall");
+  process.exit(1);
+}
+if (settings.enabledPlugins && Object.hasOwn(settings.enabledPlugins, "ez-fixture-plugin@ez-fixture-plugin")) {
+  console.error("our enabledPlugins key survived uninstall");
+  process.exit(1);
+}
+if (!(settings.enabledPlugins && settings.enabledPlugins["their-plugin@their-marketplace"] === true)) {
+  console.error("the seeded foreign enabledPlugins entry did not survive");
+  process.exit(1);
+}
+if (!Object.hasOwn(settings, "theirSetting")) {
+  console.error("the seeded theirSetting was lost");
   process.exit(1);
 }
 const slot = settings.statusLine;
@@ -138,6 +176,29 @@ if (JSON.stringify(slot) !== JSON.stringify(want)) {
   process.exit(1);
 }
 ' "$SETTINGS" || { echo "FAIL: settings.json state after uninstall is wrong (see node error above)"; cat "$SETTINGS"; exit 1; }
+
+# Live pickup: a `--path` source, edited after setup, reaches copilot on self-heal by
+# re-staging the pointer alone — no `plugin uninstall`/`plugin install`, and the row
+# never reads `(disabled)`.
+cp -a /plugin-tree /tmp/plugin-tree
+out=$(host_fixture setup --agent copilot-cli --path /tmp/plugin-tree)
+if [ "$out" != "Installed" ]; then echo "FAIL: --path setup was not Installed: $out"; exit 1; fi
+printf -- '---\ndescription: probecmd live-load probe\n---\nsay probe\n' > /tmp/plugin-tree/commands/probecmd.md
+out=$(host_fixture self-heal)
+if [ "$out" != "Repaired" ]; then echo "FAIL: self-heal did not repair the tree edit: $out"; exit 1; fi
+skills=$(copilot skill list) || { echo "FAIL: copilot skill list errored"; exit 1; }
+if ! grep -q -w 'probecmd' <<<"$skills"; then echo "FAIL: copilot skill list missing probecmd"; echo "$skills"; exit 1; fi
+plugins=$(copilot plugin list) || { echo "FAIL: copilot plugin list errored after re-stage"; exit 1; }
+if ! grep -q 'ez-fixture-plugin@ez-fixture-plugin' <<<"$plugins"; then
+    echo "FAIL: our plugin missing after re-stage"; echo "$plugins"; exit 1
+fi
+our_row=$(grep 'ez-fixture-plugin@ez-fixture-plugin' <<<"$plugins")
+if ! grep -F -q '(enabled)' <<<"$our_row"; then
+    echo "FAIL: our plugin is not (enabled) after a re-stage"; echo "$plugins"; exit 1
+fi
+if grep -F -q '(disabled)' <<<"$our_row"; then
+    echo "FAIL: our plugin reads (disabled) after a re-stage"; echo "$plugins"; exit 1
+fi
 
 echo "copilot-cli docker leg: OK"
 TEST
