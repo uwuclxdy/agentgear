@@ -29,7 +29,7 @@ RUN bash <<'SH'
 # -e, no fallback: an image that could not install the pinned CLI must fail the build
 # rather than run the asserts against whatever else it happened to get.
 set -euo pipefail
-version=0.180.0
+version=0.250.0
 
 case "$(uname -m)" in
     x86_64|amd64) arch=x64 ;;
@@ -49,11 +49,12 @@ curl -fsSL -o /tmp/droid "$base/droid" \
 # The expected hash is FETCHED from the vendor rather than written in this file, so it
 # catches a corrupted or truncated download but NOT a re-upload of different bytes under
 # the same version tag: that moves the artifact and its sibling hash together, and
-# `droid --version` would still answer 0.180.0. The asymmetry with the agy leg (which
-# hardcodes its sha512) is deliberate, and only exists because a literal url pin left that
-# one nothing to fetch. Ceiling: this pins VERSION, not content. Upgrade path, if a
-# same-version re-upload ever shows up: replace the fetch with the three hardcoded linux
-# hashes, keyed by the $arch selected above (x64, x64-baseline, arm64 are all published).
+# `droid --version` would still answer the pinned version. The asymmetry with the agy
+# leg (which hardcodes its sha512) is deliberate, and only exists because a literal url
+# pin left that one nothing to fetch. Ceiling: this pins VERSION, not content. Upgrade
+# path, if a same-version re-upload ever shows up: replace the fetch with the three
+# hardcoded linux hashes, keyed by the $arch selected above (x64, x64-baseline, arm64
+# are all published).
 want="$(curl -fsSL "$base/droid.sha256")" \
     || { echo "droid pin: no checksum at $base/droid.sha256" >&2; exit 1; }
 echo "$want  /tmp/droid" | sha256sum -c --status \
@@ -123,13 +124,14 @@ if ! grep -q 'x-agentgear' "$SKILL"; then echo "FAIL: skill ownership tag missin
 # byte-identical after setup — nothing this backend writes lives in it anymore.
 cmp -s "$SETTINGS" /tmp/settings-seed || { echo "FAIL: settings.json changed across setup"; diff /tmp/settings-seed "$SETTINGS"; exit 1; }
 
-# Auth-free read sweep. Every config-reading subcommand here opens settings.json,
-# mcp.json and hooks.json read-only at this pin; `--version` opens no config file, so on
-# its own it proves nothing about loading. The json files converge by parsed value, but
-# the command, droid and skill files converge by bytes, and `exec --list-tools` writes
-# droid's own builtins into the same droids/ dir — so a droid that starts rewriting any
-# file this backend owns on read fails the cmp below and would otherwise read as drift
-# on every probe.
+# Auth-free read sweep. At this pin `mcp list`, `plugin list`, `plugin marketplace list`
+# and `exec --list-tools` open settings.json, mcp.json and hooks.json read-only;
+# `mcp permissions list` opens only settings.json (+ settings.local.json), so it proves
+# nothing about loading mcp.json or hooks.json, and `--version` opens no config file at
+# all. The json files converge by parsed value, but the command, droid and skill files
+# converge by bytes, and `exec --list-tools` writes droid's own builtins into the same
+# droids/ dir — so a droid that starts rewriting any file this backend owns on read
+# fails the cmp below and would otherwise read as drift on every probe.
 OWNED=("$SETTINGS" "$MCP" "$HOOKS" "$COMMAND" "$DROID" "$SKILL")
 mkdir -p /tmp/read-sweep-seed
 for f in "${OWNED[@]}"; do cp "$f" "/tmp/read-sweep-seed/$(basename "$f")"; done
