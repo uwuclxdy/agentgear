@@ -28,7 +28,7 @@ use super::confedit::{remove_file_idem, write_file_idem};
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
 use super::{AgentBackend, BackendState};
-use crate::components::{HookBinding, MarkdownDoc, McpServer};
+use crate::components::{HookBinding, MarkdownDoc, McpServer, portable_names};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
@@ -163,12 +163,6 @@ fn agents_dir(root: &Path) -> PathBuf {
     root.join(".github").join("agents")
 }
 
-/// Server names `reconcile` actually writes (the shared renderer skips non-portable
-/// ones); `remove` keys off the same set.
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
-}
-
 // --- hooks -------------------------------------------------------------------
 
 /// Map a CC hook event to VS Code Copilot's own name. VS Code carries three hook
@@ -270,18 +264,12 @@ fn expected_agents(dir: &Path, plugin: &str, agents: &[MarkdownDoc]) -> Vec<(Pat
 /// an exact `remove`; nested paths flatten since VS Code scans `.github/agents/*.agent.md`
 /// (no subdir namespacing).
 fn agent_name(plugin: &str, doc: &MarkdownDoc) -> String {
-    format!("{plugin}-{}", flat_stem(&doc.rel, "agents/"))
+    format!("{plugin}-{}", doc.flat_stem())
 }
 
 /// `agents/ez-helper.md` -> `<plugin>-ez-helper.agent.md`.
 fn agent_file(plugin: &str, doc: &MarkdownDoc) -> String {
     format!("{}.agent.md", agent_name(plugin, doc))
-}
-
-fn flat_stem(rel: &str, prefix: &str) -> String {
-    let stripped = rel.strip_prefix(prefix).unwrap_or(rel);
-    let stem = stripped.strip_suffix(".md").unwrap_or(stripped);
-    stem.replace(['/', '\\'], "-")
 }
 
 /// Render a CC agent def as a VS Code `.agent.md` (markdown + YAML frontmatter). The

@@ -70,6 +70,15 @@ impl McpServer {
     }
 }
 
+/// The names a non-CC backend actually writes, in declaration order: the portable
+/// servers only. `remove` keys off the same set, so it never deletes a user entry
+/// that happens to share a name with a server we declared but skipped.
+// allow(dead_code): only some backends call this, so a single-feature build of any other backend (or a claude-only or zero-feature build) leaves it unreferenced.
+#[allow(dead_code)]
+pub(crate) fn portable_names(servers: &[McpServer]) -> Vec<&str> {
+    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
+}
+
 /// An MCP server's transport.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpKind {
@@ -121,6 +130,20 @@ pub struct MarkdownDoc {
     pub body: String,
     /// Verbatim file bytes (copy-through when no transform applies).
     pub raw: Vec<u8>,
+}
+
+impl MarkdownDoc {
+    /// The flat file stem a harness writes: drop the doc's top-level kind dir
+    /// (`commands/`/`agents/`), any leading separator, and a `.md` suffix, then join
+    /// the remaining path segments with `-`. Harnesses that scan these surfaces
+    /// non-recursively namespace a nested doc as one filename segment this way.
+    // allow(dead_code): only some backends call this, so a single-feature build of any other backend (or a claude-only or zero-feature build) leaves it unreferenced.
+    #[allow(dead_code)]
+    pub(crate) fn flat_stem(&self) -> String {
+        let rest = self.rel.split_once('/').map_or(self.rel.as_str(), |(_, rest)| rest).trim_start_matches('/');
+        let stem = rest.strip_suffix(".md").unwrap_or(rest);
+        stem.replace(['/', '\\'], "-")
+    }
 }
 
 /// A skill directory and its files, ready to copy into a harness's skills dir.

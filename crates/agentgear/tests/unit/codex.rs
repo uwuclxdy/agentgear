@@ -6,8 +6,10 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use super::{check_hooks_present, flat_stem, hook_is_portable, portable_names, reconcile_hooks, remove_hooks, toml_basic_string};
-use crate::components::{HookBinding, McpKind, McpServer};
+use super::{
+    agent_path, check_hooks_present, hook_is_portable, prompt_path, reconcile_hooks, remove_hooks, render_agent_toml, toml_basic_string,
+};
+use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer, portable_names};
 use crate::host::Outcome;
 
 fn scratch(name: &str) -> PathBuf {
@@ -18,6 +20,12 @@ fn scratch(name: &str) -> PathBuf {
 
 fn server(name: &str, command: &str) -> McpServer {
     McpServer { name: name.into(), kind: McpKind::Stdio, command: command.into(), args: Vec::new(), env: BTreeMap::new() }
+}
+
+fn doc(rel: &str) -> MarkdownDoc {
+    let basename = rel.rsplit('/').next().unwrap_or(rel);
+    let name = basename.strip_suffix(".md").unwrap_or(basename);
+    MarkdownDoc { name: name.into(), rel: rel.into(), frontmatter: BTreeMap::new(), body: String::new(), raw: Vec::new() }
 }
 
 #[test]
@@ -76,13 +84,26 @@ fn reconcile_hooks_skips_non_portable_and_remove_hooks_leaves_a_same_command_sur
 }
 
 #[test]
-fn flat_stem_falls_back_to_the_stripped_prefix_not_the_raw_rel() {
-    // Regression: the fallback used to return the untouched `rel` (subdir prefix
-    // and all) when the `.md` suffix was absent, silently reintroducing the
-    // stripped subdir into the file name.
-    assert_eq!(flat_stem("commands/hello.md", "commands"), "hello");
-    assert_eq!(flat_stem("commands/nested/hello.md", "commands"), "nested-hello");
-    assert_eq!(flat_stem("commands/hello", "commands"), "hello", "no .md suffix must still drop the subdir prefix");
+fn nested_doc_paths_flatten_and_keep_the_plugin_prefix() {
+    let command = doc("commands/sub/nested.md");
+    assert_eq!(
+        prompt_path(std::path::Path::new("d"), "ez-fixture-plugin", &command),
+        std::path::Path::new("d/ez-fixture-plugin-sub-nested.md")
+    );
+    let agent = doc("agents/sub/nested.md");
+    assert_eq!(
+        agent_path(std::path::Path::new("d"), "ez-fixture-plugin", &agent),
+        std::path::Path::new("d/ez-fixture-plugin-sub-nested.toml")
+    );
+    let rendered = render_agent_toml("ez-fixture-plugin", &agent);
+    assert!(rendered.contains("name = \"ez-fixture-plugin-sub-nested\""), "agent handle must be the flattened stem:\n{rendered}");
+}
+
+#[test]
+fn flat_stem_drops_the_kind_dir_without_an_md_suffix() {
+    assert_eq!(doc("commands/hello.md").flat_stem(), "hello");
+    assert_eq!(doc("commands/nested/hello.md").flat_stem(), "nested-hello");
+    assert_eq!(doc("commands/hello").flat_stem(), "hello", "no .md suffix must still drop the kind dir");
 }
 
 #[test]

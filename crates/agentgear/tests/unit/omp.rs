@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use super::{config_disables_claude_plugins, doc_file, flat_stem, render_agent, resolve_omp_root};
+use super::{config_disables_claude_plugins, doc_file, render_agent, resolve_omp_root};
 use crate::agents::BackendState;
 use crate::agents::mcpjson::{self, ServerShape};
 use crate::components::{MarkdownDoc, McpKind, McpServer};
@@ -62,11 +62,24 @@ fn resolve_omp_root_keeps_a_relative_pi_config_dir_and_the_default() {
 
 #[test]
 fn doc_file_flattens_and_prefixes() {
-    assert_eq!(doc_file("ez-fixture-plugin", "commands/hello.md", "commands/"), "ez-fixture-plugin-hello.md");
-    assert_eq!(doc_file("ez-fixture-plugin", "commands/sub/nested.md", "commands/"), "ez-fixture-plugin-sub-nested.md");
-    assert_eq!(doc_file("ez-fixture-plugin", "agents/ez-helper.md", "agents/"), "ez-fixture-plugin-ez-helper.md");
-    // No `.md` suffix must still drop the stripped prefix, not reintroduce the subdir.
-    assert_eq!(flat_stem("commands/hello", "commands/"), "hello");
+    assert_eq!(doc_file("ez-fixture-plugin", &doc("commands/hello.md")), "ez-fixture-plugin-hello.md");
+    assert_eq!(doc_file("ez-fixture-plugin", &doc("commands/sub/nested.md")), "ez-fixture-plugin-sub-nested.md");
+    assert_eq!(doc_file("ez-fixture-plugin", &doc("agents/ez-helper.md")), "ez-fixture-plugin-ez-helper.md");
+    // No `.md` suffix must still drop the kind dir, not reintroduce the subdir.
+    assert_eq!(doc("commands/hello").flat_stem(), "hello");
+}
+
+fn doc(rel: &str) -> MarkdownDoc {
+    let basename = rel.rsplit('/').next().unwrap_or(rel);
+    let name = basename.strip_suffix(".md").unwrap_or(basename);
+    MarkdownDoc { name: name.into(), rel: rel.into(), frontmatter: BTreeMap::new(), body: String::new(), raw: Vec::new() }
+}
+
+#[test]
+fn render_agent_names_a_nested_agent_by_its_flattened_stem() {
+    let doc = MarkdownDoc { name: "x".into(), ..doc("agents/sub/x.md") };
+    let rendered = render_agent("ez", &doc);
+    assert!(rendered.contains("name: ez-sub-x\n"), "a nested agent must be named by its flattened stem:\n{rendered}");
 }
 
 #[test]

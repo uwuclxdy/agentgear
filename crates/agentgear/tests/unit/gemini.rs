@@ -3,13 +3,26 @@
 //! must therefore never be a candidate for removal either (removing an
 //! unfiltered name could delete an unrelated user-owned entry of the same name).
 
-use super::{hook_is_portable, reconcile_hooks, remove_hooks};
-use crate::components::HookBinding;
+use super::{agent_file, hook_is_portable, reconcile_hooks, remove_hooks};
+use crate::components::{HookBinding, MarkdownDoc};
 
 fn scratch(name: &str) -> std::path::PathBuf {
     let dir = crate::scratch::path("ez-gemini-unit");
     std::fs::create_dir_all(&dir).unwrap();
     dir.join(name)
+}
+
+/// A nested agent flattens into one plugin-prefixed filename, so two nested agents sharing a basename never collide.
+#[test]
+fn agent_file_flattens_a_nested_agent() {
+    let doc = MarkdownDoc {
+        name: "nested".into(),
+        rel: "agents/sub/nested.md".into(),
+        frontmatter: std::collections::BTreeMap::new(),
+        body: String::new(),
+        raw: Vec::new(),
+    };
+    assert_eq!(agent_file("ez-fixture-plugin", &doc), "ez-fixture-plugin-sub-nested.md");
 }
 
 #[test]

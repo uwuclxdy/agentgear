@@ -7,6 +7,16 @@
 use super::*;
 use crate::components::HookBinding;
 
+fn doc(rel: &str) -> MarkdownDoc {
+    MarkdownDoc {
+        name: "nested".into(),
+        rel: rel.into(),
+        frontmatter: std::collections::BTreeMap::new(),
+        body: String::new(),
+        raw: Vec::new(),
+    }
+}
+
 fn hook(command: &str) -> HookBinding {
     HookBinding { event: "UserPromptSubmit".into(), matcher: None, command: command.to_string() }
 }
@@ -35,6 +45,13 @@ fn hook_command_survives_the_wrapper_as_one_argument() {
         reply["contextModification"], "hi",
         "the hook command's own bytes corrupted the wrapper instead of running as one command:\nstdout: {stdout}\nscript:\n{script}"
     );
+}
+
+/// cline scans its workflows dir non-recursively, so a nested command must render
+/// as one flattened, plugin-prefixed filename rather than under its bare basename.
+#[test]
+fn workflow_file_flattens_a_nested_command() {
+    assert_eq!(workflow_file("ez-fixture-plugin", &doc("commands/sub/nested.md")), "ez-fixture-plugin-sub-nested.md");
 }
 
 /// `PreCompact` is an exact name in cline's own file-hook enum,

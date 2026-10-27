@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 use super::BackendState;
-use crate::components::{HookBinding, McpKind, McpServer, PluginComponents};
+use crate::components::{HookBinding, McpKind, McpServer, PluginComponents, portable_names};
 use crate::doctor::{CheckStatus, DoctorCheck};
 use crate::error::{Error, Result};
 use crate::host::{Plugin, Source};
@@ -124,7 +124,7 @@ pub(crate) fn skipped_hooks(hooks: &[HookBinding]) -> Vec<Skipped<'_>> {
 /// those are the `Warn` [`registered_status`] renders.
 pub(crate) fn check_mcp_registered(servers: &[McpServer], root: Option<&Value>, key_path: &[&str], where_: &str, fix: &str) -> DoctorCheck {
     let name = "mcp server registered";
-    let portable: Vec<&str> = servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect();
+    let portable = portable_names(servers);
     let skipped = skipped_mcp(servers, &portable);
     if portable.is_empty() {
         return note_skipped(DoctorCheck { name, status: CheckStatus::Ok(NO_MCP.into()) }, &skipped);

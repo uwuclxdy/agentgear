@@ -195,3 +195,17 @@ fn the_shared_mcp_check_wires_the_note_in() {
         "warn: no portable mcp servers to register; skipped ez: ${CLAUDE_PLUGIN_ROOT} expands only inside Claude Code (use a bare command name)"
     );
 }
+
+#[test]
+fn the_shared_mcp_check_fails_only_a_missing_portable_server() {
+    let servers = [stdio("ez", "ez"), stdio("fx", "fx"), stdio("np", "${CLAUDE_PLUGIN_ROOT}/bin/np")];
+    let partial = serde_json::json!({"mcpServers": {"ez": {}}});
+    let check = super::check_mcp_registered(&servers, Some(&partial), &["mcpServers"], "not in mcp.json", "run setup");
+    assert_eq!(detail(&check), "fail: mcp server(s) not in mcp.json: fx");
+    let full = serde_json::json!({"mcpServers": {"ez": {}, "fx": {}}});
+    let check = super::check_mcp_registered(&servers, Some(&full), &["mcpServers"], "not in mcp.json", "run setup");
+    assert_eq!(
+        detail(&check),
+        "warn: ez, fx registered; skipped np: ${CLAUDE_PLUGIN_ROOT} expands only inside Claude Code (use a bare command name)"
+    );
+}

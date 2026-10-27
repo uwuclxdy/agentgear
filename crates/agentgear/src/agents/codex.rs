@@ -33,7 +33,7 @@ use super::cchooks::{hook_is_portable, remove_hook_groups, render_hook_group};
 use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem};
 use super::report;
 use super::{AgentBackend, BackendState, mcptoml};
-use crate::components::{HookBinding, MarkdownDoc, McpServer};
+use crate::components::{HookBinding, MarkdownDoc, McpServer, portable_names};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
@@ -187,25 +187,12 @@ fn agents_md(scope: &Scope) -> Result<Option<PathBuf>> {
 /// top-level dir (no subdirs scanned), so a nested command flattens its path into
 /// the stem; the plugin prefix keeps every file identifiably ours for exact removal.
 fn prompt_path(prompts: &Path, plugin: &str, doc: &MarkdownDoc) -> PathBuf {
-    prompts.join(format!("{plugin}-{}.md", flat_stem(&doc.rel, "commands")))
+    prompts.join(format!("{plugin}-{}.md", doc.flat_stem()))
 }
 
 /// `agents/ez-helper.md` -> `<agents>/<plugin>-ez-helper.toml`.
 fn agent_path(agents: &Path, plugin: &str, doc: &MarkdownDoc) -> PathBuf {
-    agents.join(format!("{plugin}-{}.toml", flat_stem(&doc.rel, "agents")))
-}
-
-/// Strip the surface dir + `.md`, flattening any remaining subdir separators to `-`.
-fn flat_stem(rel: &str, subdir: &str) -> String {
-    let stripped = rel.strip_prefix(subdir).unwrap_or(rel).trim_start_matches('/');
-    stripped.strip_suffix(".md").unwrap_or(stripped).replace('/', "-")
-}
-
-/// Server names `reconcile` actually writes (non-portable ones are skipped).
-/// `remove` keys off the same set so it never deletes a user server that happens
-/// to share a name with one we declared but never wrote.
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
+    agents.join(format!("{plugin}-{}.toml", doc.flat_stem()))
 }
 
 // --- agents ------------------------------------------------------------------
@@ -218,7 +205,7 @@ fn portable_names(servers: &[McpServer]) -> Vec<&str> {
 /// (`sonnet`/`opus`) is dropped — it has no reliable map to codex model ids, so
 /// codex's own default applies. Deterministic, so a re-reconcile is byte-identical.
 fn render_agent_toml(plugin: &str, doc: &MarkdownDoc) -> String {
-    let name = format!("{plugin}-{}", flat_stem(&doc.rel, "agents"));
+    let name = format!("{plugin}-{}", doc.flat_stem());
     let description = doc.frontmatter.get("description").and_then(Value::as_str).unwrap_or_default();
     let mut out = String::new();
     let _ = writeln!(out, "name = {}", toml_basic_string(&name));
@@ -417,7 +404,7 @@ fn report_checks(backend: &CodexBackend, plugin: &Plugin, source: &Source) -> Ve
 
 fn check_mcp_registered(servers: &[McpServer], doc: Option<&toml_edit::DocumentMut>) -> DoctorCheck {
     let name = "mcp server registered";
-    let portable: Vec<&str> = servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect();
+    let portable = portable_names(servers);
     let skipped = report::skipped_mcp(servers, &portable);
     if portable.is_empty() {
         return report::note_skipped(DoctorCheck { name, status: CheckStatus::Ok(report::NO_MCP.into()) }, &skipped);

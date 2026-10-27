@@ -104,10 +104,8 @@ impl AgentBackend for OmpBackend {
         let comp = plugin.components(source)?.with_client(self.id());
         let base = surface_base(scope)?;
         let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
-        let commands = report::probe_files(
-            &expected_docs(&base.join("commands"), plugin.name, "commands/", &comp.commands, |doc| doc.raw.clone()),
-            |_, _| true,
-        )?;
+        let commands =
+            report::probe_files(&expected_docs(&base.join("commands"), plugin.name, &comp.commands, |doc| doc.raw.clone()), |_, _| true)?;
         // Retired agents own nothing on disk, so the surface contributes `None` (not
         // `Absent`). Probing the never-written files would read `Absent` and, folded
         // behind a healthy mcp, churn the backend to `NeedsRepair` on every self_heal.
@@ -115,9 +113,7 @@ impl AgentBackend for OmpBackend {
             None
         } else {
             report::probe_files(
-                &expected_docs(&base.join("agents"), plugin.name, "agents/", &comp.agents, |doc| {
-                    render_agent(plugin.name, doc).into_bytes()
-                }),
+                &expected_docs(&base.join("agents"), plugin.name, &comp.agents, |doc| render_agent(plugin.name, doc).into_bytes()),
                 |_, _| true,
             )?
         };
@@ -140,17 +136,14 @@ impl AgentBackend for OmpBackend {
         // are already a valid omp command; unknown CC frontmatter keys are ignored.
         let cmd_root = base.join("commands");
         for doc in &comp.commands {
-            changed |= write_file_idem(&cmd_root.join(doc_file(plugin.name, &doc.rel, "commands/")), &doc.raw)?;
+            changed |= write_file_idem(&cmd_root.join(doc_file(plugin.name, doc)), &doc.raw)?;
         }
         // Retire the agent translation when CC's own registry already surfaces these
         // agents to omp (the `claude` backend installed us); mcp + commands still land.
         if !cc_registry_covers_agents(plugin) {
             let agent_root = base.join("agents");
             for doc in &comp.agents {
-                changed |= write_file_idem(
-                    &agent_root.join(doc_file(plugin.name, &doc.rel, "agents/")),
-                    render_agent(plugin.name, doc).as_bytes(),
-                )?;
+                changed |= write_file_idem(&agent_root.join(doc_file(plugin.name, doc)), render_agent(plugin.name, doc).as_bytes())?;
             }
         }
         if let Some(path) = instructions_file(scope)? {
@@ -171,11 +164,11 @@ impl AgentBackend for OmpBackend {
         // `remove_dir_all`.
         let cmd_root = base.join("commands");
         for doc in &comp.commands {
-            changed |= remove_file_idem(&cmd_root.join(doc_file(plugin.name, &doc.rel, "commands/")))?;
+            changed |= remove_file_idem(&cmd_root.join(doc_file(plugin.name, doc)))?;
         }
         let agent_root = base.join("agents");
         for doc in &comp.agents {
-            changed |= remove_file_idem(&agent_root.join(doc_file(plugin.name, &doc.rel, "agents/")))?;
+            changed |= remove_file_idem(&agent_root.join(doc_file(plugin.name, doc)))?;
         }
         if let Some(path) = instructions_file(scope)? {
             changed |= agentsmd::remove(&path, plugin)?;
@@ -246,22 +239,14 @@ fn instructions_file(scope: &Scope) -> Result<Option<PathBuf>> {
 /// `<plugin>-a-b.md`). omp scans `commands/*.md` / `agents/*.md` flat (non-recursive),
 /// so nesting is flattened; the plugin prefix keeps the file identifiably ours for an
 /// exact `remove` and clear of an omp bundled agent name (`scout`/`reviewer`/…).
-fn doc_file(plugin: &str, rel: &str, prefix: &str) -> String {
-    format!("{plugin}-{}.md", flat_stem(rel, prefix))
-}
-
-fn flat_stem(rel: &str, prefix: &str) -> String {
-    let stripped = rel.strip_prefix(prefix).unwrap_or(rel);
-    let stem = stripped.strip_suffix(".md").unwrap_or(stripped);
-    stem.replace(['/', '\\'], "-")
+fn doc_file(plugin: &str, doc: &MarkdownDoc) -> String {
+    format!("{plugin}-{}.md", doc.flat_stem())
 }
 
 /// The `(path, rendered bytes)` files `probe` compares against disk for a surface
 /// dir, keyed off the same `doc_file` + render `reconcile` writes.
-fn expected_docs(
-    dir: &Path, plugin: &str, prefix: &str, docs: &[MarkdownDoc], render: impl Fn(&MarkdownDoc) -> Vec<u8>,
-) -> Vec<(PathBuf, Vec<u8>)> {
-    docs.iter().map(|doc| (dir.join(doc_file(plugin, &doc.rel, prefix)), render(doc))).collect()
+fn expected_docs(dir: &Path, plugin: &str, docs: &[MarkdownDoc], render: impl Fn(&MarkdownDoc) -> Vec<u8>) -> Vec<(PathBuf, Vec<u8>)> {
+    docs.iter().map(|doc| (dir.join(doc_file(plugin, doc)), render(doc))).collect()
 }
 
 /// Render a CC agent def as an omp task agent. omp normalizes `name`/`description`
@@ -273,7 +258,7 @@ fn expected_docs(
 /// re-reconcile is byte-identical (a true `NoOp`).
 fn render_agent(plugin: &str, doc: &MarkdownDoc) -> String {
     let mut out = String::from("---\n");
-    let _ = writeln!(out, "name: {}", yaml_scalar(&format!("{plugin}-{}", flat_stem(&doc.rel, "agents/"))));
+    let _ = writeln!(out, "name: {}", yaml_scalar(&format!("{plugin}-{}", doc.flat_stem())));
     if let Some(desc) = doc.frontmatter.get("description").and_then(Value::as_str) {
         let _ = writeln!(out, "description: {}", yaml_scalar(desc));
     }
@@ -379,7 +364,7 @@ fn report_checks(backend: &OmpBackend, plugin: &Plugin, source: &Source) -> Vec<
         "run the host's `setup`",
     ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
-    checks.push(check_docs_present("translated commands present", &comp.commands, &base.join("commands"), plugin.name, "commands/"));
+    checks.push(check_docs_present("translated commands present", &comp.commands, &base.join("commands"), plugin.name));
     // When CC's registry covers the agents, we deliberately write none, so file-existence
     // is not a health signal — report the retire rather than a spurious "missing" Fail.
     checks.push(if cc_registry_covers_agents(plugin) {
@@ -388,7 +373,7 @@ fn report_checks(backend: &OmpBackend, plugin: &Plugin, source: &Source) -> Vec<
             status: CheckStatus::Ok("covered by Claude Code's plugin registry; not translated".into()),
         }
     } else {
-        check_docs_present("translated agents present", &comp.agents, &base.join("agents"), plugin.name, "agents/")
+        check_docs_present("translated agents present", &comp.agents, &base.join("agents"), plugin.name)
     });
 
     if plugin.instructions.is_some() {
@@ -398,11 +383,11 @@ fn report_checks(backend: &OmpBackend, plugin: &Plugin, source: &Source) -> Vec<
     checks
 }
 
-fn check_docs_present(name: &'static str, docs: &[MarkdownDoc], dir: &Path, plugin: &str, prefix: &str) -> DoctorCheck {
+fn check_docs_present(name: &'static str, docs: &[MarkdownDoc], dir: &Path, plugin: &str) -> DoctorCheck {
     if docs.is_empty() {
         return DoctorCheck { name, status: CheckStatus::Ok("nothing to translate".into()) };
     }
-    let missing: Vec<String> = docs.iter().map(|d| doc_file(plugin, &d.rel, prefix)).filter(|f| !dir.join(f).exists()).collect();
+    let missing: Vec<String> = docs.iter().map(|d| doc_file(plugin, d)).filter(|f| !dir.join(f).exists()).collect();
     if missing.is_empty() {
         DoctorCheck { name, status: CheckStatus::Ok(format!("{} file(s) present", docs.len())) }
     } else {

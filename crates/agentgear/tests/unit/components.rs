@@ -121,6 +121,59 @@ fn is_portable_flags_plugin_root() {
 }
 
 #[test]
+fn portable_names_keeps_only_portable_servers_in_order() {
+    let entries = vec![e(
+        ".claude-plugin/plugin.json",
+        r#"{"name":"p","mcpServers":{"a":{"command":"host"},"rooted":{"command":"${CLAUDE_PLUGIN_ROOT}/x"},"b":{"type":"http","url":"https://example.com/mcp"}}}"#,
+    )];
+    let c = parse(&entries);
+    assert_eq!(portable_names(&c.mcp_servers), vec!["a", "b"]);
+}
+
+#[test]
+fn flat_stem_drops_the_kind_dir_and_md_suffix_and_flattens_nesting() {
+    let entries = vec![
+        e("commands/hello.md", "x"),
+        e("commands/nested/hello.md", "x"),
+        e("agents/a/b/c.md", "x"),
+        e("agents/x.md.md", "x"),
+        e("agents/reviewer.md", "x"),
+    ];
+    let c = parse(&entries);
+    let stems: Vec<String> = c.commands.iter().chain(&c.agents).map(MarkdownDoc::flat_stem).collect();
+    assert_eq!(stems, vec!["hello", "nested-hello", "a-b-c", "x.md", "reviewer"]);
+}
+
+/// The parser normalizes separators before a doc exists, so a backslash-separated tree
+/// entry renders the same stem as its slash twin.
+#[test]
+fn flat_stem_of_a_backslash_tree_entry_matches_its_slash_twin() {
+    let c = parse(&[e("commands\\nested\\hello.md", "x")]);
+    assert_eq!(c.commands[0].flat_stem(), "nested-hello");
+}
+
+/// A doc built outside the parser keeps its raw rel; a backslash in it still flattens.
+#[test]
+fn flat_stem_flattens_a_backslash_in_a_raw_rel() {
+    let doc = MarkdownDoc {
+        name: "hello".into(),
+        rel: "commands/nested\\hello.md".into(),
+        frontmatter: BTreeMap::new(),
+        body: String::new(),
+        raw: Vec::new(),
+    };
+    assert_eq!(doc.flat_stem(), "nested-hello");
+}
+
+/// An empty segment after the kind dir is dropped, so the stem never opens with the
+/// separator.
+#[test]
+fn flat_stem_trims_an_empty_leading_segment() {
+    let c = parse(&[e("commands//hello.md", "x")]);
+    assert_eq!(c.commands[0].flat_stem(), "hello");
+}
+
+#[test]
 fn referenced_mcp_json_may_be_a_bare_map() {
     // A referenced `.mcp.json` without the `mcpServers` wrapper is a bare `{name: spec}` map.
     let entries = vec![

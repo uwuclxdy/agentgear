@@ -25,7 +25,7 @@ use serde_json::{Map, Value};
 use super::confedit::{json_edit, json_obj_at, json_prune_at, json_prune_obj, json_remove, remove_file_idem, write_file_idem, yaml_quote};
 use super::report;
 use super::{AgentBackend, BackendState};
-use crate::components::{MarkdownDoc, McpKind, McpServer};
+use crate::components::{MarkdownDoc, McpKind, McpServer, portable_names};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
@@ -173,9 +173,7 @@ fn surface_base(scope: &Scope) -> Result<PathBuf> {
 /// scan of `commands`/`agents` recurses subdirectories, so a flat, prefixed name
 /// stays discoverable there and identifiably ours.
 fn doc_path(base: &Path, subdir: &str, plugin: &str, doc: &MarkdownDoc) -> PathBuf {
-    let stem =
-        doc.rel.strip_prefix(subdir).unwrap_or(&doc.rel).trim_start_matches('/').strip_suffix(".md").unwrap_or(&doc.rel).replace('/', "-");
-    base.join(subdir).join(format!("{plugin}-{stem}.md"))
+    base.join(subdir).join(format!("{plugin}-{}.md", doc.flat_stem()))
 }
 
 /// The `(path, rendered bytes)` files `probe` compares against disk for a surface
@@ -184,13 +182,6 @@ fn expected_docs(
     base: &Path, subdir: &str, plugin: &str, docs: &[MarkdownDoc], render: impl Fn(&MarkdownDoc) -> Vec<u8>,
 ) -> Vec<(PathBuf, Vec<u8>)> {
     docs.iter().map(|doc| (doc_path(base, subdir, plugin, doc), render(doc))).collect()
-}
-
-/// Server names `reconcile_mcp` actually writes (non-portable ones are skipped).
-/// `remove` keys off the same set so it never deletes a user server that happens
-/// to share a name with one we declared but never wrote.
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
 }
 
 // --- mcp (bespoke) -----------------------------------------------------------
@@ -506,3 +497,7 @@ fn check_docs_present(name: &'static str, docs: &[MarkdownDoc], base: &Path, sub
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/opencode.rs"]
+mod opencode_tests;

@@ -6,6 +6,24 @@
 use super::*;
 use crate::components::HookBinding;
 
+fn doc(rel: &str) -> MarkdownDoc {
+    MarkdownDoc {
+        name: "nested".into(),
+        rel: rel.into(),
+        frontmatter: std::collections::BTreeMap::new(),
+        body: String::new(),
+        raw: Vec::new(),
+    }
+}
+
+/// cursor scans `commands/`/`agents/` non-recursively, so a nested doc must render
+/// as one flattened, plugin-prefixed filename.
+#[test]
+fn command_and_agent_files_flatten_a_nested_doc() {
+    assert_eq!(doc_file("ez-fixture-plugin", &doc("commands/sub/nested.md")), "ez-fixture-plugin-sub-nested.md");
+    assert_eq!(doc_file("ez-fixture-plugin", &doc("agents/sub/nested.md")), "ez-fixture-plugin-sub-nested.md");
+}
+
 /// cursor hosts a `subagentStart` agent hook and already maps
 /// `SubagentStop -> subagentStop`, so the CC `SubagentStart` event must map to
 /// `subagentStart` too. Guards the `map_event` arm end-to-end through `reconcile_hooks`:

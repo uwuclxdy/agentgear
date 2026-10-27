@@ -82,14 +82,10 @@ impl AgentBackend for DroidBackend {
         let base = factory_dir(scope)?;
         let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
         let hooks = report::probe_json_entries(&base.join("hooks.json"), &hook_entries(&comp.hooks))?;
-        let commands = report::probe_files(
-            &expected_docs(&base.join("commands"), plugin.name, "commands/", &comp.commands, |doc| doc.raw.clone()),
-            |_, _| true,
-        )?;
+        let commands =
+            report::probe_files(&expected_docs(&base.join("commands"), plugin.name, &comp.commands, |doc| doc.raw.clone()), |_, _| true)?;
         let droids = report::probe_files(
-            &expected_docs(&base.join("droids"), plugin.name, "agents/", &comp.agents, |doc| {
-                render_droid(plugin.name, &doc.rel, doc).into_bytes()
-            }),
+            &expected_docs(&base.join("droids"), plugin.name, &comp.agents, |doc| render_droid(plugin.name, doc).into_bytes()),
             |_, _| true,
         )?;
         let skills = skillsdir::probe(&base.join("skills"), plugin, &comp.skills)?;
@@ -112,12 +108,12 @@ impl AgentBackend for DroidBackend {
         // so a verbatim copy is the faithful translation; the name comes from the flat
         // filename, not frontmatter. Custom droids need a namespaced `name` key.
         for doc in &comp.commands {
-            let path = base.join("commands").join(doc_filename(plugin.name, &doc.rel, "commands/"));
+            let path = base.join("commands").join(doc_filename(plugin.name, doc));
             changed |= write_file_idem(&path, &doc.raw)?;
         }
         for doc in &comp.agents {
-            let path = base.join("droids").join(doc_filename(plugin.name, &doc.rel, "agents/"));
-            changed |= write_file_idem(&path, render_droid(plugin.name, &doc.rel, doc).as_bytes())?;
+            let path = base.join("droids").join(doc_filename(plugin.name, doc));
+            changed |= write_file_idem(&path, render_droid(plugin.name, doc).as_bytes())?;
         }
         changed |= skillsdir::reconcile(&base.join("skills"), plugin, &comp.skills)?;
         if let Some(path) = instructions_file(scope)? {
@@ -136,9 +132,9 @@ impl AgentBackend for DroidBackend {
 
         // We wrote each doc as one flat, plugin-prefixed file, so removing exactly those
         // paths never reaches a user's own command/droid or a droid built-in.
-        for (subdir, prefix, docs) in [("commands", "commands/", &comp.commands), ("droids", "agents/", &comp.agents)] {
+        for (subdir, docs) in [("commands", &comp.commands), ("droids", &comp.agents)] {
             for doc in docs {
-                let path = base.join(subdir).join(doc_filename(plugin.name, &doc.rel, prefix));
+                let path = base.join(subdir).join(doc_filename(plugin.name, doc));
                 changed |= remove_file_idem(&path)?;
             }
         }
@@ -186,15 +182,13 @@ fn instructions_file(scope: &Scope) -> Result<Option<PathBuf>> {
 /// `commands/hello.md` -> `<plugin>-hello`; a nested path flattens (`a/b.md` ->
 /// `<plugin>-a-b`) because droid only loads top-level files. The plugin prefix keeps
 /// the file identifiable as ours for an exact `remove`.
-fn namespaced(plugin: &str, rel: &str, prefix: &str) -> String {
-    let stripped = rel.strip_prefix(prefix).unwrap_or(rel);
-    let stem = stripped.strip_suffix(".md").unwrap_or(stripped);
-    format!("{plugin}-{}", stem.replace(['/', '\\'], "-"))
+fn namespaced(plugin: &str, doc: &MarkdownDoc) -> String {
+    format!("{plugin}-{}", doc.flat_stem())
 }
 
 /// The flat `<plugin>-<stem>.md` filename a translated command/droid is written as.
-fn doc_filename(plugin: &str, rel: &str, prefix: &str) -> String {
-    format!("{}.md", namespaced(plugin, rel, prefix))
+fn doc_filename(plugin: &str, doc: &MarkdownDoc) -> String {
+    format!("{}.md", namespaced(plugin, doc))
 }
 
 // --- hooks -------------------------------------------------------------------
@@ -229,10 +223,8 @@ fn hook_entries(hooks: &[HookBinding]) -> Vec<(Vec<String>, Value)> {
 
 /// The `(path, rendered bytes)` files `probe` compares against disk for a surface
 /// dir, keyed off the same `doc_filename` + render `reconcile` writes.
-fn expected_docs(
-    dir: &Path, plugin: &str, prefix: &str, docs: &[MarkdownDoc], render: impl Fn(&MarkdownDoc) -> Vec<u8>,
-) -> Vec<(PathBuf, Vec<u8>)> {
-    docs.iter().map(|doc| (dir.join(doc_filename(plugin, &doc.rel, prefix)), render(doc))).collect()
+fn expected_docs(dir: &Path, plugin: &str, docs: &[MarkdownDoc], render: impl Fn(&MarkdownDoc) -> Vec<u8>) -> Vec<(PathBuf, Vec<u8>)> {
+    docs.iter().map(|doc| (dir.join(doc_filename(plugin, doc)), render(doc))).collect()
 }
 
 /// Add-if-absent our hook groups under each mapped event in the `hooks.json` wrapper,
@@ -289,9 +281,9 @@ fn remove_hooks(hooks_path: &Path, hooks: &[HookBinding]) -> Result<bool> {
 /// so translation is a re-emit with an ownership-safe, collision-free `name`.
 /// Deterministic (BTreeMap frontmatter iteration is sorted) so a re-reconcile is
 /// byte-identical.
-fn render_droid(plugin: &str, rel: &str, doc: &MarkdownDoc) -> String {
+fn render_droid(plugin: &str, doc: &MarkdownDoc) -> String {
     let mut out = String::from("---\n");
-    let _ = writeln!(out, "name: {}", yaml_scalar(&namespaced(plugin, rel, "agents/")));
+    let _ = writeln!(out, "name: {}", yaml_scalar(&namespaced(plugin, doc)));
     for (key, value) in &doc.frontmatter {
         if key == "name" {
             continue; // overridden with the namespaced name above
@@ -355,8 +347,8 @@ fn report_checks(backend: &DroidBackend, plugin: &Plugin, source: &Source) -> Ve
         "run the host's `setup`",
     ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
-    checks.push(check_docs_present("commands", "commands/", &comp.commands, plugin.name, &base));
-    checks.push(check_docs_present("droids", "agents/", &comp.agents, plugin.name, &base));
+    checks.push(check_docs_present("commands", &comp.commands, plugin.name, &base));
+    checks.push(check_docs_present("droids", &comp.agents, plugin.name, &base));
 
     if plugin.instructions.is_some() {
         checks.push(agentsmd::guidance_check(instructions_file(&Scope::User), plugin));
@@ -365,14 +357,13 @@ fn report_checks(backend: &DroidBackend, plugin: &Plugin, source: &Source) -> Ve
     checks
 }
 
-fn check_docs_present(subdir: &str, prefix: &str, docs: &[MarkdownDoc], plugin: &str, base: &Path) -> DoctorCheck {
+fn check_docs_present(subdir: &str, docs: &[MarkdownDoc], plugin: &str, base: &Path) -> DoctorCheck {
     // A shared name so the doctor fan-out's `<id>: ` prefix stays the whole label.
     let name: &'static str = if subdir == "commands" { "translated commands present" } else { "translated droids present" };
     if docs.is_empty() {
         return DoctorCheck { name, status: CheckStatus::Ok(format!("no {subdir} to translate")) };
     }
-    let missing: Vec<String> =
-        docs.iter().map(|d| doc_filename(plugin, &d.rel, prefix)).filter(|f| !base.join(subdir).join(f).exists()).collect();
+    let missing: Vec<String> = docs.iter().map(|d| doc_filename(plugin, d)).filter(|f| !base.join(subdir).join(f).exists()).collect();
     if missing.is_empty() {
         DoctorCheck { name, status: CheckStatus::Ok(format!("{} {subdir} file(s) present", docs.len())) }
     } else {

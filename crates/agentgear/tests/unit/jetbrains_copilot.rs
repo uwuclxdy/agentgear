@@ -9,9 +9,8 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use super::portable_names;
 use crate::agents::{BackendState, mcpjson};
-use crate::components::{McpKind, McpServer};
+use crate::components::{McpKind, McpServer, portable_names};
 use crate::host::Outcome;
 
 fn scratch(name: &str) -> PathBuf {

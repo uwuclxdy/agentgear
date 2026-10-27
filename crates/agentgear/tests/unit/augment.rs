@@ -11,10 +11,10 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use super::{hook_is_portable, map_event, portable_names, reconcile_settings, remove_from_settings};
+use super::{agent_name, doc_file, hook_is_portable, map_event, reconcile_settings, remove_from_settings};
 use crate::agents::BackendState;
 use crate::agents::mcpjson::{self, ServerShape};
-use crate::components::{HookBinding, McpKind, McpServer};
+use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer, portable_names};
 use crate::host::Outcome;
 
 fn scratch(name: &str) -> PathBuf {
@@ -33,6 +33,19 @@ fn hook(event: &str, command: &str) -> HookBinding {
 
 fn read(path: &PathBuf) -> Value {
     serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
+#[test]
+fn doc_file_flattens_a_nested_doc() {
+    let doc = MarkdownDoc {
+        name: "nested".into(),
+        rel: "commands/sub/nested.md".into(),
+        frontmatter: BTreeMap::new(),
+        body: String::new(),
+        raw: Vec::new(),
+    };
+    assert_eq!(doc_file("ez-fixture-plugin", &doc), "ez-fixture-plugin-sub-nested.md");
+    assert_eq!(agent_name("ez-fixture-plugin", &doc), "ez-fixture-plugin-sub-nested");
 }
 
 #[test]

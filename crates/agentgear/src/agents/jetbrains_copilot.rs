@@ -19,7 +19,7 @@ use serde_json::Value;
 use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
 use super::{AgentBackend, BackendState};
-use crate::components::McpServer;
+use crate::components::{McpServer, portable_names};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
@@ -147,12 +147,6 @@ fn mcp_path() -> Result<PathBuf> {
     let dir = config_dir()
         .ok_or_else(|| Error::Tree("no config directory (XDG_CONFIG_HOME/HOME/LOCALAPPDATA unset); cannot locate github-copilot".into()))?;
     Ok(dir.join("mcp.json"))
-}
-
-/// Server names `reconcile` actually writes (the shared renderer skips non-portable
-/// ones); `remove` must key off the same set.
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
 }
 
 // --- report ------------------------------------------------------------------

@@ -300,13 +300,7 @@ fn command_rel(doc: &MarkdownDoc) -> String {
 /// plugin prefix keeps the file identifiable as ours for an exact `remove` and clear
 /// of a user's own agent of the same stem.
 fn agent_file(plugin: &str, doc: &MarkdownDoc) -> String {
-    format!("{plugin}-{}.md", flat_stem(&doc.rel, "agents/"))
-}
-
-fn flat_stem(rel: &str, prefix: &str) -> String {
-    let stripped = rel.strip_prefix(prefix).unwrap_or(rel);
-    let stem = stripped.strip_suffix(".md").unwrap_or(stripped);
-    stem.replace(['/', '\\'], "-")
+    format!("{plugin}-{}.md", doc.flat_stem())
 }
 
 /// Render a CC agent def as a qwen subagent file. `name` is plugin-prefixed so two

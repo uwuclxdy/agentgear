@@ -86,9 +86,8 @@ impl AgentBackend for DevinBackend {
         let config = base.join("config.json");
         let mcp = mcpjson::probe_surface(&config, &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let hooks = report::probe_json_entries(&config, &hook_entries(&comp.hooks))?;
-        let commands =
-            report::probe_files(&expected_docs(&base, "skills", "SKILL.md", "commands/", plugin.name, &comp.commands), |_, _| true)?;
-        let agents = report::probe_files(&expected_docs(&base, "agents", "AGENT.md", "agents/", plugin.name, &comp.agents), |_, _| true)?;
+        let commands = report::probe_files(&expected_docs(&base, "skills", "SKILL.md", plugin.name, &comp.commands), |_, _| true)?;
+        let agents = report::probe_files(&expected_docs(&base, "agents", "AGENT.md", plugin.name, &comp.agents), |_, _| true)?;
         // Plugin `skills/` (the SkillDir IR) is a distinct surface from CC-commands-as-
         // devin-skills above: it lands in devin's `.agents/skills` scan root, not the
         // `<config_base>/skills` dir the commands own.
@@ -112,12 +111,12 @@ impl AgentBackend for DevinBackend {
         // Each skill/agent is its own depth-1 dir (devin discovers `skills/<name>/
         // SKILL.md` and `agents/<name>/AGENT.md`), plugin-prefixed so it stays ours.
         for doc in &comp.commands {
-            let path = base.join("skills").join(namespaced(plugin.name, &doc.rel, "commands/")).join("SKILL.md");
-            changed |= write_file_idem(&path, render_doc(plugin.name, &doc.rel, "commands/", doc).as_bytes())?;
+            let path = base.join("skills").join(namespaced(plugin.name, doc)).join("SKILL.md");
+            changed |= write_file_idem(&path, render_doc(plugin.name, doc).as_bytes())?;
         }
         for doc in &comp.agents {
-            let path = base.join("agents").join(namespaced(plugin.name, &doc.rel, "agents/")).join("AGENT.md");
-            changed |= write_file_idem(&path, render_doc(plugin.name, &doc.rel, "agents/", doc).as_bytes())?;
+            let path = base.join("agents").join(namespaced(plugin.name, doc)).join("AGENT.md");
+            changed |= write_file_idem(&path, render_doc(plugin.name, doc).as_bytes())?;
         }
         // Plugin skills land in the `.agents/skills` scan root (bare `<name>/`), kept
         // distinct from the `skills/<plugin>-<stem>/` dirs the CC commands own above.
@@ -139,9 +138,9 @@ impl AgentBackend for DevinBackend {
 
         // We own each `<plugin>-<stem>/` dir whole, so a recursive drop is exact and
         // never reaches a devin built-in profile or a user's own skill/agent.
-        for (subdir, prefix, docs) in [("skills", "commands/", &comp.commands), ("agents", "agents/", &comp.agents)] {
+        for (subdir, docs) in [("skills", &comp.commands), ("agents", &comp.agents)] {
             for doc in docs {
-                let dir = base.join(subdir).join(namespaced(plugin.name, &doc.rel, prefix));
+                let dir = base.join(subdir).join(namespaced(plugin.name, doc));
                 if dir.exists() {
                     fs::remove_dir_all(&dir).io_ctx(|| format!("removing {}", dir.display()))?;
                     changed = true;
@@ -215,10 +214,8 @@ fn project_marker_present() -> bool {
 /// `commands/hello.md` -> `<plugin>-hello`; a nested path flattens (`a/b.md` ->
 /// `<plugin>-a-b`). The plugin prefix keeps the dir identifiable as ours for an
 /// exact `remove` and clear of any devin built-in profile name.
-fn namespaced(plugin: &str, rel: &str, prefix: &str) -> String {
-    let stripped = rel.strip_prefix(prefix).unwrap_or(rel);
-    let stem = stripped.strip_suffix(".md").unwrap_or(stripped);
-    format!("{plugin}-{}", stem.replace(['/', '\\'], "-"))
+fn namespaced(plugin: &str, doc: &MarkdownDoc) -> String {
+    format!("{plugin}-{}", doc.flat_stem())
 }
 
 // --- hooks -------------------------------------------------------------------
@@ -250,11 +247,11 @@ fn hook_entries(hooks: &[HookBinding]) -> Vec<(Vec<String>, Value)> {
 
 /// The `(path, rendered bytes)` `SKILL.md`/`AGENT.md` files `probe` compares against
 /// disk, keyed off the same `namespaced` dir + `render_doc` `reconcile` writes.
-fn expected_docs(base: &Path, subdir: &str, file: &str, prefix: &str, plugin: &str, docs: &[MarkdownDoc]) -> Vec<(PathBuf, Vec<u8>)> {
+fn expected_docs(base: &Path, subdir: &str, file: &str, plugin: &str, docs: &[MarkdownDoc]) -> Vec<(PathBuf, Vec<u8>)> {
     docs.iter()
         .map(|doc| {
-            let path = base.join(subdir).join(namespaced(plugin, &doc.rel, prefix)).join(file);
-            (path, render_doc(plugin, &doc.rel, prefix, doc).into_bytes())
+            let path = base.join(subdir).join(namespaced(plugin, doc)).join(file);
+            (path, render_doc(plugin, doc).into_bytes())
         })
         .collect()
 }
@@ -313,9 +310,9 @@ fn remove_hooks(config: &Path, hooks: &[HookBinding]) -> Result<bool> {
 /// body. Devin reads YAML frontmatter + a markdown system prompt — the same shape
 /// as the CC source — so translation is a re-emit with an ownership-safe `name`.
 /// Deterministic (so a re-reconcile is byte-identical).
-fn render_doc(plugin: &str, rel: &str, prefix: &str, doc: &MarkdownDoc) -> String {
+fn render_doc(plugin: &str, doc: &MarkdownDoc) -> String {
     let mut out = String::from("---\n");
-    let _ = writeln!(out, "name: {}", yaml_scalar(&namespaced(plugin, rel, prefix)));
+    let _ = writeln!(out, "name: {}", yaml_scalar(&namespaced(plugin, doc)));
     for (key, value) in &doc.frontmatter {
         if key == "name" {
             continue; // overridden with the namespaced name above
@@ -379,8 +376,8 @@ fn report_checks(backend: &DevinBackend, plugin: &Plugin, source: &Source) -> Ve
         "run the host's `setup`",
     ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
-    checks.push(check_docs_present("skills", "SKILL.md", "commands/", &comp.commands, plugin.name, &base));
-    checks.push(check_docs_present("agents", "AGENT.md", "agents/", &comp.agents, plugin.name, &base));
+    checks.push(check_docs_present("skills", "SKILL.md", &comp.commands, plugin.name, &base));
+    checks.push(check_docs_present("agents", "AGENT.md", &comp.agents, plugin.name, &base));
 
     if plugin.instructions.is_some() {
         checks.push(agentsmd::guidance_check(instructions_file(&Scope::User), plugin));
@@ -389,14 +386,14 @@ fn report_checks(backend: &DevinBackend, plugin: &Plugin, source: &Source) -> Ve
     checks
 }
 
-fn check_docs_present(subdir: &str, file: &str, prefix: &str, docs: &[MarkdownDoc], plugin: &str, base: &Path) -> DoctorCheck {
+fn check_docs_present(subdir: &str, file: &str, docs: &[MarkdownDoc], plugin: &str, base: &Path) -> DoctorCheck {
     // A shared name so the doctor fan-out's `<id>: ` prefix stays the whole label.
     let name: &'static str = if subdir == "skills" { "translated skills present" } else { "translated subagents present" };
     if docs.is_empty() {
         return DoctorCheck { name, status: CheckStatus::Ok(format!("no {subdir} to translate")) };
     }
     let missing: Vec<String> =
-        docs.iter().map(|d| namespaced(plugin, &d.rel, prefix)).filter(|dir| !base.join(subdir).join(dir).join(file).exists()).collect();
+        docs.iter().map(|d| namespaced(plugin, d)).filter(|dir| !base.join(subdir).join(dir).join(file).exists()).collect();
     if missing.is_empty() {
         DoctorCheck { name, status: CheckStatus::Ok(format!("{} {subdir} file(s) present", docs.len())) }
     } else {
@@ -409,3 +406,7 @@ fn check_docs_present(subdir: &str, file: &str, prefix: &str, docs: &[MarkdownDo
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/devin.rs"]
+mod devin_tests;

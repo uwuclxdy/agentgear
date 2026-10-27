@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::{agent_file, hook_is_portable, map_event, portable_names, project_root, reconcile_hooks, render_agent};
+use super::{agent_file, agent_name, hook_is_portable, map_event, project_root, reconcile_hooks, render_agent};
 use crate::agents::{BackendState, mcpjson};
-use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer};
+use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer, portable_names};
 use crate::host::{Outcome, Scope};
 
 fn scratch(name: &str) -> PathBuf {
@@ -246,6 +246,19 @@ fn render_agent_name_matches_filename_stem_even_when_frontmatter_name_differs() 
     assert!(rendered.contains(r#"description: "does things: carefully""#), "description must be JSON-quoted:\n{rendered}");
     assert!(!rendered.contains("model:"), "CC model alias must be dropped:\n{rendered}");
     assert!(rendered.trim_end().ends_with("You are a helper."), "body must follow the frontmatter:\n{rendered}");
+}
+
+#[test]
+fn agent_name_flattens_a_nested_agent() {
+    let doc = MarkdownDoc {
+        name: "nested".into(),
+        rel: "agents/sub/nested.md".into(),
+        frontmatter: BTreeMap::new(),
+        body: String::new(),
+        raw: Vec::new(),
+    };
+    assert_eq!(agent_name("ez-fixture-plugin", &doc), "ez-fixture-plugin-sub-nested");
+    assert_eq!(agent_file("ez-fixture-plugin", &doc), "ez-fixture-plugin-sub-nested.agent.md");
 }
 
 #[test]

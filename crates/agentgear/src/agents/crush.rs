@@ -48,7 +48,7 @@ use super::mcpjson::{self, ServerShape};
 use super::report;
 use super::skillsdir;
 use super::{AgentBackend, BackendState};
-use crate::components::{HookBinding, MarkdownDoc, McpServer};
+use crate::components::{HookBinding, MarkdownDoc, McpServer, portable_names};
 // The unit test builds server fixtures with `super::McpKind`; production no longer
 // references it directly (the mcp checks moved to `report`), so the re-export is
 // test-only to avoid an unused-import warning.
@@ -210,13 +210,6 @@ fn instructions_file(scope: &Scope) -> Result<Option<PathBuf>> {
         Scope::User => Ok(Some(crush_config_dir()?.join("CRUSH.md"))),
         Scope::Project { .. } => Ok(None),
     }
-}
-
-/// Server names `reconcile` actually writes (non-portable ones are skipped).
-/// `remove` keys off the same set so it never deletes a user server that happens
-/// to share a name with one we declared but never wrote.
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
 }
 
 // --- hooks -------------------------------------------------------------------

@@ -5,12 +5,31 @@
 //! off the same filtered set can never delete a same-named user entry).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use super::{BackendState, portable_names, probe_mcp, reconcile_mcp, remove_mcp, render_mcp_server};
-use crate::components::{McpKind, McpServer};
+use super::{BackendState, doc_path, probe_mcp, reconcile_mcp, remove_mcp, render_mcp_server};
+use crate::components::{MarkdownDoc, McpKind, McpServer, portable_names};
+
+#[test]
+fn doc_path_flattens_a_nested_doc() {
+    let doc = |rel: &str| MarkdownDoc {
+        name: "nested".into(),
+        rel: rel.into(),
+        frontmatter: BTreeMap::new(),
+        body: String::new(),
+        raw: Vec::new(),
+    };
+    assert_eq!(
+        doc_path(Path::new("base"), "commands", "ez-fixture-plugin", &doc("commands/sub/nested.md")),
+        Path::new("base/commands/ez-fixture-plugin-sub-nested.md")
+    );
+    assert_eq!(
+        doc_path(Path::new("base"), "agents", "ez-fixture-plugin", &doc("agents/sub/nested.md")),
+        Path::new("base/agents/ez-fixture-plugin-sub-nested.md")
+    );
+}
 
 /// A fresh unique config path per call, so cargo's parallel test threads never
 /// share a `kilo.json` (mirrors the codex/gemini unit-test scratch helpers).

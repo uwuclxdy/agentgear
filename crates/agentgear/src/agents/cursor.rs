@@ -119,11 +119,11 @@ impl AgentBackend for CursorBackend {
         let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, ServerShape::typed())?;
         let hooks = report::probe_json_entries(&base.join("hooks.json"), &hook_entries(&comp.hooks))?;
         let commands = report::probe_files(
-            &expected_docs(&base.join("commands"), plugin.name, "commands/", &comp.commands, |doc| command_body(doc).into_bytes()),
+            &expected_docs(&base.join("commands"), plugin.name, &comp.commands, |doc| command_body(doc).into_bytes()),
             |_, _| true,
         )?;
         let agents = report::probe_files(
-            &expected_docs(&base.join("agents"), plugin.name, "agents/", &comp.agents, |doc| render_agent(plugin.name, doc).into_bytes()),
+            &expected_docs(&base.join("agents"), plugin.name, &comp.agents, |doc| render_agent(plugin.name, doc).into_bytes()),
             |_, _| true,
         )?;
         let skills = skillsdir::probe(&base.join("skills"), plugin, &comp.skills)?;
@@ -147,11 +147,11 @@ impl AgentBackend for CursorBackend {
 
         let cmd_root = base.join("commands");
         for doc in &comp.commands {
-            changed |= write_file_idem(&cmd_root.join(command_file(plugin.name, doc)), command_body(doc).as_bytes())?;
+            changed |= write_file_idem(&cmd_root.join(doc_file(plugin.name, doc)), command_body(doc).as_bytes())?;
         }
         let agent_root = base.join("agents");
         for doc in &comp.agents {
-            changed |= write_file_idem(&agent_root.join(agent_file(plugin.name, doc)), render_agent(plugin.name, doc).as_bytes())?;
+            changed |= write_file_idem(&agent_root.join(doc_file(plugin.name, doc)), render_agent(plugin.name, doc).as_bytes())?;
         }
         changed |= skillsdir::reconcile(&base.join("skills"), plugin, &comp.skills)?;
         changed |= reconcile_instructions(&base, plugin)?;
@@ -170,11 +170,11 @@ impl AgentBackend for CursorBackend {
         // delete only our plugin-prefixed files by name (never a `remove_dir_all`).
         let cmd_root = base.join("commands");
         for doc in &comp.commands {
-            changed |= remove_file_idem(&cmd_root.join(command_file(plugin.name, doc)))?;
+            changed |= remove_file_idem(&cmd_root.join(doc_file(plugin.name, doc)))?;
         }
         let agent_root = base.join("agents");
         for doc in &comp.agents {
-            changed |= remove_file_idem(&agent_root.join(agent_file(plugin.name, doc)))?;
+            changed |= remove_file_idem(&agent_root.join(doc_file(plugin.name, doc)))?;
         }
         changed |= skillsdir::remove(&base.join("skills"), plugin, &comp.skills)?;
         changed |= remove_instructions(&base, plugin)?;
@@ -250,11 +250,9 @@ fn hook_entries(hooks: &[HookBinding]) -> Vec<(Vec<String>, Value)> {
 }
 
 /// The `(path, rendered bytes)` files `probe` compares against disk for a surface
-/// dir; the file name is `<plugin>-<flat stem>.md`, matching `command_file`/`agent_file`.
-fn expected_docs(
-    dir: &Path, plugin: &str, prefix: &str, docs: &[MarkdownDoc], render: impl Fn(&MarkdownDoc) -> Vec<u8>,
-) -> Vec<(PathBuf, Vec<u8>)> {
-    docs.iter().map(|doc| (dir.join(format!("{plugin}-{}.md", flat_stem(&doc.rel, prefix))), render(doc))).collect()
+/// dir, keyed off the same `doc_file` + render `reconcile` writes.
+fn expected_docs(dir: &Path, plugin: &str, docs: &[MarkdownDoc], render: impl Fn(&MarkdownDoc) -> Vec<u8>) -> Vec<(PathBuf, Vec<u8>)> {
+    docs.iter().map(|doc| (dir.join(doc_file(plugin, doc)), render(doc))).collect()
 }
 
 /// Cursor hook entries are flat `{command, matcher?}` objects directly in the
@@ -326,22 +324,11 @@ fn remove_hooks(path: &Path, hooks: &[HookBinding]) -> Result<bool> {
 
 // --- commands / agents -------------------------------------------------------
 
-/// `commands/hello.md` -> `<plugin>-hello.md`. Cursor scans `commands/*.md`
-/// (flat, no subdirs), so any nested path is flattened; the plugin prefix keeps
-/// the file identifiable as ours for an exact `remove`.
-fn command_file(plugin: &str, doc: &MarkdownDoc) -> String {
-    format!("{plugin}-{}.md", flat_stem(&doc.rel, "commands/"))
-}
-
-/// `agents/ez-helper.md` -> `<plugin>-ez-helper.md`, same prefixing rule.
-fn agent_file(plugin: &str, doc: &MarkdownDoc) -> String {
-    format!("{plugin}-{}.md", flat_stem(&doc.rel, "agents/"))
-}
-
-fn flat_stem(rel: &str, prefix: &str) -> String {
-    let stripped = rel.strip_prefix(prefix).unwrap_or(rel);
-    let stem = stripped.strip_suffix(".md").unwrap_or(stripped);
-    stem.replace(['/', '\\'], "-")
+/// `commands/hello.md` -> `<plugin>-hello.md` (`agents/` likewise). Cursor scans
+/// `commands/*.md` / `agents/*.md` (flat, no subdirs), so any nested path is
+/// flattened; the plugin prefix keeps the file identifiable as ours for an exact `remove`.
+fn doc_file(plugin: &str, doc: &MarkdownDoc) -> String {
+    format!("{plugin}-{}.md", doc.flat_stem())
 }
 
 /// A cursor command file is plain markdown with no frontmatter: the whole body is
@@ -538,8 +525,8 @@ fn report_checks(backend: &CursorBackend, plugin: &Plugin, source: &Source) -> V
         "run the host's `setup`",
     ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
-    checks.push(check_docs_present("translated commands present", &comp.commands, &base.join("commands"), plugin.name, "commands/"));
-    checks.push(check_docs_present("translated agents present", &comp.agents, &base.join("agents"), plugin.name, "agents/"));
+    checks.push(check_docs_present("translated commands present", &comp.commands, &base.join("commands"), plugin.name));
+    checks.push(check_docs_present("translated agents present", &comp.agents, &base.join("agents"), plugin.name));
 
     if plugin.instructions.is_some() {
         checks.push(instructions_check(&base, plugin));
@@ -548,12 +535,11 @@ fn report_checks(backend: &CursorBackend, plugin: &Plugin, source: &Source) -> V
     checks
 }
 
-fn check_docs_present(name: &'static str, docs: &[MarkdownDoc], dir: &Path, plugin: &str, prefix: &str) -> DoctorCheck {
+fn check_docs_present(name: &'static str, docs: &[MarkdownDoc], dir: &Path, plugin: &str) -> DoctorCheck {
     if docs.is_empty() {
         return DoctorCheck { name, status: CheckStatus::Ok("nothing to translate".into()) };
     }
-    let missing: Vec<String> =
-        docs.iter().map(|d| format!("{plugin}-{}.md", flat_stem(&d.rel, prefix))).filter(|f| !dir.join(f).exists()).collect();
+    let missing: Vec<String> = docs.iter().map(|d| doc_file(plugin, d)).filter(|f| !dir.join(f).exists()).collect();
     if missing.is_empty() {
         DoctorCheck { name, status: CheckStatus::Ok(format!("{} file(s) present", docs.len())) }
     } else {

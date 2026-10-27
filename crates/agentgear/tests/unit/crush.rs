@@ -12,7 +12,8 @@ use serde_json::{Value, json};
 
 use super::mcpjson::{self, ServerShape};
 use super::{BackendState, HookBinding, MarkdownDoc, McpKind, McpServer};
-use super::{command_rel, hook_is_portable, map_event, portable_names, reconcile_config, remove_config, render_command};
+use super::{command_rel, hook_is_portable, map_event, reconcile_config, remove_config, render_command};
+use crate::components::portable_names;
 
 fn scratch(name: &str) -> std::path::PathBuf {
     let dir = crate::scratch::path("ez-crush-unit");

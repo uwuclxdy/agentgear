@@ -33,7 +33,7 @@ use super::confedit::{json_edit, json_obj_at, json_prune_obj, json_remove, remov
 use super::mcpjson::{self, ServerShape};
 use super::report;
 use super::{AgentBackend, BackendState};
-use crate::components::{HookBinding, MarkdownDoc, McpServer};
+use crate::components::{HookBinding, MarkdownDoc, McpServer, portable_names};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
@@ -85,13 +85,12 @@ impl AgentBackend for AugmentBackend {
         let mcp = mcpjson::probe_surface(&settings, &["mcpServers"], &comp.mcp_servers, ServerShape::plain())?;
         let hooks = report::probe_json_entries(&settings, &hook_entries(&comp.hooks))?;
         let commands = report::probe_files(
-            &expected_docs(&base.join("commands"), plugin.name, "commands/", &comp.commands, |doc| render_command(doc).into_bytes()),
+            &expected_docs(&base.join("commands"), plugin.name, &comp.commands, |doc| render_command(doc).into_bytes()),
             |_, _| true,
         )?;
         let agents = report::probe_files(
-            &expected_docs(&base.join("agents"), plugin.name, "agents/", &comp.agents, |doc| {
-                let name = format!("{}-{}", plugin.name, flat_stem(&doc.rel, "agents/"));
-                render_agent(&name, doc).into_bytes()
+            &expected_docs(&base.join("agents"), plugin.name, &comp.agents, |doc| {
+                render_agent(&agent_name(plugin.name, doc), doc).into_bytes()
             }),
             |_, _| true,
         )?;
@@ -111,12 +110,12 @@ impl AgentBackend for AugmentBackend {
 
         let cmd_root = base.join("commands");
         for doc in &comp.commands {
-            changed |= write_file_idem(&cmd_root.join(doc_file(plugin.name, &doc.rel, "commands/")), render_command(doc).as_bytes())?;
+            changed |= write_file_idem(&cmd_root.join(doc_file(plugin.name, doc)), render_command(doc).as_bytes())?;
         }
         let agent_root = base.join("agents");
         for doc in &comp.agents {
-            let name = format!("{}-{}", plugin.name, flat_stem(&doc.rel, "agents/"));
-            changed |= write_file_idem(&agent_root.join(doc_file(plugin.name, &doc.rel, "agents/")), render_agent(&name, doc).as_bytes())?;
+            changed |=
+                write_file_idem(&agent_root.join(doc_file(plugin.name, doc)), render_agent(&agent_name(plugin.name, doc), doc).as_bytes())?;
         }
         if let Some(path) = instructions_file(scope, plugin.name)? {
             changed |= agentsmd::reconcile(&path, plugin)?;
@@ -135,11 +134,11 @@ impl AgentBackend for AugmentBackend {
         // only our plugin-prefixed files by name (never a `remove_dir_all`).
         let cmd_root = base.join("commands");
         for doc in &comp.commands {
-            changed |= remove_file_idem(&cmd_root.join(doc_file(plugin.name, &doc.rel, "commands/")))?;
+            changed |= remove_file_idem(&cmd_root.join(doc_file(plugin.name, doc)))?;
         }
         let agent_root = base.join("agents");
         for doc in &comp.agents {
-            changed |= remove_file_idem(&agent_root.join(doc_file(plugin.name, &doc.rel, "agents/")))?;
+            changed |= remove_file_idem(&agent_root.join(doc_file(plugin.name, doc)))?;
         }
         // Our rule file is named for the plugin, so the removal is exact and a
         // user's own rule files under `rules/` are never touched.
@@ -169,25 +168,16 @@ fn augment_dir(scope: &Scope) -> Result<PathBuf> {
     }
 }
 
-/// Server names `reconcile` actually writes (the shared renderer skips non-portable
-/// ones). `remove` keys off the same set so an unfiltered name list can never delete
-/// a user server sharing a name with one we declared but never wrote (e.g. a
-/// `${CLAUDE_PLUGIN_ROOT}`-bearing entry).
-fn portable_names(servers: &[McpServer]) -> Vec<&str> {
-    servers.iter().filter(|s| s.is_portable()).map(|s| s.name.as_str()).collect()
-}
-
 /// `commands/hello.md` -> `<plugin>-hello.md`; a nested path flattens (`a/b.md` ->
 /// `<plugin>-a-b.md`). Augment scans `commands/*.md` / `agents/*.md`; the plugin
 /// prefix keeps the file identifiable as ours for an exact `remove`.
-fn doc_file(plugin: &str, rel: &str, prefix: &str) -> String {
-    format!("{plugin}-{}.md", flat_stem(rel, prefix))
+fn doc_file(plugin: &str, doc: &MarkdownDoc) -> String {
+    format!("{}.md", agent_name(plugin, doc))
 }
 
-fn flat_stem(rel: &str, prefix: &str) -> String {
-    let stripped = rel.strip_prefix(prefix).unwrap_or(rel);
-    let stem = stripped.strip_suffix(".md").unwrap_or(stripped);
-    stem.replace(['/', '\\'], "-")
+/// The plugin-prefixed flat stem: an agent's frontmatter `name`, and its filename minus `.md`.
+fn agent_name(plugin: &str, doc: &MarkdownDoc) -> String {
+    format!("{plugin}-{}", doc.flat_stem())
 }
 
 /// The user-scope `~/.augment/rules/agentgear-<plugin>.md` rule file carrying the
@@ -238,10 +228,8 @@ fn hook_entries(hooks: &[HookBinding]) -> Vec<(Vec<String>, Value)> {
 
 /// The `(path, rendered bytes)` files `probe` compares against disk for a surface
 /// dir, keyed off the same `doc_file` + render `reconcile` writes.
-fn expected_docs(
-    dir: &Path, plugin: &str, prefix: &str, docs: &[MarkdownDoc], render: impl Fn(&MarkdownDoc) -> Vec<u8>,
-) -> Vec<(PathBuf, Vec<u8>)> {
-    docs.iter().map(|doc| (dir.join(doc_file(plugin, &doc.rel, prefix)), render(doc))).collect()
+fn expected_docs(dir: &Path, plugin: &str, docs: &[MarkdownDoc], render: impl Fn(&MarkdownDoc) -> Vec<u8>) -> Vec<(PathBuf, Vec<u8>)> {
+    docs.iter().map(|doc| (dir.join(doc_file(plugin, doc)), render(doc))).collect()
 }
 
 /// The single settings.json write per reconcile: augment keeps mcpServers + hooks in
@@ -388,8 +376,8 @@ fn report_checks(backend: &AugmentBackend, plugin: &Plugin, source: &Source) -> 
         "run the host's `setup`",
     ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
-    checks.push(check_docs_present("translated commands present", &comp.commands, &base.join("commands"), plugin.name, "commands/"));
-    checks.push(check_docs_present("translated agents present", &comp.agents, &base.join("agents"), plugin.name, "agents/"));
+    checks.push(check_docs_present("translated commands present", &comp.commands, &base.join("commands"), plugin.name));
+    checks.push(check_docs_present("translated agents present", &comp.agents, &base.join("agents"), plugin.name));
 
     if plugin.instructions.is_some() {
         checks.push(agentsmd::guidance_check(instructions_file(&Scope::User, plugin.name), plugin));
@@ -398,11 +386,11 @@ fn report_checks(backend: &AugmentBackend, plugin: &Plugin, source: &Source) -> 
     checks
 }
 
-fn check_docs_present(name: &'static str, docs: &[MarkdownDoc], dir: &Path, plugin: &str, prefix: &str) -> DoctorCheck {
+fn check_docs_present(name: &'static str, docs: &[MarkdownDoc], dir: &Path, plugin: &str) -> DoctorCheck {
     if docs.is_empty() {
         return DoctorCheck { name, status: CheckStatus::Ok("nothing to translate".into()) };
     }
-    let missing: Vec<String> = docs.iter().map(|d| doc_file(plugin, &d.rel, prefix)).filter(|f| !dir.join(f).exists()).collect();
+    let missing: Vec<String> = docs.iter().map(|d| doc_file(plugin, d)).filter(|f| !dir.join(f).exists()).collect();
     if missing.is_empty() {
         DoctorCheck { name, status: CheckStatus::Ok(format!("{} file(s) present", docs.len())) }
     } else {

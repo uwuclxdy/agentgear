@@ -184,10 +184,23 @@ fn reconcile_hooks_skips_non_portable_and_remove_leaves_a_same_name_survivor() {
 
 #[test]
 fn doc_filename_flattens_nested_paths_and_prefixes_the_plugin() {
-    assert_eq!(doc_filename("ez", "commands/hello.md", "commands/"), "ez-hello.md");
-    assert_eq!(doc_filename("ez", "commands/sub/foo.md", "commands/"), "ez-sub-foo.md");
-    assert_eq!(doc_filename("ez", "agents/helper.md", "agents/"), "ez-helper.md");
-    assert_eq!(namespaced("ez", "agents/helper.md", "agents/"), "ez-helper");
+    let doc = |rel: &str| {
+        let basename = rel.rsplit('/').next().unwrap_or(rel);
+        let name = basename.strip_suffix(".md").unwrap_or(basename);
+        MarkdownDoc { name: name.into(), rel: rel.into(), frontmatter: BTreeMap::new(), body: String::new(), raw: Vec::new() }
+    };
+    assert_eq!(doc_filename("ez", &doc("commands/hello.md")), "ez-hello.md");
+    assert_eq!(doc_filename("ez", &doc("commands/sub/foo.md")), "ez-sub-foo.md");
+    assert_eq!(doc_filename("ez", &doc("agents/helper.md")), "ez-helper.md");
+    assert_eq!(namespaced("ez", &doc("agents/helper.md")), "ez-helper");
+}
+
+#[test]
+fn render_droid_names_a_nested_agent_by_its_flattened_stem() {
+    let doc =
+        MarkdownDoc { name: "x".into(), rel: "agents/sub/x.md".into(), frontmatter: BTreeMap::new(), body: String::new(), raw: Vec::new() };
+    let rendered = render_droid("ez", &doc);
+    assert!(rendered.contains("name: ez-sub-x\n"), "a nested droid must be named by its flattened stem:\n{rendered}");
 }
 
 #[test]
@@ -199,7 +212,7 @@ fn render_droid_namespaces_name_and_passes_frontmatter_through() {
     let doc =
         MarkdownDoc { name: "helper".into(), rel: "agents/helper.md".into(), frontmatter, body: "Do the thing.".into(), raw: Vec::new() };
 
-    let rendered = render_droid("myplug", &doc.rel, &doc);
+    let rendered = render_droid("myplug", &doc);
     assert!(rendered.contains("name: myplug-helper"), "custom-droid name must be plugin-namespaced:\n{rendered}");
     assert!(!rendered.contains("name: helper\n"), "the original bare name must be overridden:\n{rendered}");
     assert!(rendered.contains("model: sonnet"), "model frontmatter must pass through:\n{rendered}");
@@ -207,5 +220,5 @@ fn render_droid_namespaces_name_and_passes_frontmatter_through() {
     assert!(rendered.contains("Do the thing."), "the body must be carried into the system prompt:\n{rendered}");
 
     // Deterministic: a re-render is byte-identical (drives write_file_idem NoOp).
-    assert_eq!(rendered, render_droid("myplug", &doc.rel, &doc));
+    assert_eq!(rendered, render_droid("myplug", &doc));
 }
