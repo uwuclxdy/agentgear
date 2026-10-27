@@ -24,6 +24,13 @@ path = "src/bin/github_fixture.rs"
 name = "embedded_github_fixture"
 path = "src/bin/embedded_github_fixture.rs"
 
+# A host whose marketplace name carries a dot (`ez-fixture-plugin@ez.fixture`),
+# so the copilot-cli backend's dotted-id paths — remove's by-hand stale-key
+# note, doctor's `stale enabledPlugins key` warn — are reachable hermetically.
+[[bin]]
+name = "dotted_fixture"
+path = "src/bin/dotted_fixture.rs"
+
 # A `claude` CLI test double, staged onto a scratch PATH by the hermetic
 # claude-backend tests so they can run without a real (auth'd) claude.
 [[bin]]

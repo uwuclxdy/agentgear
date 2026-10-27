@@ -19,6 +19,7 @@ use std::process::Command;
 const BIN: &str = env!("CARGO_BIN_EXE_host_fixture");
 const FAKE_COPILOT: &str = env!("CARGO_BIN_EXE_fake_copilot");
 const GITHUB_FIXTURE: &str = env!("CARGO_BIN_EXE_github_fixture");
+const DOTTED_FIXTURE: &str = env!("CARGO_BIN_EXE_dotted_fixture");
 
 /// The user's own settings: an unrelated key plus a real status line of theirs. The
 /// automatic slot wiring is retired, so this whole file must survive every
@@ -156,6 +157,29 @@ impl Env {
         self.apply(&mut cmd);
         let out = cmd.output().unwrap();
         (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// Runs the dotted-marketplace fixture host (same sandbox, same double).
+    fn dotted_fixture(&self, args: &[&str]) -> (bool, String) {
+        let mut cmd = Command::new(DOTTED_FIXTURE);
+        cmd.args(args);
+        self.apply(&mut cmd);
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// Like [`Env::dotted_fixture`] but also returns stderr, where `remove`'s
+    /// by-hand stale-key note is printed.
+    fn dotted_fixture_err(&self, args: &[&str]) -> (bool, String, String) {
+        let mut cmd = Command::new(DOTTED_FIXTURE);
+        cmd.args(args);
+        self.apply(&mut cmd);
+        let out = cmd.output().unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        )
     }
 
     fn settings_path(&self) -> PathBuf {
@@ -1105,6 +1129,87 @@ fn copilot_cli_doctor_names_the_served_from_pointer_ok() {
     let ours = env.data.join(PLUGIN_NAME).join("current@copilot-cli");
     let want = format!("[ ok ] marketplace served from pointer: `ez-fixture-plugin` registered at `{}`", ours.display());
     assert!(out.lines().any(|l| l == want), "doctor must pin the pointer-ok line, got:\n{out}");
+}
+
+// --- dotted ids --------------------------------------------------------------
+
+/// The dotted fixture's `<name>@<marketplace>` id. The derive forbids a `.` in
+/// `name`, so the dot rides on the `marketplace` attr (`ez.fixture`).
+const DOTTED_ID: &str = "ez-fixture-plugin@ez.fixture";
+
+/// A dotted id leaves an `enabledPlugins.<id>` key `copilot config --rm` cannot
+/// descend to, so `remove` must name the leftover by hand instead of spawning a
+/// `--rm` that would fail and abort the teardown. The double's call log is the
+/// observation that no `--rm` ran (every invocation is appended); the state file
+/// proves the note names a leftover that is really there.
+#[test]
+fn copilot_cli_remove_names_a_dotted_stale_key_instead_of_spawning_config_rm() {
+    let env = Env::new("dotted-remove");
+    let (ok, out) = env.dotted_fixture(&["setup"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    // Observe only the teardown's calls.
+    let calls_log = env.copilot_home.join(FAKE_COPILOT_CALL_LOG);
+    fs::write(&calls_log, "").unwrap();
+
+    let (ok, out, err) = env.dotted_fixture_err(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall failed: {out} / {err}");
+    assert_eq!(
+        err,
+        "agentgear: `enabledPlugins.ez-fixture-plugin@ez.fixture` still names our id and `copilot config --rm` cannot clear a dotted key; remove it by hand if it is yours",
+        "remove must print the by-hand note for a dotted key"
+    );
+
+    let calls = fs::read_to_string(&calls_log).unwrap_or_default();
+    assert!(!calls.lines().any(|l| l.starts_with("config --rm")), "a dotted key must never reach `config --rm`:\n{calls}");
+
+    let state: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(env.copilot_home.join("fake-copilot-state.json")).unwrap()).unwrap();
+    assert_eq!(state["plugins"], serde_json::json!([]), "our plugin must be gone from the registry:\n{state}");
+    assert_eq!(
+        state["enabledPlugins"][DOTTED_ID],
+        serde_json::json!(false),
+        "the note must name the leftover the disable-only uninstall really leaves:\n{state}"
+    );
+}
+
+/// A healthy dotted install lists our row, so `enabledPlugins.<dotted id>` is
+/// copilot's own record of the install: doctor must not read it as a stale key.
+#[test]
+fn copilot_cli_doctor_finds_no_stale_key_while_a_dotted_id_is_installed() {
+    let env = Env::new("dotted-doctor-installed");
+    let (ok, out) = env.dotted_fixture(&["setup"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+
+    let (ok, out) = env.dotted_fixture(&["doctor"]);
+    assert!(ok, "doctor failed over a healthy dotted install: {out}");
+    assert!(
+        out.lines().any(|l| l == "[ ok ] plugin registered: ez-fixture-plugin@ez.fixture v? (enabled)"),
+        "doctor must have run the registry checks, got:\n{out}"
+    );
+    assert!(
+        !out.lines().any(|l| l.starts_with("[warn] stale enabledPlugins key:")),
+        "a listed dotted install's key is not stale, got:\n{out}"
+    );
+}
+
+/// A dotted-id uninstall leaves `enabledPlugins.<id>` behind (the disable-only
+/// row, then `marketplace remove`), and no copilot subcommand can clear it:
+/// doctor must name it as the leftover it is.
+#[test]
+fn copilot_cli_doctor_names_the_stale_key_a_dotted_uninstall_leaves() {
+    let env = Env::new("dotted-doctor-uninstalled");
+    let (ok, out) = env.dotted_fixture(&["setup"]);
+    assert!(ok && out == "Installed", "setup failed: {out}");
+    let (ok, out) = env.dotted_fixture(&["uninstall"]);
+    assert!(ok && out == "Removed", "uninstall failed: {out}");
+
+    let (_ok, out) = env.dotted_fixture(&["doctor"]);
+    assert!(
+        out.lines().any(|l| l
+            == "[warn] stale enabledPlugins key: `enabledPlugins.ez-fixture-plugin@ez.fixture` still names our id; `copilot config --rm` cannot clear a dotted key"),
+        "doctor must name the stale dotted key an uninstall leaves, got:\n{out}"
+    );
 }
 
 // --- instructions ------------------------------------------------------------
