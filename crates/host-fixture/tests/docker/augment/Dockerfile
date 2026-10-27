@@ -14,7 +14,7 @@ RUN cargo build -p host-fixture --release
 # Node 22+ is required by @augmentcode/auggie.
 FROM node:22-slim
 # Pin the CLI for reproducibility.
-RUN npm install -g @augmentcode/auggie@0.32.0
+RUN npm install -g @augmentcode/auggie@0.36.0
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 
 RUN <<'SH'
