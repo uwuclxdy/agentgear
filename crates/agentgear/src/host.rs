@@ -423,7 +423,9 @@ impl Plugin {
 /// Implemented by the `#[derive(PluginHost)]` macro. The consts carry the
 /// compile-time metadata; the provided methods are the lifecycle the host calls.
 pub trait PluginHost {
-    /// Plugin name; must equal `plugin.json`'s `name` (the derive checks it).
+    /// Plugin name; must equal `plugin.json`'s `name`. The derive checks it at
+    /// compile time; a hand-written impl is checked in
+    /// [`descriptor`](Self::descriptor) instead, which panics on an invalid name.
     const NAME: &'static str;
     /// Marketplace id in `<name>@<marketplace>` (defaults to [`NAME`](Self::NAME)).
     const MARKETPLACE: &'static str;
@@ -449,7 +451,19 @@ pub trait PluginHost {
 
     /// The resolved [`Plugin`] descriptor built from this host's consts, passed to
     /// the backends. Rarely overridden.
+    ///
+    /// # Panics
+    ///
+    /// Panics on the invalid-name authoring bug: a [`NAME`](Self::NAME) that is
+    /// not a single file-name component (empty, or holding a `/`, `\`, `:` or
+    /// NUL, or a bare `.`/`..`). Every backend interpolates the name into paths
+    /// under the user's config dir, so such a name would escape it at write time.
+    /// The derive rejects it at compile time; this runtime guard catches a
+    /// hand-written impl that never passes through the macro.
     fn descriptor() -> Plugin {
+        if let Err(message) = validate_plugin_name(Self::NAME) {
+            panic!("{message}");
+        }
         Plugin {
             name: Self::NAME,
             marketplace: Self::MARKETPLACE,
@@ -562,6 +576,18 @@ pub trait PluginHost {
     fn doctor() -> Result<DoctorReport> {
         crate::doctor::doctor(&Self::descriptor(), &Self::DEFAULT_SOURCE)
     }
+}
+
+/// The plugin-name boundary [`PluginHost::descriptor`] enforces at runtime for
+/// a hand-written impl. Mirrors the derive's compile-time check
+/// (`crates/agentgear-derive/src/lib.rs`) predicate for predicate: the lib
+/// depends on the proc-macro crate, never the other way around, so the rule
+/// cannot live in one place and this duplication is forced.
+pub(crate) fn validate_plugin_name(name: &str) -> std::result::Result<(), String> {
+    if name.is_empty() || name.contains(['/', '\\', ':', '\0']) || name == "." || name == ".." {
+        return Err(format!("plugin name {name:?} must be a single file-name component (no `/`, `\\`, `:`, `.` or `..`)"));
+    }
+    Ok(())
 }
 
 /// Per-crate data root: `${XDG_DATA_HOME:-~/.local/share}/<plugin-name>/`, holding

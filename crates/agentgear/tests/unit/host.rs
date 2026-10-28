@@ -114,3 +114,42 @@ fn outcome_display_is_end_user_wording() {
     assert_eq!(Outcome::Adopted.to_string(), "adopted existing install");
     assert_eq!(Outcome::Cleared.to_string(), "cleared stale marker");
 }
+
+// --- plugin-name boundary ---------------------------------------------------
+
+/// The rule the derive applies at compile time, restated for a hand-written impl
+/// that never passes through the macro: every backend interpolates the name into a
+/// path under the user's config dir, so a separator, a colon, a NUL or a bare `.`/`..`
+/// must die at the boundary.
+#[test]
+fn the_plugin_name_rule_matches_the_derive() {
+    for bad in ["", "a/b", "a\\b", "a:b", "a\0b", ".", ".."] {
+        assert!(super::validate_plugin_name(bad).is_err(), "{bad:?} must be rejected");
+    }
+    // A dot inside a name is fine (the derive rejects only the bare components).
+    for ok in ["ez-fixture-plugin", "my.plugin", "a_b", "v1.2"] {
+        assert!(super::validate_plugin_name(ok).is_ok(), "{ok:?} must pass");
+    }
+}
+
+struct SeparatorNameHost;
+
+impl PluginHost for SeparatorNameHost {
+    const NAME: &'static str = "a/b";
+    const MARKETPLACE: &'static str = "ez-mkt";
+    const VERSION: &'static str = "0.1.0";
+    const DEFAULT_SOURCE: Source = Source::Embedded;
+    const AGENTS: &'static [&'static str] = &["kimi"];
+
+    fn embedded_blob() -> &'static [u8] {
+        &[]
+    }
+}
+
+/// `Plugin` cannot be built outside this crate (`blob` is `pub(crate)`), so the
+/// provided `descriptor()` is the only way a hand impl's name reaches a backend.
+#[test]
+#[should_panic(expected = "must be a single file-name component")]
+fn hand_impl_with_a_separator_name_panics_at_the_descriptor() {
+    let _ = SeparatorNameHost::descriptor();
+}
