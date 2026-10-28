@@ -3,7 +3,8 @@
 Side-by-side reference for the 25 backends agentgear ships: Claude Code, copilot-cli, and 23
 config-merge agents. Every cell was checked against the real shipping binary (or the tool's
 shipped extension source, for the IDE-bound ones) on 2026-07-16 (copilot-cli's native rewrite
-2026-07-18), with positive and negative controls before any parse was trusted.
+2026-07-18; kimi's agents cell 2026-10-28), with positive and negative controls before any parse
+was trusted.
 
 "Translated" means agentgear read-modify-writes the tool's own config file so the plugin's
 components land in that tool's native shape. Claude Code and copilot-cli are the exception: both
@@ -34,7 +35,7 @@ per-surface translation); every column reads native for both.
 | cline | ✓ | ✓ (CC matcher dropped) | ✓ (workflows) | — (surface unimplemented) | — (surface unimplemented) |
 | opencode | ✓ | — (JS/TS plugin API only) | ✓ | ✓ | — (not translated) |
 | omp | ✓ | — (TS extension API only) | ✓ | ✓ | — (not translated) |
-| kimi | ✓ | ✓ | — (slash-command analog is a skill) | — (user agent profiles exist at 2.3.3; not written) | ✓ |
+| kimi | ✓ | ✓ | — (slash-command analog is a skill) | ✓ (plugin-prefixed kebab profile under `$KIMI_CODE_HOME/agents`) | ✓ |
 | goose | ✓ | ✓ | — | — | ✓ |
 | kiro | ✓ | — (kiro hosts hooks only inside user-owned agent configs; no target agentgear can own) | — | — | ✓ |
 | antigravity-cli | ✓ | ✓ (a CC tool-name matcher never matches `agy`'s own) | — | — | — |

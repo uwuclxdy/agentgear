@@ -167,7 +167,7 @@ Grouped by what each surface translates:
 | mcp, hooks, commands, instructions | `cline` |
 | mcp, commands, agents, instructions | `opencode` |
 | mcp, commands, agents, instructions | `omp` |
-| mcp, hooks, skills, instructions | `kimi` |
+| mcp, hooks, agents, skills, instructions | `kimi` |
 | mcp, hooks, skills, instructions | `goose` |
 | mcp, hooks | `antigravity-cli` |
 | mcp, skills, instructions | `zed` |

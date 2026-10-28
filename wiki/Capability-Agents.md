@@ -4,7 +4,7 @@ An agent is an `agents/**/*.md` file — a named subagent persona with its own i
 copies each into the target tool's own subagent directory, translating the frontmatter (injecting a
 `mode: subagent` or a required `name` where the tool needs one) and prefixing the plugin name.
 
-**13 backends host agents.** The rest have no file-writable subagent surface: some have a surface agentgear does not write yet (kimi 2.3.3's user agent profiles under `$KIMI_CODE_HOME/agents` and `~/.agents/agents`), some model subagents as recipes or isolated workspaces (goose, openclaw), some a rich JSON schema a markdown translate would lose (kiro), and crush's file surface is still open upstream (issue #1807).
+**14 backends host agents.** The rest have no subagent surface agentgear writes: some model subagents as recipes or isolated workspaces (goose, openclaw), some a rich JSON schema a markdown translate would lose (kiro), `cline`'s on-disk shape is unverified, and crush's file surface is still open upstream (issue #1807).
 
 ## Where each agent lands
 
@@ -19,6 +19,7 @@ copies each into the target tool's own subagent directory, translating the front
 | droid | `droids/<plugin>-<stem>.md` | flat top-level only |
 | gemini | `~/.gemini/agents/<plugin>-<name>.md` + `.gemini/agents/*.md` | schema stable |
 | kilo | `<base>/agents/<plugin>-<stem>.md` | `mode: subagent` injected |
+| kimi | `$KIMI_CODE_HOME/agents/<plugin>-<name>.md` | kebab `name` + `description` both required by kimi's scan; keyed by the frontmatter `name` |
 | omp | `<base>/agents/<plugin>-<stem>.md` | `description` mandatory — its absence is a **silent drop**. Write **retires** when CC's registry already covers the plugin (see [Native ingestion](Capability-Native-Ingestion)) |
 | opencode | `<base>/agents/<plugin>-<stem>.md` | `mode: subagent` injected (its default is `all`) |
 | qwen-code | `agents/<plugin>-<name>.md` | keyed by frontmatter `name` (plugin-prefixed) |
@@ -31,8 +32,10 @@ copies each into the target tool's own subagent directory, translating the front
   omp's `claude-plugins` provider is on, to avoid double-registration.
 - **cursor's translation also retires** when Claude Code's registry lists the plugin — cursor reads
   the CC plugin tree directly. See [Native ingestion](Capability-Native-Ingestion).
-- **Real but unimplemented.** `cline` has an agent surface (`~/.cline/agents/`) whose on-disk shape
-  is unverified, so agentgear does not write it yet.
+- **kimi skips what it cannot load.** A profile with no `description`, no prompt body, or a name
+  that slugs to nothing is never written, and kimi's scan skips any entry starting with a dot, so
+  the file name is slugged too. Two agents whose names slugify alike keep the path-sorted first,
+  and `doctor` reports the collision.
 
 ## See also
 
