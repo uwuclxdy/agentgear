@@ -76,8 +76,9 @@ use known_agents::{KNOWN_AGENTS, feature_const_ident};
 ///   prefix, a NUL, or `.`/`..`), because the backends interpolate it into paths;
 /// - a missing `build.rs` (the `AGENTGEAR_GUARD` guard).
 ///
-/// The derive is the only name check: a hand-written `PluginHost` impl reaches the
-/// backends unchecked.
+/// The derive checks the name at compile time; a hand-written `PluginHost` impl is
+/// checked at runtime instead — `descriptor()` panics on a name the derive would
+/// have rejected.
 ///
 /// # Example
 ///
