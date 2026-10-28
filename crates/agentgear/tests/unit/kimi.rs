@@ -8,10 +8,14 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use super::{hook_is_portable, hook_present, map_event, reconcile_hooks, remove_hooks};
+use super::{
+    expected_agents, hook_is_portable, hook_present, map_event, reconcile_agents, reconcile_hooks, remove_agents, remove_hooks,
+    rendered_agent,
+};
 use crate::agents::mcpjson::{self, ServerShape};
-use crate::components::{HookBinding, McpKind, McpServer};
+use crate::components::{HookBinding, MarkdownDoc, McpKind, McpServer};
 use crate::host::Outcome;
+use serde_json::Value;
 
 fn scratch(name: &str) -> PathBuf {
     let dir = crate::scratch::path("ez-kimi-unit");
@@ -232,4 +236,201 @@ fn agentgear_client_token_expands_to_this_backend_id() {
 
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&project);
+}
+
+// --- agents (kimi 2.3.3 user agent profiles) --------------------------------
+
+/// A CC agent def as the components IR holds it: frontmatter split out, path kept.
+fn agent_doc(rel: &str, frontmatter: Vec<(&str, Value)>, body: &str) -> MarkdownDoc {
+    MarkdownDoc {
+        name: rel.rsplit('/').next().and_then(|f| f.strip_suffix(".md")).unwrap_or(rel).to_string(),
+        rel: rel.to_string(),
+        frontmatter: frontmatter.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+        body: body.to_string(),
+        raw: Vec::new(),
+    }
+}
+
+#[test]
+fn kimi_declares_the_agents_capability() {
+    use crate::agents::AgentBackend;
+
+    assert!(super::KimiBackend.capabilities().agents, "kimi 2.3.3 scans `$KIMI_CODE_HOME/agents` for `*.md` agent profiles");
+}
+
+#[test]
+fn rendered_agent_emits_kimi_frontmatter_with_a_plugin_prefixed_kebab_name() {
+    let doc = agent_doc(
+        "agents/ez-helper.md",
+        vec![
+            ("name", Value::String("ez-helper".into())),
+            ("description", Value::String("fixture subagent so the plugin exercises an agent-def component".into())),
+            ("tools", Value::String("Read, Grep, Glob".into())),
+            ("model", Value::String("sonnet".into())),
+        ],
+        "\nA fixture helper agent.\n",
+    );
+
+    let (file, bytes) = rendered_agent("ez-fixture-plugin", &doc).expect("an agent with a description renders");
+    assert_eq!(file, "ez-fixture-plugin-ez-helper.md");
+    assert_eq!(
+        bytes,
+        "---\nname: ez-fixture-plugin-ez-helper\ndescription: fixture subagent so the plugin exercises an agent-def component\ntools: \"Read, Grep, Glob\"\n---\n\nA fixture helper agent.\n",
+        "kimi requires `description`, takes `tools` as a comma string, and has no agent `model` field"
+    );
+
+    // The plugin name is only a single file-name component, not necessarily kebab
+    // (a capital, an underscore pass the derive's check), so it is slugged too —
+    // otherwise kimi skips every profile the plugin ships.
+    let plain = agent_doc("agents/ez-helper.md", vec![("description", Value::String("fixture".into()))], "body\n");
+    assert_eq!(
+        rendered_agent("Ez_Fixture", &plain).expect("a non-kebab plugin name still renders").1.lines().nth(1),
+        Some("name: ez-fixture-ez-helper"),
+        "the rendered `name` must satisfy kimi's kebab pattern whatever the plugin is called"
+    );
+
+    // A plugin name may legally start with a dot, and kimi's directory walk skips any
+    // entry that does — so the FILE name must be slugged too, not just the frontmatter
+    // name, or the profile is invisible to kimi while every check stays green.
+    assert_eq!(
+        rendered_agent(".plugin", &plain).expect("a dot-leading plugin name still renders").0,
+        "plugin-ez-helper.md",
+        "a leading dot in the plugin name must not reach the file name"
+    );
+}
+
+#[test]
+fn rendered_agent_slugs_a_non_kebab_name_and_falls_back_to_the_path_stem() {
+    let from_frontmatter = agent_doc(
+        "agents/Reviewer.md",
+        vec![("name", Value::String("Code_Reviewer".into())), ("description", Value::String("reviews diffs".into()))],
+        "You review.\n",
+    );
+    assert_eq!(
+        rendered_agent("ez-fixture-plugin", &from_frontmatter).expect("a non-kebab name still renders").0,
+        "ez-fixture-plugin-code-reviewer.md",
+        "kimi skips a file whose `name` is not kebab-case (AGENT_NAME_PATTERN)"
+    );
+
+    let from_path = agent_doc("agents/helpers/deep-check.md", vec![("description", Value::String("checks deeply".into()))], "You check.\n");
+    assert_eq!(
+        rendered_agent("ez-fixture-plugin", &from_path).expect("a nameless agent renders off its stem").0,
+        "ez-fixture-plugin-helpers-deep-check.md"
+    );
+}
+
+#[test]
+fn rendered_agent_skips_an_agent_kimi_could_not_load() {
+    let no_description = agent_doc("agents/silent.md", vec![("name", Value::String("silent".into()))], "body\n");
+    assert!(
+        rendered_agent("ez-fixture-plugin", &no_description).is_none(),
+        "kimi skips a file without `description`; writing one leaves an agent kimi never loads"
+    );
+
+    let blank_description = agent_doc("agents/blank.md", vec![("description", Value::String("   ".into()))], "body\n");
+    assert!(rendered_agent("ez-fixture-plugin", &blank_description).is_none(), "a whitespace-only description is not one");
+
+    let empty_body = agent_doc("agents/mute.md", vec![("description", Value::String("no prompt".into()))], "  \n");
+    assert!(rendered_agent("ez-fixture-plugin", &empty_body).is_none(), "kimi rejects a profile with no prompt body");
+
+    let unsluggable = agent_doc("agents/___.md", vec![("description", Value::String("no name".into()))], "body\n");
+    assert!(
+        rendered_agent("ez-fixture-plugin", &unsluggable).is_none(),
+        "a name holding no alphanumerics can never satisfy kimi's kebab pattern"
+    );
+}
+
+/// Two distinct CC agents can slugify to one kimi profile name (`foo-bar`/`foo_bar`),
+/// and kimi keys profiles on that name. Rendering both would make `reconcile` alternate
+/// between two byte sets (always `Installed`) and `probe` always `NeedsRepair` — a heal
+/// that churns every session. One deterministic survivor converges instead, and doctor
+/// names the collision rather than reporting the single file as healthy.
+#[test]
+fn expected_agents_dedupes_a_slug_collision_and_doctor_flags_it() {
+    use crate::agents::{BackendState, report};
+    use crate::doctor::CheckStatus;
+
+    let root = crate::scratch::path("ez-kimi-collide");
+    let agents_dir = root.join("agents");
+    std::fs::create_dir_all(&agents_dir).unwrap();
+
+    let docs = [
+        agent_doc("agents/foo_bar.md", vec![("description", Value::String("underscore agent".into()))], "underscore body\n"),
+        agent_doc("agents/foo-bar.md", vec![("description", Value::String("hyphen agent".into()))], "hyphen body\n"),
+    ];
+    let expected = expected_agents(&agents_dir, "ez-fixture-plugin", &docs);
+    assert_eq!(expected.len(), 1, "a slug collision must render one file, not two: {expected:?}");
+    let rendered = String::from_utf8_lossy(&expected[0].1);
+    assert!(
+        rendered.contains("hyphen agent"),
+        "the rel-sorted first doc must win deterministically (`agents/foo-bar.md` sorts before `agents/foo_bar.md`):\n{rendered}"
+    );
+
+    assert!(reconcile_agents(&agents_dir, "ez-fixture-plugin", &docs).unwrap(), "first reconcile writes");
+    let state = report::probe_files(&expected, |_, _| true).unwrap();
+    assert!(matches!(state, Some(BackendState::Healthy)), "a collided set must converge Healthy, not NeedsRepair forever");
+    assert!(!reconcile_agents(&agents_dir, "ez-fixture-plugin", &docs).unwrap(), "a collided set must reconcile to NoOp");
+
+    let check = super::check_agents_present(&docs, &agents_dir, "ez-fixture-plugin");
+    let problem = match &check.status {
+        CheckStatus::Fail { problem, .. } => problem.clone(),
+        other => panic!("a slug collision must fail the doctor check, got {other:?}"),
+    };
+    assert!(
+        problem.contains("agents/foo_bar.md") && problem.contains("agents/foo-bar.md"),
+        "the failing check must name both colliding agents:\n{problem}"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// A plugin whose agents all lack what kimi requires translates nothing at all. That
+/// is a translate limit, not a failure — but the check must say so, never report a
+/// cheerful `0 agent file(s) present` under an `[ ok ]`.
+#[test]
+fn check_agents_present_notes_a_wholly_untranslatable_set() {
+    use crate::doctor::CheckStatus;
+
+    let root = crate::scratch::path("ez-kimi-skipnote");
+    let agents_dir = root.join("agents");
+    std::fs::create_dir_all(&agents_dir).unwrap();
+
+    let docs = [agent_doc("agents/silent.md", vec![], "body\n")];
+    let check = super::check_agents_present(&docs, &agents_dir, "ez-fixture-plugin");
+    let text = match &check.status {
+        CheckStatus::Ok(text) => text.clone(),
+        other => panic!("a wholly skipped set is a translate limit, not a failure: {other:?}"),
+    };
+    assert!(text.contains("skipped"), "the check must name the skipped agent(s), got {text:?}");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn reconcile_agents_writes_ours_probes_healthy_and_removes_only_ours() {
+    use crate::agents::{BackendState, report};
+
+    let root = crate::scratch::path("ez-kimi-agents");
+    let agents_dir = root.join("agents");
+    std::fs::create_dir_all(&agents_dir).unwrap();
+    let foreign = agents_dir.join("theirs.md");
+    let foreign_body = "---\ndescription: their own agent\n---\ntheir prompt\n";
+    std::fs::write(&foreign, foreign_body).unwrap();
+
+    let docs =
+        [agent_doc("agents/ez-helper.md", vec![("description", Value::String("fixture subagent".into()))], "A fixture helper agent.\n")];
+    let ours = agents_dir.join("ez-fixture-plugin-ez-helper.md");
+    let expected = expected_agents(&agents_dir, "ez-fixture-plugin", &docs);
+
+    assert!(matches!(report::probe_files(&expected, |_, _| true).unwrap(), Some(BackendState::Absent)));
+    assert!(reconcile_agents(&agents_dir, "ez-fixture-plugin", &docs).unwrap(), "first reconcile writes");
+    assert!(ours.exists(), "our agent file missing: {}", ours.display());
+    assert!(matches!(report::probe_files(&expected, |_, _| true).unwrap(), Some(BackendState::Healthy)));
+    assert!(!reconcile_agents(&agents_dir, "ez-fixture-plugin", &docs).unwrap(), "second reconcile must no-op");
+
+    assert!(remove_agents(&agents_dir, "ez-fixture-plugin", &docs).unwrap(), "remove takes ours");
+    assert!(!ours.exists(), "our agent file survived removal");
+    assert_eq!(std::fs::read_to_string(&foreign).unwrap(), foreign_body, "a foreign agent file must survive byte-identically");
+
+    std::fs::remove_dir_all(&root).ok();
 }

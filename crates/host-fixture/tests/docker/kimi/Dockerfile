@@ -4,7 +4,9 @@
 # auth-free source of truth; `kimi doctor` (validates config.toml without auth) is a
 # native second opinion that fails the leg on a nonzero exit. `kimi mcp list` does
 # not exist as a subcommand (confirmed at 0.23.5, 0.26.0, and 2.3.3), so there is no
-# native second opinion for mcp — the config-file parse is authoritative.
+# native second opinion for mcp — the config-file parse is authoritative. Agent
+# profiles DO have one: `kimi --agent <absent>` prints its discovered profile list,
+# so the leg asserts kimi's own scan found (and later dropped) our profile.
 
 # Stage 1: build the fixture host (all backends) from the workspace.
 FROM rust:1-slim-bookworm AS build
@@ -38,6 +40,8 @@ AGENTS="$KIMI_CODE_HOME/AGENTS.md"
 SKILL_DIR="$KIMI_CODE_HOME/skills/ez-skill"
 SKILL="$SKILL_DIR/SKILL.md"
 USER_SKILL="$KIMI_CODE_HOME/skills/mine/SKILL.md"
+USER_AGENT="$KIMI_CODE_HOME/agents/mine.md"
+AGENT_PROFILE="$KIMI_CODE_HOME/agents/ez-fixture-plugin-ez-helper.md"
 MARKERS="$HOME/.local/share/ez-fixture-plugin/markers"
 # The stamp file name is the sha256 of plugin name + NUL + scope key + NUL + agent
 # (stamp.rs marker_path); pin the one file setup writes, not just any file.
@@ -45,7 +49,34 @@ STAMP="$MARKERS/$(printf 'ez-fixture-plugin\0user\0kimi' | sha256sum | cut -d' '
 # Pre-create the config dir so the backend's dir-based detect passes (the CLI would
 # create it on first run anyway); the two products share the `kimi` binary, so the
 # `~/.kimi-code` dir — not the binary name — is what marks this as the current one.
-mkdir -p "$KIMI_CODE_HOME" "$KIMI_CODE_HOME/skills/mine"
+mkdir -p "$KIMI_CODE_HOME" "$KIMI_CODE_HOME/skills/mine" "$KIMI_CODE_HOME/agents"
+
+# Native discovery check for the agent surface: `--agent <absent>` fails before any
+# model call and prints kimi's discovered profile names, so membership of that
+# parsed list is kimi's own word on whether it loaded a profile we wrote.
+# KIMI_MODEL_* synthesizes an in-memory provider (never contacted: profile
+# resolution fails first); without one kimi errors on "No model configured" instead.
+assert_profile_listed() {
+  local out
+  if out=$(KIMI_MODEL_NAME=leg-model KIMI_MODEL_API_KEY=leg-key KIMI_MODEL_PROVIDER_TYPE=openai \
+      KIMI_MODEL_BASE_URL=http://127.0.0.1:9 kimi --agent __agentgear_absent__ -p hi 2>&1); then
+    echo "FAIL: kimi accepted an agent profile that does not exist"; echo "$out"; exit 1
+  fi
+  printf '%s\n' "$out" > /tmp/kimi-absent-agent.out
+  node -e '
+const fs = require("fs");
+const text = fs.readFileSync(process.argv[1], "utf8");
+const want = process.argv[2] === "ours";
+const m = /Available profiles: (.*)$/m.exec(text);
+if (!m) { console.error("FAIL: no discovered-profile list in the absent-agent error:"); console.error(text); process.exit(1); }
+const names = m[1].split(",").map((s) => s.trim());
+const has = names.includes("ez-fixture-plugin-ez-helper");
+if (has !== want) {
+  console.error(`FAIL: ez-fixture-plugin-ez-helper ${want ? "missing from" : "still in"} the discovered profiles: ${names.join(", ")}`);
+  process.exit(1);
+}
+' /tmp/kimi-absent-agent.out "$1"
+}
 
 # Seed a foreign mcp server + an unrelated key that must survive install/uninstall.
 cat > "$MCP" <<'JSON'
@@ -73,6 +104,8 @@ printf 'user kimi guidance\n' > "$AGENTS"
 cp "$AGENTS" /tmp/kimi-agents-seed
 printf '%s\n' '---' 'name: mine' 'description: user skill' '---' '' 'mine' > "$USER_SKILL"
 cp "$USER_SKILL" /tmp/kimi-skill-seed
+printf '%s\n' '---' 'name: mine' 'description: a user-owned agent profile' '---' '' 'theirs' > "$USER_AGENT"
+cp "$USER_AGENT" /tmp/kimi-agent-seed
 
 host_fixture setup --agent kimi
 
@@ -123,6 +156,27 @@ if [ ! -f "$SKILL" ];             then echo "FAIL: translated skill SKILL.md mis
 if ! grep -q 'x-agentgear' "$SKILL"; then echo "FAIL: skill ownership tag missing"; exit 1; fi
 if [ ! -f "$SKILL_DIR/reference.md" ]; then echo "FAIL: skill support file reference.md missing"; exit 1; fi
 if ! cmp -s "$USER_SKILL" /tmp/kimi-skill-seed; then echo "FAIL: seeded skill clobbered on install"; exit 1; fi
+# The agent profile must parse under kimi's own rules (kebab name, description, no
+# model key) and carry the CC prompt; the user's own profile survives untouched.
+if [ ! -f "$AGENT_PROFILE" ]; then echo "FAIL: translated agent profile missing"; exit 1; fi
+node -e '
+const fs = require("fs");
+const raw = fs.readFileSync(process.argv[1], "utf8");
+const fail = (m) => { console.error(m); console.error(raw); process.exit(1); };
+const m = /^---\n([\s\S]*?)\n---\n\n([\s\S]*)$/.exec(raw);
+if (!m) fail("FAIL: agent profile has no frontmatter block");
+const fields = {};
+for (const line of m[1].split("\n")) {
+  const i = line.indexOf(": ");
+  if (i !== -1) fields[line.slice(0, i)] = line.slice(i + 2).replace(/^"(.*)"$/, "$1");
+}
+if (fields.name !== "ez-fixture-plugin-ez-helper") fail("FAIL: profile name is not the plugin-prefixed kebab name: " + fields.name);
+if (!fields.description || !fields.description.startsWith("fixture subagent")) fail("FAIL: profile description missing: " + fields.description);
+if ("model" in fields) fail("FAIL: a model key reached the profile (kimi has no agent model field)");
+if (!m[2].startsWith("A fixture helper agent.")) fail("FAIL: profile body is not the CC agent prompt");
+' "$AGENT_PROFILE"
+if ! cmp -s "$USER_AGENT" /tmp/kimi-agent-seed; then echo "FAIL: seeded agent profile clobbered on install"; exit 1; fi
+assert_profile_listed ours
 node -e '
 const fs = require("fs");
 const raw = fs.readFileSync(process.argv[1], "utf8");
@@ -193,6 +247,9 @@ if ! grep -q 'kimi-k2'            "$CONFIG"; then echo "FAIL: uninstall removed 
 if ! grep -q "user's own kimi config" "$CONFIG"; then echo "FAIL: uninstall dropped the seeded comment"; exit 1; fi
 if [ -d "$SKILL_DIR" ]; then echo "FAIL: skill dir survived uninstall"; exit 1; fi
 if ! cmp -s "$USER_SKILL" /tmp/kimi-skill-seed; then echo "FAIL: uninstall removed or rewrote the seeded skill"; exit 1; fi
+if [ -f "$AGENT_PROFILE" ]; then echo "FAIL: our agent profile survived uninstall"; exit 1; fi
+if ! cmp -s "$USER_AGENT" /tmp/kimi-agent-seed; then echo "FAIL: uninstall removed or rewrote the seeded agent profile"; exit 1; fi
+assert_profile_listed absent
 if grep -q 'agentgear:ez-fixture-plugin@ez-fixture-plugin' "$AGENTS"; then
   echo "FAIL: our AGENTS.md block survived uninstall"; cat "$AGENTS"; exit 1
 fi

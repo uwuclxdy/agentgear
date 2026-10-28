@@ -7,8 +7,10 @@
 //! `~/.kimi-code/AGENTS.md`, marker-id-scoped so the user's lines and a rival
 //! plugin's block survive byte-identical. Every mcp
 //! key is our own server name and every hook is matched by its command string, so
-//! `remove` is exact and a second reconcile is a true `NoOp`. Commands/agents have no
-//! user-level file surface here and are skipped; skills land as bare
+//! `remove` is exact and a second reconcile is a true `NoOp`. Agent defs land as
+//! kimi 2.3.3 user agent profiles in `~/.kimi-code/agents/`, plugin-prefixed kebab
+//! files in a dir shared with the user's own; commands have no user-level file
+//! surface here and are skipped. Skills land as bare
 //! `~/.kimi-code/skills/<name>/SKILL.md`, tagged for ownership.
 //!
 //! Two products share the `kimi` binary — the legacy python `kimi-cli` (`~/.kimi`)
@@ -16,10 +18,11 @@
 //! CURRENT one, so it detects on the `~/.kimi-code` config dir (not the ambiguous
 //! binary name) and honors `KIMI_CODE_HOME` everywhere.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
 use super::agentsmd;
@@ -29,7 +32,7 @@ use super::mcpjson::{self, RemoteShape, ServerShape};
 use super::report;
 use super::skillsdir;
 use super::{AgentBackend, BackendState};
-use crate::components::HookBinding;
+use crate::components::{HookBinding, MarkdownDoc};
 use crate::doctor::{CheckStatus, DoctorCheck, DoctorReport};
 use crate::error::{Error, Result};
 use crate::host::{Capabilities, Desired, Outcome, Plugin, Scope, Source};
@@ -55,15 +58,15 @@ impl AgentBackend for KimiBackend {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // No user-level command/agent file surface exists (kimi's slash-command analog
-        // is a `SKILL.md` subdir, not a flat `.md`); mcp + hooks + skills +
-        // instructions translate.
+        // No user-level command file surface exists (kimi's slash-command analog is
+        // a `SKILL.md` subdir, not a flat `.md`); mcp + hooks + agent profiles +
+        // skills + instructions translate.
         Capabilities {
             plugins: false,
             mcp: true,
             hooks: true,
             commands: false,
-            agents: false,
+            agents: true,
             skills: true,
             instructions: true,
             scopes: &["user"],
@@ -80,11 +83,14 @@ impl AgentBackend for KimiBackend {
         let mcp = mcpjson::probe_surface(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)?;
         let hooks = probe_hooks(&base.join("config.toml"), &comp.hooks)?;
         let skills = skillsdir::probe(&base.join("skills"), plugin, &comp.skills)?;
+        // Agent profiles share `agents/` with the user's own; probe compares the
+        // same expected set reconcile writes, so a deleted profile is never Healthy.
+        let agents = report::probe_files(&expected_agents(&base.join("agents"), plugin.name, &comp.agents), |_, _| true)?;
         let instructions = match agents_md(scope)? {
             Some(path) => agentsmd::probe(&path, plugin)?,
             None => None,
         };
-        Ok(report::compose([mcp, hooks, skills, instructions].into_iter().flatten()))
+        Ok(report::compose([mcp, hooks, skills, agents, instructions].into_iter().flatten()))
     }
 
     fn reconcile(&self, plugin: &Plugin, desired: &Desired, scope: &Scope) -> Result<Outcome> {
@@ -95,6 +101,7 @@ impl AgentBackend for KimiBackend {
         changed |= mcpjson::reconcile(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= reconcile_hooks(&base.join("config.toml"), &comp.hooks)?;
         changed |= skillsdir::reconcile(&base.join("skills"), plugin, &comp.skills)?;
+        changed |= reconcile_agents(&base.join("agents"), plugin.name, &comp.agents)?;
         if let Some(path) = agents_md(scope)? {
             changed |= agentsmd::reconcile(&path, plugin)?;
         }
@@ -109,6 +116,7 @@ impl AgentBackend for KimiBackend {
         changed |= mcpjson::remove(&base.join("mcp.json"), &["mcpServers"], &comp.mcp_servers, SHAPE)? != Outcome::NoOp;
         changed |= remove_hooks(&base.join("config.toml"), &comp.hooks)?;
         changed |= skillsdir::remove(&base.join("skills"), plugin, &comp.skills)?;
+        changed |= remove_agents(&base.join("agents"), plugin.name, &comp.agents)?;
         if let Some(path) = agents_md(scope)? {
             changed |= agentsmd::remove(&path, plugin)?;
         }
@@ -286,6 +294,108 @@ fn remove_hooks(config: &Path, hooks: &[HookBinding]) -> Result<bool> {
     })
 }
 
+// --- agents ------------------------------------------------------------------
+
+/// Render a CC agent def as a kimi 2.3.3 user agent profile, or `None` when kimi
+/// could not load the result (an un-sluggable name, a missing/blank `description`,
+/// or an empty body) — such a file would be silently skipped by kimi's scanner on
+/// every scan. kimi's `parseAgentFileText` enforces `^[a-z0-9]+(-[a-z0-9]+)*$` on
+/// the frontmatter `name`, so the name source (frontmatter `name` else the flat
+/// stem) is slugged, plugin-prefixed, and the whole composed name slugged again —
+/// a plugin name is only a single file-name component, not kebab. The file stem IS
+/// that composed kebab name: kimi's directory walk skips every dot-leading entry,
+/// so a raw plugin name could hide the profile from the scan while every check
+/// stays green. `tools`/`disallowedTools` copy through as their comma strings;
+/// there is no agent `model` field, so the CC model alias is dropped. The body (the
+/// prompt) copies through trimmed with one trailing newline. Deterministic, so a
+/// re-reconcile is byte-identical.
+fn rendered_agent(plugin: &str, doc: &MarkdownDoc) -> Option<(String, String)> {
+    let name = doc.frontmatter.get("name").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| doc.flat_stem());
+    let slug = slugify(&name);
+    if slug.is_empty() {
+        return None;
+    }
+    let description = doc.frontmatter.get("description").and_then(Value::as_str).map(str::trim).filter(|d| !d.is_empty())?;
+    let body = doc.body.trim();
+    if body.is_empty() {
+        return None;
+    }
+
+    let kimi_name = slugify(&format!("{plugin}-{slug}"));
+    let mut out = String::from("---\n");
+    out.push_str(&format!("name: {}\n", confedit::yaml_scalar(&kimi_name)));
+    out.push_str(&format!("description: {}\n", confedit::yaml_scalar(description)));
+    for key in ["tools", "disallowedTools"] {
+        if let Some(tools) = doc.frontmatter.get(key).and_then(Value::as_str) {
+            out.push_str(&format!("{key}: {}\n", confedit::yaml_scalar(tools)));
+        }
+    }
+    out.push_str("---\n\n");
+    out.push_str(body);
+    out.push('\n');
+    Some((format!("{kimi_name}.md"), out))
+}
+
+/// Kimi's name pattern is `^[a-z0-9]+(-[a-z0-9]+)*$`: lowercase, collapse every run
+/// outside `[a-z0-9]` to one `-`, trim the ends. An input holding no alphanumerics
+/// yields an empty slug.
+fn slugify(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.to_ascii_lowercase().chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+/// The `(path, rendered bytes)` agent profiles probe compares against disk, keyed
+/// off the same [`rendered_agent`] reconcile writes — a doc kimi could not load
+/// renders no file and enters none of the probe/reconcile/remove sets. Two docs
+/// that slugify to one profile name collide (kimi keys profiles on that name, not
+/// the filename), so the docs are sorted by `rel` and the first per path wins: one
+/// path, one byte set, a converged reconcile is a true `NoOp` instead of churn.
+fn expected_agents(agent_root: &Path, plugin: &str, agents: &[MarkdownDoc]) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut docs: Vec<&MarkdownDoc> = agents.iter().collect();
+    docs.sort_by(|a, b| a.rel.cmp(&b.rel));
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for doc in docs {
+        let Some((file, bytes)) = rendered_agent(plugin, doc) else {
+            continue;
+        };
+        if !seen.insert(file.clone()) {
+            continue;
+        }
+        out.push((agent_root.join(file), bytes.into_bytes()));
+    }
+    out
+}
+
+/// Write our agent profiles, `write_file_idem` per file so a converged reconcile
+/// returns false. Files are plugin-prefixed in a dir shared with the user's own
+/// profiles, so nothing else there is ever written.
+fn reconcile_agents(agent_root: &Path, plugin: &str, agents: &[MarkdownDoc]) -> Result<bool> {
+    let mut changed = false;
+    for (path, bytes) in expected_agents(agent_root, plugin, agents) {
+        changed |= confedit::write_file_idem(&path, &bytes)?;
+    }
+    Ok(changed)
+}
+
+/// Delete exactly the profiles [`reconcile_agents`] wrote, `remove_file_idem` per
+/// exact path — a doc that rendered no file is no removal candidate either, and a
+/// user's own profile in the shared dir is never in the set.
+fn remove_agents(agent_root: &Path, plugin: &str, agents: &[MarkdownDoc]) -> Result<bool> {
+    let mut changed = false;
+    for (path, _) in expected_agents(agent_root, plugin, agents) {
+        changed |= confedit::remove_file_idem(&path)?;
+    }
+    Ok(changed)
+}
+
 // --- report ------------------------------------------------------------------
 
 fn report_checks(backend: &KimiBackend, plugin: &Plugin, source: &Source) -> Vec<DoctorCheck> {
@@ -329,6 +439,7 @@ fn report_checks(backend: &KimiBackend, plugin: &Plugin, source: &Source) -> Vec
     ));
     checks.push(report::check_mcp_command(&comp.mcp_servers));
     checks.push(check_hooks_present(&comp.hooks, &base.join("config.toml")));
+    checks.push(check_agents_present(&comp.agents, &base.join("agents"), plugin.name));
 
     if plugin.instructions.is_some() {
         checks.push(agentsmd::guidance_check(agents_md(&Scope::User), plugin));
@@ -363,6 +474,60 @@ fn check_hooks_present(hooks: &[HookBinding], config: &Path) -> DoctorCheck {
         }
     };
     report::note_skipped(check, &skipped)
+}
+
+/// A plugin shipping no agents has nothing to translate; otherwise every rendered
+/// profile (see [`expected_agents`]) must exist on disk — a doc that rendered no
+/// file is by design, never a missing one. A wholly untranslatable set (every doc
+/// skipped) is a translate limit reported as an `Ok` naming the skip count, never a
+/// cheerful `0 agent file(s) present`. Two docs slugifying to one profile name are
+/// a `Fail` naming both, never healthy: one file on disk cannot be "present" for
+/// both of them.
+fn check_agents_present(agents: &[MarkdownDoc], agent_root: &Path, plugin: &str) -> DoctorCheck {
+    let name = "translated agents present";
+    if agents.is_empty() {
+        return DoctorCheck { name, status: CheckStatus::Ok("no agents to translate".into()) };
+    }
+    let mut docs: Vec<&MarkdownDoc> = agents.iter().collect();
+    docs.sort_by(|a, b| a.rel.cmp(&b.rel));
+    let mut by_file: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    for doc in &docs {
+        if let Some((file, _)) = rendered_agent(plugin, doc) {
+            by_file.entry(file).or_default().push(&doc.rel);
+        }
+    }
+    if by_file.is_empty() {
+        return DoctorCheck {
+            name,
+            status: CheckStatus::Ok(format!(
+                "no translatable agent profile: {} agent file(s) skipped (kimi needs a description and a prompt body)",
+                agents.len()
+            )),
+        };
+    }
+    if let Some((file, rels)) = by_file.iter().find(|(_, rels)| rels.len() > 1) {
+        return DoctorCheck {
+            name,
+            status: CheckStatus::Fail {
+                problem: format!("agent profile name collision: {} render to the same profile `{file}`", rels.join(" and ")),
+                fix: "rename one of the colliding agent files".into(),
+            },
+        };
+    }
+    let expected = expected_agents(agent_root, plugin, agents);
+    let missing: Vec<String> =
+        expected.iter().map(|(path, _)| path).filter(|path| !path.exists()).map(|path| path.display().to_string()).collect();
+    if missing.is_empty() {
+        DoctorCheck { name, status: CheckStatus::Ok(format!("{} agent file(s) present", expected.len())) }
+    } else {
+        DoctorCheck {
+            name,
+            status: CheckStatus::Fail {
+                problem: format!("agent file(s) missing: {}", missing.join(", ")),
+                fix: "run the host's `setup`".into(),
+            },
+        }
+    }
 }
 
 #[cfg(test)]

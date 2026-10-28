@@ -425,3 +425,62 @@ fn kimi_never_clobbers_a_rival_instructions_block() {
     assert!(ok, "uninstall failed: {out}");
     assert_eq!(env.agents_md(), rival, "uninstall must strip only our block, keeping the rival's and the user's");
 }
+
+/// kimi 2.3.3 discovers user agent profiles from `$KIMI_CODE_HOME/agents/**/*.md`
+/// (recursive scan, kebab `name`, required `description`), so the fixture plugin's
+/// `agents/ez-helper.md` must land as a plugin-prefixed kebab file a scan loads; a
+/// foreign profile beside it must survive install and uninstall byte-identically.
+#[test]
+fn kimi_translates_agents_and_never_clobbers_a_foreign_one() {
+    let env = Env::new("agents");
+    let agents_dir = env.kimi.join("agents");
+    fs::create_dir_all(&agents_dir).unwrap();
+    let foreign = agents_dir.join("theirs.md");
+    let foreign_body = "---\ndescription: the user's own profile\n---\ntheir prompt\n";
+    fs::write(&foreign, foreign_body).unwrap();
+    let ours = agents_dir.join("ez-fixture-plugin-ez-helper.md");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "kimi"]);
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+
+    assert!(ours.exists(), "agent profile not written: {}", ours.display());
+    assert_eq!(
+        fs::read_to_string(&ours).unwrap(),
+        "---\nname: ez-fixture-plugin-ez-helper\ndescription: fixture subagent so the plugin exercises an agent-def component\n---\n\nA fixture helper agent. It exists only to give the fixture plugin a real\n`agents/**/*.md` component for the components IR + each backend to translate.\n",
+        "the profile must carry a plugin-prefixed kebab name and the CC description, with no model key kimi would ignore"
+    );
+    assert_eq!(fs::read_to_string(&foreign).unwrap(), foreign_body, "install altered the user's own profile");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "kimi"]);
+    assert!(ok && out == "NoOp", "second setup should no-op, got {out}");
+
+    let (ok, out) = env.fixture(&["doctor"]);
+    assert!(ok, "doctor failed over a healthy install: {out}");
+    let want = "[ ok ] translated agents present: 1 agent file(s) present";
+    assert!(out.lines().any(|l| l == want), "the doctor report lacks the translated-agent check:\n{out}");
+
+    let (ok, out) = env.fixture(&["uninstall"]);
+    assert!(ok, "uninstall failed: {out}");
+    assert!(!ours.exists(), "our agent profile survived uninstall: {}", ours.display());
+    assert_eq!(fs::read_to_string(&foreign).unwrap(), foreign_body, "uninstall altered the user's own profile");
+}
+
+/// The agents line in `probe` is what makes a deleted profile repairable: without it
+/// the other four surfaces still read Healthy, `self-heal` no-ops, and the profile
+/// stays gone until a manual `setup`. This is the pin that reds if that line is dropped.
+#[test]
+fn kimi_self_heal_repairs_a_deleted_agent_profile() {
+    let env = Env::new("agent-heal");
+    let ours = env.kimi.join("agents").join("ez-fixture-plugin-ez-helper.md");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "kimi"]);
+    assert!(ok, "setup failed: {out}");
+    assert!(ours.exists(), "precondition: setup should have written {}", ours.display());
+
+    fs::remove_file(&ours).unwrap();
+    let (ok, out) = env.fixture(&["self-heal"]);
+    assert!(ok, "self-heal failed: {out}");
+    assert_eq!(out, "Installed", "self-heal must repair a deleted agent profile, got {out}");
+    assert!(ours.exists(), "self-heal did not rewrite the deleted profile");
+}
