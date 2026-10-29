@@ -15,7 +15,7 @@ RUN cargo build -p host-fixture --release
 # Stage 2: real crush CLI + the fixture binary; assert the lifecycle end-to-end.
 FROM node:20-slim
 # Pin the CLI for reproducibility; a failed install fails the leg.
-RUN npm install -g @charmland/crush@0.98.2
+RUN npm install -g @charmland/crush@0.99.0
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 
 RUN <<'SH'

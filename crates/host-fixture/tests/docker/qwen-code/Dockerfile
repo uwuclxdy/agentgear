@@ -17,7 +17,7 @@ RUN cargo build -p host-fixture --release
 FROM node:22-slim
 # Pinned to a known-good tag (docker leg green on it). qwen-code's release cadence is
 # fast.
-RUN npm install -g @qwen-code/qwen-code@0.26.2
+RUN npm install -g @qwen-code/qwen-code@0.26.4
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 
 RUN <<'SH'

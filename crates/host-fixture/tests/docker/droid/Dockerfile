@@ -29,7 +29,7 @@ RUN bash <<'SH'
 # -e, no fallback: an image that could not install the pinned CLI must fail the build
 # rather than run the asserts against whatever else it happened to get.
 set -euo pipefail
-version=0.250.0
+version=0.251.0
 
 case "$(uname -m)" in
     x86_64|amd64) arch=x64 ;;

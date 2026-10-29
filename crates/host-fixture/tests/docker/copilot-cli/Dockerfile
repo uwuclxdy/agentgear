@@ -17,7 +17,7 @@ RUN cargo build -p host-fixture --release
 FROM node:22-slim
 # pin = the version this leg runs against (the backend's own 1.0.92 floor is
 # enforced in the crate).
-RUN npm install -g @github/copilot@1.0.104
+RUN npm install -g @github/copilot@1.0.105
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 COPY crates/host-fixture/plugin /plugin-tree
 
@@ -35,7 +35,7 @@ mkdir -p "$COPILOT_HOME" "$XDG_DATA_HOME"
 # wrong version (a runtime HOME cache can outlive the npm pin).
 ver=$(copilot --version) || { echo "FAIL: copilot --version errored"; exit 1; }
 got=${ver%%$'\n'*}
-[ "$got" = "GitHub Copilot CLI 1.0.104." ] || { echo "copilot pin drift: binary reports '$got', this Dockerfile pins '1.0.104'"; exit 1; }
+[ "$got" = "GitHub Copilot CLI 1.0.105." ] || { echo "copilot pin drift: binary reports '$got', this Dockerfile pins '1.0.105'"; exit 1; }
 
 # settings.json is where real `copilot plugin marketplace add`/`plugin install` write
 # `extraKnownMarketplaces`/`enabledPlugins` (confirmed against a live container write,
