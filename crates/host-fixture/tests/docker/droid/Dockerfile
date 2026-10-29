@@ -3,8 +3,9 @@
 # run by tests/docker/run.sh droid (context = repo root). The config-file parse is the
 # auth-free source of truth (agentgear writes `~/.factory/mcp.json` directly, exactly the
 # shape droid loads). `droid mcp list` is auth-free at this pin and spawns each stdio
-# server, so its `ez-fixture  stdio  connected` line backs the parse as a native second
-# opinion. The CLI is version-pinned and the build refuses to ship an image running
+# server, so its `ez-fixture` row reporting `connected` backs the parse as a native
+# second opinion (asserted by token, not column position: the columns reordered at
+# 0.251.0). The CLI is version-pinned and the build refuses to ship an image running
 # anything else.
 
 # Stage 1: build the fixture host (all backends) from the workspace.
@@ -141,8 +142,14 @@ if ! out=$(droid mcp list 2>&1); then
   echo "FAIL: droid mcp list errored under the leg HOME: $out"; exit 1
 fi
 printf '%s\n' "$out"
-grep -q 'ez-fixture *stdio *connected' <<<"$out" \
-  || { echo "FAIL: droid mcp list did not report ez-fixture connected"; exit 1; }
+# Token asserts, not column positions: mcp list reordered status before transport at
+# 0.251.0, and a position-coupled grep reds a connected server.
+ezrow=$(grep -E '^ez-fixture[[:space:]]' <<<"$out") \
+  || { echo "FAIL: droid mcp list has no ez-fixture row"; exit 1; }
+grep -q -w 'connected' <<<"$ezrow" \
+  || { echo "FAIL: ez-fixture did not report connected: $ezrow"; exit 1; }
+grep -q -w 'stdio' <<<"$ezrow" \
+  || { echo "FAIL: ez-fixture is not listed as stdio: $ezrow"; exit 1; }
 for cmd in "--version" "mcp permissions list" "plugin list" "plugin marketplace list" "exec --list-tools -o json"; do
   # shellcheck disable=SC2086 # word-split on purpose: each entry is one argv
   out=$(droid $cmd 2>&1) || { echo "FAIL: droid $cmd errored: $out"; exit 1; }
