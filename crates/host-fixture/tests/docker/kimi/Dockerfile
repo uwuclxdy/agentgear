@@ -21,7 +21,7 @@ FROM node:22-slim
 # Pin the CLI for reproducibility. The scoped
 # `@moonshot-ai/kimi-code` is the official package (bin `kimi`); the unscoped
 # `kimi-code` on npm is NOT it.
-RUN npm install -g @moonshot-ai/kimi-code@2.4.0
+RUN npm install -g @moonshot-ai/kimi-code@2.4.1
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 
 RUN <<'SH'
