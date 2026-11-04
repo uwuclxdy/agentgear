@@ -1,0 +1,219 @@
+name: pin-bump
+
+# Scheduled after the staleness alarm (06:17 UTC) and on workflow_dispatch: re-runs the
+# same check, then turns the pins its `STALE:` summary names into a pull request. The
+# planner reads only that summary line of the saved log — pin-staleness.sh stays the
+# single version source, no vendor is queried twice — and every other row the check
+# reports (an allowance, a fetch failure, an unrecognised payload, an unreadable pin, a
+# misclassified leg) is a human's work it ignores loudly and plans nothing off.
+#
+# A pull request opened with GITHUB_TOKEN triggers none of this repo's pull_request
+# workflows: GitHub skips events created by the token that opened the PR, so ci.yml —
+# and its harness-docker matrix — never runs for it. The bumped legs are therefore
+# verified HERE, as this workflow's own matrix jobs on the pushed branch head; those
+# check runs attach to that commit and show on the PR's Checks tab. The PR never merges
+# itself: landing it is the human part of the alarm.
+#
+# GitHub disables a public repo's scheduled workflow after 60 days without repository
+# activity: re-enable it from the Actions tab.
+on:
+  schedule:
+    - cron: "43 7 * * *"
+  workflow_dispatch:
+
+# Queue an overlapping dispatch run behind the scheduled one instead of cancelling it:
+# a run killed mid-matrix strands a pushed branch with no PR, and only tomorrow's fresh
+# branch heals that. ci.yml cancels because its legs are minutes-cheap; these are tens
+# of minutes each.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  plan:
+    # contents: write pushes the pin-bump/<date> branch; issues: read is the staleness
+    # issue lookup that fills the commit's `refs #` line.
+    permissions:
+      contents: write
+      issues: read
+    runs-on: ubuntu-latest
+    outputs:
+      legs: ${{ steps.legs.outputs.legs }}
+      list: ${{ steps.legs.outputs.list }}
+      branch: ${{ steps.push.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v7
+      # The runner's own npm would do; pinned to the node the repo's other npm-driven
+      # legs already use so `npm view` output shape cannot drift with it (same as
+      # pin-staleness.yml).
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: re-run the staleness check
+        # The check's own rc is not this run's verdict: an outage (rc 3) or a
+        # misclassified leg (rc 2) leaves no `STALE:` line to plan from, the planner
+        # then plans nothing, and the alarm run an hour earlier already reds for those.
+        run: |
+          rc=0
+          bash crates/host-fixture/tests/docker/pin-staleness.sh > "$RUNNER_TEMP/pin-staleness.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/pin-staleness.log"
+          echo "the check exited $rc; the planner reads the log either way"
+      - name: plan and apply the pin bumps
+        # The planner validates every leg before the first write and exits 1, having
+        # written nothing, on any refusal: a pin the log and the Dockerfile disagree
+        # on, a downgrade, a leg with no version source here, a malformed or duplicated
+        # STALE line, or a summary class it does not know. The refusal reasons are on
+        # this step's log.
+        run: |
+          if ! bash crates/host-fixture/tests/docker/bump-stale-pins.sh "$RUNNER_TEMP/pin-staleness.log" > "$RUNNER_TEMP/plan.txt"; then
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/plan.txt"
+      - name: collect the planned legs
+        id: legs
+        run: |
+          sed -n 's/^bump-stale-pins: PLAN: //p' "$RUNNER_TEMP/plan.txt" | awk '{print $1}' > "$RUNNER_TEMP/legs.txt"
+          echo "legs=$(jq -Rsc 'split("\n") | map(select(length > 0))' "$RUNNER_TEMP/legs.txt")" >> "$GITHUB_OUTPUT"
+          mapfile -t legs < "$RUNNER_TEMP/legs.txt"
+          n=${#legs[@]}
+          list=${legs[0]:-}
+          if [ "$n" -eq 2 ]; then
+            list="${legs[0]} and ${legs[1]}"
+          elif [ "$n" -gt 2 ]; then
+            list=$(printf '%s, ' "${legs[@]:0:n-1}")
+            list="${list%, } and ${legs[n-1]}"
+          fi
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+      - name: push the bump branch
+        id: push
+        if: steps.legs.outputs.legs != '[]'
+        env:
+          LEG_LIST: ${{ steps.legs.outputs.list }}
+        run: |
+          branch="pin-bump/$(date -u +%Y%m%d)"
+          docker_dir=crates/host-fixture/tests/docker
+          stash="$RUNNER_TEMP/bumped"
+          mapfile -t planned < <(sed -n 's/^bump-stale-pins: PLAN: //p' "$RUNNER_TEMP/plan.txt")
+          files=()
+          legs=()
+          for row in "${planned[@]}"; do
+            leg=${row%% *}
+            legs+=("$leg")
+            files+=("$docker_dir/$leg/Dockerfile")
+            mkdir -p "$stash/$leg"
+            cp -- "$docker_dir/$leg/Dockerfile" "$stash/$leg/Dockerfile"
+          done
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null 2>&1; then
+            # An open PR already sits on today's branch: carry the planned files onto
+            # its head as one more commit, never a force-push.
+            git checkout -- "${files[@]}"
+            git fetch origin "$branch"
+            git checkout -B "$branch" FETCH_HEAD
+            for leg in "${legs[@]}"; do
+              cp -- "$stash/$leg/Dockerfile" "$docker_dir/$leg/Dockerfile"
+            done
+          else
+            git checkout -B "$branch"
+          fi
+          git add -- "${files[@]}"
+          if git diff --cached --quiet; then
+            echo "the branch already carries this plan; nothing to commit"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            title='pin-staleness: a docker leg pin is stale'
+            number=$(gh issue list --state open --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n1)
+            if [ -n "$number" ]; then
+              git commit -m "test(docker): bump the $LEG_LIST leg pins" -m "refs #$number"
+            else
+              git commit -m "test(docker): bump the $LEG_LIST leg pins"
+            fi
+            git push origin "$branch"
+            echo "pushed $(git rev-parse --short HEAD) to $branch"
+          fi
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+  legs:
+    needs: plan
+    # The result guard matters: a plan job that died early leaves `legs` empty, and
+    # '' != '[]' is true, so the matrix would expand fromJSON('') and fail its own way.
+    if: needs.plan.result == 'success' && needs.plan.outputs.legs != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(needs.plan.outputs.legs) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.branch }}
+      - name: docker leg (${{ matrix.leg }})
+        run: bash crates/host-fixture/tests/docker/run.sh ${{ matrix.leg }}
+
+  pr:
+    needs: [plan, legs]
+    if: needs.plan.outputs.legs != '[]' && needs.legs.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: open the bump pull request
+        env:
+          BRANCH: ${{ needs.plan.outputs.branch }}
+          LEG_LIST: ${{ needs.plan.outputs.list }}
+        run: |
+          open_count=$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')
+          if [ "$open_count" != "0" ]; then
+            echo "a pull request for $BRANCH is already open"
+            exit 0
+          fi
+          {
+            echo '## What does this PR do'
+            echo
+            echo "Bumps the docker leg pins \`pin-staleness\` marked stale on the $(date -u +%F) run: $LEG_LIST."
+            echo
+            echo "Every bumped leg passed its \`run.sh <leg>\` leg on this branch: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. The bump run never merges; these pins are only current again once this lands."
+          } > "$RUNNER_TEMP/pr-body.md"
+          gh pr create --base mommy --head "$BRANCH" --title "test(docker): bump the $LEG_LIST leg pins" --body-file "$RUNNER_TEMP/pr-body.md"
+
+  notify:
+    needs: [plan, legs, pr]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: comment on the staleness issue
+        # Skipping silently when the issue is absent is the point: the alarm owns that
+        # page, this workflow only reports into it.
+        env:
+          TITLE: 'pin-staleness: a docker leg pin is stale'
+          PLAN_RESULT: ${{ needs.plan.result }}
+          LEGS_RESULT: ${{ needs.legs.result }}
+          PR_RESULT: ${{ needs.pr.result }}
+        run: |
+          number=$(gh issue list --state open --json number,title --jq ".[] | select(.title == \"$TITLE\") | .number" | head -n1)
+          if [ -z "$number" ]; then
+            echo 'no open staleness issue; nothing to comment on'
+            exit 0
+          fi
+          {
+            echo 'The scheduled pin-bump run could not open or extend the bump PR:'
+            echo
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "plan: $PLAN_RESULT, legs: $LEGS_RESULT, pr: $PR_RESULT — the run log holds the refusal or the failing leg."
+            echo
+            echo 'The pins stay stale until the bump lands by hand.'
+          } > "$RUNNER_TEMP/comment-body.md"
+          gh issue comment "$number" --body-file "$RUNNER_TEMP/comment-body.md"
