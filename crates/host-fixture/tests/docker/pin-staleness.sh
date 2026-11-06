@@ -11,6 +11,13 @@
 # cannot arrive unclassified. Residual: a leg left in UNPINNED after someone pins it
 # stays unwatched until it moves to LEGS.
 #
+# A stale antigravity-cli row also reports its whole pin triple on a
+# `pin-staleness: BUMP: <leg> <version> <url> <sha512>` line (stderr, after the STALE
+# summary): that pin spans three Dockerfile lines while a STALE entry carries versions
+# only, and bump-stale-pins.sh rewrites the triple from this payload instead of querying
+# a vendor. A leg whose pin spans more than its `version=` line must be recorded here
+# and added to the planner's MULTI_FIELD_LEGS.
+#
 # Known gap: droid's updater prefers a download-plan API when its remote config names one,
 # so a staged rollout can move users ahead of the LATEST pointer this script reads and the
 # job still reads ok until LATEST flips.
@@ -157,12 +164,15 @@ pin_from_version_line() { # <leg> <file>
     printf '%s\n' "$version"
 }
 
-# Each current_* reads one vendor answer into CURRENT. A failure records WHY in
+# Each current_* reads one vendor answer into CURRENT; current_from_agy also reads the
+# artifact url and sha512 that pin carries. A failure records WHY in
 # VENDOR_KIND/VENDOR_DETAIL: `unreachable` is the tool itself failing, `unparseable` is
 # a payload that arrived but holds no single valid version.
 VENDOR_KIND=''
 VENDOR_DETAIL=''
 CURRENT=''
+AGY_ARTIFACT_URL=''
+AGY_ARTIFACT_SHA512=''
 
 vendor_failed() { # <kind> <detail>
     VENDOR_KIND=$1
@@ -179,31 +189,6 @@ current_from_npm() { # <pkg>
     fi
     if ! valid_version "$CURRENT"; then
         vendor_failed unparseable "npm view $pkg served no single version$(stderr_suffix "$ERR")"
-        return 1
-    fi
-}
-
-current_from_json() { # <url> -> the manifest's `version` field
-    local url=$1 rc=0
-    # A command substitution drops NULs and trailing newlines, so jq reads the bytes off
-    # disk; `read -d ''` succeeds only on reaching a NUL, a shape this reader does not
-    # recognise.
-    curl -fsSL --max-time 60 "$url" >"$BODY" 2>"$ERR" || rc=$?
-    if [ "$rc" -ne 0 ]; then
-        vendor_failed unreachable "curl exited $rc for $url$(stderr_suffix "$ERR")"
-        return 1
-    fi
-    if IFS= read -r -d '' _ <"$BODY"; then
-        vendor_failed unparseable "NUL byte in the body at $url"
-        return 1
-    fi
-    CURRENT=$(jq -er '.version' <"$BODY" 2>"$ERR") || rc=$?
-    if [ "$rc" -eq 126 ] || [ "$rc" -eq 127 ]; then
-        vendor_failed unreachable "jq exited $rc on the manifest from $url$(stderr_suffix "$ERR")"
-        return 1
-    fi
-    if [ "$rc" -ne 0 ] || ! valid_version "$CURRENT"; then
-        vendor_failed unparseable "no single .version in the manifest from $url$(stderr_suffix "$ERR")"
         return 1
     fi
 }
@@ -235,8 +220,11 @@ current_from_latest() { # <url> -> the one version line its body holds
     CURRENT=${lines[0]}
 }
 
-current_from_agy() { # <install.sh url> -> the version its manifest `<base>/manifests/linux_amd64.json` names
-    local url=$1 rc=0 body='' bases count base got
+current_from_agy() { # <install.sh url> -> the version, artifact url and sha512 its manifest names
+    local url=$1 rc=0 body='' bases count base got murl field val
+    CURRENT=''
+    AGY_ARTIFACT_URL=''
+    AGY_ARTIFACT_SHA512=''
     curl -fsSL --max-time 60 "$url" >"$BODY" 2>"$ERR" || rc=$?
     if [ "$rc" -ne 0 ]; then
         vendor_failed unreachable "curl exited $rc for $url$(stderr_suffix "$ERR")"
@@ -273,10 +261,54 @@ current_from_agy() { # <install.sh url> -> the version its manifest `<base>/mani
         vendor_failed unparseable "expected one '$AGY_MANIFEST_LINE' line in the installer at $url, found $count"
         return 1
     fi
-    current_from_json "$base/$AGY_MANIFEST_PATH"
+    murl=$base/$AGY_MANIFEST_PATH
+    # jq reads the bytes off disk: a command substitution drops NULs and trailing
+    # newlines, so `read -d ''` proves a NUL only when the file is read directly.
+    curl -fsSL --max-time 60 "$murl" >"$BODY" 2>"$ERR" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        vendor_failed unreachable "curl exited $rc for $murl$(stderr_suffix "$ERR")"
+        return 1
+    fi
+    if IFS= read -r -d '' _ <"$BODY"; then
+        vendor_failed unparseable "NUL byte in the body at $murl"
+        return 1
+    fi
+    for field in version url sha512; do
+        rc=0
+        val=$(jq -er --arg f "$field" '.[$f]' <"$BODY" 2>"$ERR") || rc=$?
+        if [ "$rc" -eq 126 ] || [ "$rc" -eq 127 ]; then
+            vendor_failed unreachable "jq exited $rc on the manifest from $murl$(stderr_suffix "$ERR")"
+            return 1
+        fi
+        if [ "$rc" -ne 0 ] || [ -z "$val" ]; then
+            vendor_failed unparseable "no single .$field in the manifest from $murl$(stderr_suffix "$ERR")"
+            return 1
+        fi
+        case "$field" in
+            version) CURRENT=$val ;;
+            url) AGY_ARTIFACT_URL=$val ;;
+            sha512) AGY_ARTIFACT_SHA512=$val ;;
+        esac
+    done
+    valid_version "$CURRENT" || { vendor_failed unparseable "no single .version in the manifest from $murl"; return 1; }
+    val=$AGY_ARTIFACT_URL
+    case "$AGY_ARTIFACT_URL" in
+        https://*[!A-Za-z0-9./:_-]* | https://) AGY_ARTIFACT_URL='' ;;
+        https://*) ;;
+        *) AGY_ARTIFACT_URL='' ;;
+    esac
+    [ -n "$AGY_ARTIFACT_URL" ] || { vendor_failed unparseable ".url $(LC_ALL=C printf '%q' "$val") in the manifest from $murl is not a plain https url"; return 1; }
+    val=$AGY_ARTIFACT_SHA512
+    case "$AGY_ARTIFACT_SHA512" in
+        *[!0-9a-f]*) AGY_ARTIFACT_SHA512='' ;;
+    esac
+    [ "${#AGY_ARTIFACT_SHA512}" -eq 128 ] || { vendor_failed unparseable ".sha512 $(LC_ALL=C printf '%q' "$val") in the manifest from $murl is not a 128-character lowercase hex digest"; return 1; }
 }
 
 stale=()
+# '<leg> <version> <url> <sha512>' for each STALE leg whose pin spans several fields;
+# printed below the STALE summary for the planner.
+bump=()
 allowed=()
 unreadable=()
 drifted_allowances=()
@@ -411,6 +443,9 @@ for leg in "${CHECKED[@]}"; do
     if [ -z "$allow" ]; then
         printf '%-16s %-12s %-12s %s\n' "$leg" "$pin" "$CURRENT" STALE
         stale+=("$leg ($pin != $CURRENT)")
+        if [ "$leg" = antigravity-cli ]; then
+            bump+=("$leg $CURRENT $AGY_ARTIFACT_URL $AGY_ARTIFACT_SHA512")
+        fi
     elif [ "$allow" = "$pin:$CURRENT" ]; then
         printf '%-16s %-12s %-12s %s\n' "$leg" "$pin" "$CURRENT" 'ALLOWED (stale by design)'
         allowed+=("$leg")
@@ -438,6 +473,9 @@ if [ "${#stale[@]}" -gt 0 ]; then
     printf 'pin-staleness: STALE: %s\n' "$(join_by ', ' "${stale[@]}")" >&2
     rc=1
 fi
+for rec in "${bump[@]}"; do
+    printf 'pin-staleness: BUMP: %s\n' "$rec" >&2
+done
 if [ "${#drifted_allowances[@]}" -gt 0 ]; then
     printf 'pin-staleness: STALE ALLOWANCE: %s\n' "$(join_by '; ' "${drifted_allowances[@]}")" >&2
     rc=1

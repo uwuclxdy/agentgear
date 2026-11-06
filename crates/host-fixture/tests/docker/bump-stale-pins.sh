@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Turn a pin-staleness log's STALE summary into concrete pin bumps.
 #
-# The planner/editor behind `.github/workflows/pin-bump.yml`. It reads ONE thing: the
-# `pin-staleness: STALE: leg (pin != current), ...` summary line of a saved
-# pin-staleness.sh run. It never queries a vendor — pin-staleness.sh stays the single
-# version source — and it never plans off the other summary classes: STALE ALLOWANCE,
-# FETCH FAILED, PAYLOAD UNRECOGNISED, PIN UNREADABLE, UNCLASSIFIED DOCKER LEG and
-# MISSING DOCKER LEG are a human's work (an allowance is a decision; a fetch failure or
-# an unreadable payload names no current), so each is echoed loudly and ignored.
+# The planner/editor behind `.github/workflows/pin-bump.yml`. It reads two things from a
+# saved pin-staleness.sh run: the `pin-staleness: STALE: leg (pin != current), ...`
+# summary line, and each `pin-staleness: BUMP: leg version url sha512` payload that
+# carries a multi-field pin's whole triple. It never queries a vendor — pin-staleness.sh
+# stays the single version source — and it never plans off the other summary classes:
+# STALE ALLOWANCE, FETCH FAILED, PAYLOAD UNRECOGNISED, PIN UNREADABLE, UNCLASSIFIED
+# DOCKER LEG and MISSING DOCKER LEG are a human's work (an allowance is a decision; a
+# fetch failure or an unreadable payload names no current), so each is echoed loudly and
+# ignored.
 #
 # A leg plans only when every check holds:
 # - its pin line reads exactly as pin-staleness.sh reads it — `npm install -g <pkg>@<ver>`
@@ -18,16 +20,25 @@
 #   rollback, a staged-rollout pointer), never something to commit. The compare orders
 #   dotted numeric cores, so a suffix-only change (1.2.4 -> 1.2.4-beta.1) is never a
 #   downgrade;
-# - the bump moves the pin at all.
-# A malformed or duplicated STALE line, and a summary class this file does not know, are
-# refused the same way: a future class could name stale pins under a new name, and
-# planning past it would open a PR from half a picture. Any refusal exits 1 with every
-# reason printed and NOTHING written — no partial plan ships from a log that failed one
-# of its checks; the run stays red and the next day's log decides again.
+# - the bump moves the pin at all;
+# - a MULTI_FIELD_LEGS leg pins more than its `version=` line (antigravity-cli also pins
+#   the artifact `url=` and its `sha512=`), so it plans only from a BUMP payload: the
+#   payload version must equal the STALE current, the url must be a plain https URL, the
+#   sha512 a 128-character lowercase hex digest, and the Dockerfile must carry exactly
+#   one `url=` and one `sha512=` line. All three lines move together in one plan.
+# A malformed or duplicated STALE line, a malformed or duplicated BUMP line, a BUMP
+# payload for a leg the STALE summary does not name or whose pin is single-field, and a
+# summary class this file does not know, are refused the same way: a future class could
+# name stale pins under a new name, and planning past it would open a PR from half a
+# picture. Any refusal exits 1 with every reason printed and NOTHING written — no
+# partial plan ships from a log that failed one of its checks; the run stays red and the
+# next day's log decides again.
 #
-# The leg maps below mirror pin-staleness.sh's LEGS/NPM_PKG split by line shape. A leg
-# the check names that is absent here refuses loudly instead of guessing its line shape:
-# add it to both files in the same change.
+# The leg maps below mirror pin-staleness.sh's LEGS/NPM_PKG split by line shape;
+# MULTI_FIELD_LEGS marks the legs whose pin spans more than `version=`, whose whole
+# triple the check reports on a BUMP line. A leg the check names that is absent here
+# refuses loudly instead of guessing its line shape: add it to both files in the same
+# change.
 #
 # Modes: --dry-run prints the plan and writes nothing; the default applies it, rewriting
 # each pin line in place through a temp-sibling rename.
@@ -37,9 +48,10 @@
 # everything human-readable goes to stderr.
 #
 # exit codes: 0 a plan was produced (an empty one when the log names no stale pin);
-# 1 the log names no safe bump — a refused leg, a malformed or duplicated STALE line, or
-# a summary class this file does not know; nothing was written. 2 usage or IO trouble —
-# an IO failure mid-apply can leave earlier legs written; the next run's log decides again.
+# 1 the log names no safe bump — a refused leg, a malformed or duplicated STALE or BUMP
+# line, a missing BUMP payload for a multi-field pin, or a summary class this file does
+# not know; nothing was written. 2 usage or IO trouble — an IO failure mid-apply can
+# leave earlier legs written; the next run's log decides again.
 #
 # usage: bump-stale-pins.sh [--dry-run] <pin-staleness.log> [docker-dir]
 #        (docker-dir default: this script's own directory)
@@ -84,6 +96,9 @@ declare -A NPM_PKG=(
 # case. Membership reads as ` <leg> ` inside the padded string, so a name can only match
 # itself.
 VERSION_LEGS=' antigravity-cli droid '
+# The legs whose pin spans lines beyond `version=`: the check reports their whole triple
+# on a BUMP line, and a plan moves every field or refuses.
+MULTI_FIELD_LEGS=' antigravity-cli '
 
 known_ignored() { # <class> -> 0 when the class is a loud-ignore one
     case "$1" in
@@ -146,9 +161,11 @@ version_lt() {
 plans=()    # 'leg old new', the machine-readable plan
 targets=()  # file<TAB>line_no<TAB>new_line, the write half of the same rows
 declare -A SEEN_LEG=()
+declare -A BUMP=()  # leg -> 'version url sha512' from that leg's BUMP payload
 
 plan_one() { # <entry> — one `leg (old != new)` item of the STALE summary
     local entry=$1 leg old new kind='' pkg='' file needle hits count pin_line pin line_no new_line rc=0
+    local multi=0 bump_version bump_url bump_sha url_no url_line old_url url_tail sha_no sha_line old_sha sha_tail
     local re='^([A-Za-z0-9._-]+) \(([0-9A-Za-z.+-]+) != ([0-9A-Za-z.+-]+)\)$'
     if [[ $entry =~ $re ]]; then
         leg=${BASH_REMATCH[1]}
@@ -219,8 +236,46 @@ plan_one() { # <entry> — one `leg (old != new)` item of the STALE summary
         new_line="version=$new${pin_line#"version=$old"}"
     fi
     [ "$new_line" != "$pin_line" ] || { printf 'bump-stale-pins: REFUSED: %s: the pin edit did not apply in %s\n' "$leg" "$file" >&2; exit 1; }
+    if [[ $MULTI_FIELD_LEGS == *" $leg "* ]]; then
+        multi=1
+        [ -n "${BUMP[$leg]:-}" ] || {
+            printf 'bump-stale-pins: REFUSED: %s: the log carries no BUMP payload for its three-field pin; re-run the check\n' "$leg" >&2
+            exit 1
+        }
+        read -r bump_version bump_url bump_sha <<< "${BUMP[$leg]}" || true
+        [ "$bump_version" = "$new" ] || {
+            printf 'bump-stale-pins: REFUSED: %s: BUMP payload version %s != the STALE current %s\n' "$leg" "$bump_version" "$new" >&2
+            exit 1
+        }
+        hits=$(grep -nE '^url=' "$file" || true)
+        count=$(printf '%s' "$hits" | grep -c . || true)
+        [ "$count" -eq 1 ] || {
+            printf "bump-stale-pins: REFUSED: %s: expected exactly one '^url=<url>' line in %s, found %s\n" "$leg" "$file" "$count" >&2
+            exit 1
+        }
+        url_no=${hits%%:*}
+        url_line=${hits#*:}
+        old_url=${url_line#url=}
+        old_url=${old_url%%[[:space:]]*}
+        url_tail=${url_line#"url=$old_url"}
+        hits=$(grep -nE '^sha512=' "$file" || true)
+        count=$(printf '%s' "$hits" | grep -c . || true)
+        [ "$count" -eq 1 ] || {
+            printf "bump-stale-pins: REFUSED: %s: expected exactly one '^sha512=<digest>' line in %s, found %s\n" "$leg" "$file" "$count" >&2
+            exit 1
+        }
+        sha_no=${hits%%:*}
+        sha_line=${hits#*:}
+        old_sha=${sha_line#sha512=}
+        old_sha=${old_sha%%[[:space:]]*}
+        sha_tail=${sha_line#"sha512=$old_sha"}
+    fi
     plans+=("$leg $old $new")
     targets+=("$file"$'\t'"$line_no"$'\t'"$new_line")
+    if [ "$multi" -eq 1 ]; then
+        targets+=("$file"$'\t'"$url_no"$'\t'"url=$bump_url$url_tail")
+        targets+=("$file"$'\t'"$sha_no"$'\t'"sha512=$bump_sha$sha_tail")
+    fi
     printf 'bump-stale-pins: planned %s: %s -> %s\n' "$leg" "$old" "$new" >&2
 }
 
@@ -239,20 +294,32 @@ apply_one() { # <file> <line_no> <new_line> — rewrite one pin line through a t
     lines[line_no - 1]=$new_line
     tmp=$(mktemp -- "$file.bumpXXXXXX") || { printf 'bump-stale-pins: cannot create a temp sibling for %s\n' "$file" >&2; exit 2; }
     CLEANUP+=("$tmp")
-    for ((i = 0; i < total; i++)); do
-        if [ "$i" -eq $((total - 1)) ] && [ "$had_nl" -eq 0 ]; then
-            printf '%s' "${lines[i]}"
-        else
-            printf '%s\n' "${lines[i]}"
-        fi
-    done > "$tmp"
-    chmod --reference="$file" "$tmp"
-    mv -f -- "$tmp" "$file"
+    if ! {
+        for ((i = 0; i < total; i++)); do
+            if [ "$i" -eq $((total - 1)) ] && [ "$had_nl" -eq 0 ]; then
+                printf '%s' "${lines[i]}"
+            else
+                printf '%s\n' "${lines[i]}"
+            fi
+        done > "$tmp"
+    }; then
+        printf 'bump-stale-pins: IO: cannot write a temp sibling for %s; earlier pins may already be written\n' "$file" >&2
+        exit 2
+    fi
+    if ! chmod --reference="$file" "$tmp"; then
+        printf 'bump-stale-pins: IO: cannot match the mode of %s on its temp sibling; earlier pins may already be written\n' "$file" >&2
+        exit 2
+    fi
+    if ! mv -f -- "$tmp" "$file"; then
+        printf 'bump-stale-pins: IO: cannot replace %s; earlier pins may already be written\n' "$file" >&2
+        exit 2
+    fi
     printf 'bump-stale-pins: wrote %s\n' "$file" >&2
 }
 
 # One pass over every summary line the check wrote: the classes that are a human's work
-# are echoed loudly, an unknown class refuses the run, and the one STALE line is kept.
+# are echoed loudly, an unknown class refuses the run, the one STALE line is kept, and
+# each BUMP payload is validated into the BUMP map.
 # grep rc 1 is an honest empty set (a green check writes no summary line); rc 2 is an
 # unreadable log, which must not read as an empty plan.
 grep_rc=0
@@ -267,6 +334,47 @@ while IFS= read -r line; do
     if [ "$cls" = STALE ]; then
         stale_count=$((stale_count + 1))
         stale_line=$line
+        continue
+    fi
+    if [ "$cls" = BUMP ]; then
+        bump_payload=${line#'pin-staleness: BUMP: '}
+        fields=()
+        read -r -a fields <<< "$bump_payload" || true
+        if [ "${#fields[@]}" -ne 4 ]; then
+            printf 'bump-stale-pins: REFUSED: malformed BUMP line: %s\n' "$line" >&2
+            exit 1
+        fi
+        leg=${fields[0]}
+        bversion=${fields[1]}
+        burl=${fields[2]}
+        bsha=${fields[3]}
+        if [[ $MULTI_FIELD_LEGS != *" $leg "* ]]; then
+            printf 'bump-stale-pins: REFUSED: %s: a BUMP payload names a leg this planner has no three-field pin for\n' "$leg" >&2
+            exit 1
+        fi
+        if [ -n "${BUMP[$leg]:-}" ]; then
+            printf 'bump-stale-pins: REFUSED: %s: named twice by the BUMP payload\n' "$leg" >&2
+            exit 1
+        fi
+        valid_version "$bversion" || { printf 'bump-stale-pins: REFUSED: %s: BUMP version %s is not a version\n' "$leg" "$bversion" >&2; exit 1; }
+        case "$burl" in
+            https://*[!A-Za-z0-9./:_-]* | https://) bad=1 ;;
+            https://*) bad=0 ;;
+            *) bad=1 ;;
+        esac
+        if [ "$bad" -ne 0 ]; then
+            printf 'bump-stale-pins: REFUSED: %s: BUMP url %s is not a plain https url\n' "$leg" "$burl" >&2
+            exit 1
+        fi
+        case "$bsha" in
+            *[!0-9a-f]*) bad=1 ;;
+            *) bad=0 ;;
+        esac
+        if [ "$bad" -ne 0 ] || [ "${#bsha}" -ne 128 ]; then
+            printf 'bump-stale-pins: REFUSED: %s: BUMP sha512 %s is not a 128-character lowercase hex digest\n' "$leg" "$bsha" >&2
+            exit 1
+        fi
+        BUMP[$leg]="$bversion $burl $bsha"
         continue
     fi
     if known_ignored "$cls"; then
@@ -292,6 +400,13 @@ if [ "$stale_count" -eq 1 ]; then
         plan_one "$entry"
     done <<< "$entries"
 fi
+# A BUMP payload for a leg no STALE entry names carries a triple nothing plans: the
+# summary and the payload disagree, so no plan from this log is whole.
+for leg in "${!BUMP[@]}"; do
+    [ -z "${SEEN_LEG[$leg]:-}" ] || continue
+    printf 'bump-stale-pins: REFUSED: %s: a BUMP payload names a leg the STALE summary does not\n' "$leg" >&2
+    exit 1
+done
 
 if [ "$mode" = apply ]; then
     for row in "${targets[@]}"; do
