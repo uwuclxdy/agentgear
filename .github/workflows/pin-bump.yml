@@ -2,10 +2,11 @@ name: pin-bump
 
 # Scheduled after the staleness alarm (06:17 UTC) and on workflow_dispatch: re-runs the
 # same check, then turns the pins its `STALE:` summary names into a pull request. The
-# planner reads only that summary line of the saved log — pin-staleness.sh stays the
-# single version source, no vendor is queried twice — and every other row the check
-# reports (an allowance, a fetch failure, an unrecognised payload, an unreadable pin, a
-# misclassified leg) is a human's work it ignores loudly and plans nothing off.
+# planner reads that summary line and the `BUMP:` payload lines the check adds for a
+# multi-field pin, from the saved log — pin-staleness.sh stays the single version
+# source, no vendor is queried twice — and every other row the check reports (an
+# allowance, a fetch failure, an unrecognised payload, an unreadable pin, a missing
+# leg, a misclassified leg) is a human's work it ignores loudly and plans nothing off.
 #
 # A pull request opened with GITHUB_TOKEN triggers none of this repo's pull_request
 # workflows: GitHub skips events created by the token that opened the PR, so ci.yml —
@@ -57,8 +58,9 @@ jobs:
           node-version: 22
       - name: re-run the staleness check
         # The check's own rc is not this run's verdict: an outage (rc 3) or a
-        # misclassified leg (rc 2) leaves no `STALE:` line to plan from, the planner
-        # then plans nothing, and the alarm run an hour earlier already reds for those.
+        # misclassified leg (rc 2) leaves that leg unplanned; the planner still plans
+        # every STALE line the log carries, and the alarm run an hour earlier already
+        # reds for the rest.
         run: |
           rc=0
           bash crates/host-fixture/tests/docker/pin-staleness.sh > "$RUNNER_TEMP/pin-staleness.log" 2>&1 || rc=$?
@@ -68,8 +70,10 @@ jobs:
         # The planner validates every leg before the first write and exits 1, having
         # written nothing, on any refusal: a pin the log and the Dockerfile disagree
         # on, a downgrade, a leg with no version source here, a malformed or duplicated
-        # STALE line, or a summary class it does not know. The refusal reasons are on
-        # this step's log.
+        # STALE or BUMP line, a missing or mismatched BUMP payload, a BUMP payload for a
+        # leg the STALE summary does not name or whose pin is single-field, a multi-field
+        # leg without exactly one url= and one sha512= line, or a summary class it does
+        # not know. The refusal reasons are on this step's log.
         run: |
           if ! bash crates/host-fixture/tests/docker/bump-stale-pins.sh "$RUNNER_TEMP/pin-staleness.log" > "$RUNNER_TEMP/plan.txt"; then
             exit 1
