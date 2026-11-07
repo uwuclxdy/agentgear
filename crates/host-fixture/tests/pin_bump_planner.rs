@@ -884,6 +884,86 @@ fn every_real_pinned_leg_moves_its_whole_pin() {
     }
 }
 
+/// The `(leg, package)` pairs of `pin-staleness.sh`'s NPM_PKG map: the npm-installed
+/// legs whose install line is the pin's only home.
+fn npm_pkg_entries(check: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    let mut lines = check.lines().skip_while(|line| !line.starts_with("declare -A NPM_PKG=("));
+    lines.next();
+    for line in lines {
+        if line.starts_with(')') {
+            break;
+        }
+        if let Some((leg, pkg)) = line.trim().strip_prefix('[').and_then(|rest| rest.split_once("]=")) {
+            pairs.push((leg.to_string(), pkg.trim().to_string()));
+        }
+    }
+    pairs
+}
+
+/// The npm legs' runtime pin guard: the check reads each pin from the one
+/// `npm install -g <pkg>@` line, and nothing compares what the image installed with
+/// that line, so a second install in a spelling the literal scans do not see leaves
+/// the leg green on a version the pin does not name. Each npm leg therefore copies
+/// its own Dockerfile into the image and compares the installed version with the pin
+/// read from it; this pins that wiring per leg — the call, the split parts it passes,
+/// and that it runs as the entrypoint's last assert, so nothing can install after it —
+/// and the one-needle-match invariant the check reads the pin under.
+#[test]
+fn every_npm_leg_compares_what_it_installed_with_its_pin_line() {
+    assert_eq!(
+        npm_pkg_entries("x\ndeclare -A NPM_PKG=(\n    [augment]=@augmentcode/auggie\n    [crush]=@charmland/crush\n)\ny"),
+        vec![("augment".to_string(), "@augmentcode/auggie".to_string()), ("crush".to_string(), "@charmland/crush".to_string()),],
+        "the NPM_PKG parse misreads its own map shape"
+    );
+    assert!(npm_pkg_entries("declare -A LEGS=(\n)\n").is_empty(), "the NPM_PKG parse read another map");
+
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/docker");
+    let check = fs::read_to_string(src.join("pin-staleness.sh")).unwrap();
+    let npm_legs = npm_pkg_entries(&check);
+    assert!(!npm_legs.is_empty(), "pin-staleness.sh's NPM_PKG map parsed empty");
+
+    let mut failures = Vec::new();
+    for (leg, pkg) in &npm_legs {
+        let Ok(body) = fs::read_to_string(src.join(leg).join("Dockerfile")) else {
+            failures.push(format!("{leg}: no Dockerfile under tests/docker"));
+            continue;
+        };
+        let needle = format!("npm install -g {pkg}@");
+        let pin_lines = body.lines().filter(|line| line.contains(&needle)).count();
+        if pin_lines != 1 {
+            failures.push(format!(
+                "{leg}: expected exactly one '{needle}<version>' line, found {pin_lines} (pin-staleness.sh reads the pin there)"
+            ));
+        }
+        // A scoped package splits at the scope slash, an unscoped one leaves the second
+        // part empty; the helper joins the two args back into the package name. The full
+        // package string must never appear on the call line.
+        let (part1, part2) = match pkg.split_once('/') {
+            Some((scope, name)) if pkg.starts_with('@') => (scope.to_string(), format!("/{name}")),
+            _ => (pkg.clone(), String::new()),
+        };
+        let call = format!("installed-vs-pin.sh /tmp/leg.Dockerfile '{part1}' '{part2}'");
+        let call_lines: Vec<usize> = body.lines().enumerate().filter(|(_, line)| *line == call).map(|(i, _)| i + 1).collect();
+        if call_lines.len() != 1 {
+            failures.push(format!("{leg}: expected exactly one '{call}' call, found {}", call_lines.len()));
+        }
+        let ok_line = body.lines().enumerate().find(|(_, line)| line.contains("docker leg: OK")).map(|(i, _)| i + 1);
+        if let (Some(&call_no), Some(&ok_no)) = (call_lines.first(), ok_line.as_ref()) {
+            let mut between = body.lines().enumerate().skip(call_no).take(ok_no.saturating_sub(call_no + 1));
+            if between.any(|(_, line)| !line.trim().is_empty()) {
+                failures.push(format!(
+                    "{leg}: the installed-vs-pin call (line {call_no}) must be the entrypoint's last assert: only blank lines may sit between it and the OK line (line {ok_no})"
+                ));
+            }
+        }
+        if !body.contains(&format!("tests/docker/{leg}/Dockerfile")) {
+            failures.push(format!("{leg}: the leg's own Dockerfile is not copied into the image for the pin read"));
+        }
+    }
+    assert!(failures.is_empty(), "npm legs missing the installed-vs-pin compare:\n{}", failures.join("\n"));
+}
+
 #[test]
 fn dry_run_refuses_both_surviving_pin_shapes() {
     let case = Case::new("dry-run-guard");

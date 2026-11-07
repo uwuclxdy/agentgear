@@ -14,6 +14,9 @@ RUN cargo build -p host-fixture --release
 FROM node:20-slim
 # Pin the CLI for reproducibility.
 RUN npm install -g @google/gemini-cli@0.67.0
+# the entrypoint's last assert compares what npm installed with the pin it reads from this file's copy
+COPY crates/host-fixture/tests/docker/installed-vs-pin.sh /usr/local/bin/installed-vs-pin.sh
+COPY crates/host-fixture/tests/docker/gemini/Dockerfile /tmp/leg.Dockerfile
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 
 RUN <<'SH'
@@ -170,6 +173,9 @@ else
   echo "$out"
   echo "FAIL: gemini mcp list exited $rc after uninstall"; exit 1
 fi
+
+# what npm installed must be what the pin line names
+installed-vs-pin.sh /tmp/leg.Dockerfile '@google' '/gemini-cli'
 
 echo "gemini docker leg: OK"
 TEST

@@ -18,6 +18,9 @@ FROM node:22-slim
 # pin = the version this leg runs against (the backend's own 1.0.92 floor is
 # enforced in the crate).
 RUN npm install -g @github/copilot@1.0.107
+# the entrypoint's last assert compares what npm installed with the pin it reads from this file's copy
+COPY crates/host-fixture/tests/docker/installed-vs-pin.sh /usr/local/bin/installed-vs-pin.sh
+COPY crates/host-fixture/tests/docker/copilot-cli/Dockerfile /tmp/leg.Dockerfile
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 COPY crates/host-fixture/plugin /plugin-tree
 
@@ -208,6 +211,9 @@ fi
 if grep -F -q '(disabled)' <<<"$our_row"; then
     echo "FAIL: our plugin reads (disabled) after a re-stage"; echo "$plugins"; exit 1
 fi
+
+# what npm installed must be what the pin line names
+installed-vs-pin.sh /tmp/leg.Dockerfile '@github' '/copilot'
 
 echo "copilot-cli docker leg: OK"
 TEST

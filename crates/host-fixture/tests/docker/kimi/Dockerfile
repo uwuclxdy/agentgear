@@ -22,6 +22,9 @@ FROM node:22-slim
 # `@moonshot-ai/kimi-code` is the official package (bin `kimi`); the unscoped
 # `kimi-code` on npm is NOT it.
 RUN npm install -g @moonshot-ai/kimi-code@2.5.2
+# the entrypoint's last assert compares what npm installed with the pin it reads from this file's copy
+COPY crates/host-fixture/tests/docker/installed-vs-pin.sh /usr/local/bin/installed-vs-pin.sh
+COPY crates/host-fixture/tests/docker/kimi/Dockerfile /tmp/leg.Dockerfile
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 
 RUN <<'SH'
@@ -270,6 +273,9 @@ else
   echo "$out"
   echo "FAIL: kimi doctor exited $rc after uninstall"; exit 1
 fi
+
+# what npm installed must be what the pin line names
+installed-vs-pin.sh /tmp/leg.Dockerfile '@moonshot-ai' '/kimi-code'
 
 echo "kimi docker leg: OK"
 TEST

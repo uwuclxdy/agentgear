@@ -18,6 +18,9 @@ FROM node:22-slim
 # Pinned to a known-good tag (docker leg green on it). qwen-code's release cadence is
 # fast.
 RUN npm install -g @qwen-code/qwen-code@0.26.9
+# the entrypoint's last assert compares what npm installed with the pin it reads from this file's copy
+COPY crates/host-fixture/tests/docker/installed-vs-pin.sh /usr/local/bin/installed-vs-pin.sh
+COPY crates/host-fixture/tests/docker/qwen-code/Dockerfile /tmp/leg.Dockerfile
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 
 RUN <<'SH'
@@ -176,6 +179,9 @@ if grep -q 'ez-fixture' "$SETTINGS"; then echo "FAIL: our server survived uninst
 if [ -d "$CMD_DIR" ];                then echo "FAIL: command dir survived uninstall"; exit 1; fi
 if [ -f "$AGENT" ];                  then echo "FAIL: agent file survived uninstall"; exit 1; fi
 if [ -d "$SKILL_DIR" ];              then echo "FAIL: skill dir survived uninstall"; exit 1; fi
+
+# what npm installed must be what the pin line names
+installed-vs-pin.sh /tmp/leg.Dockerfile '@qwen-code' '/qwen-code'
 
 echo "qwen-code docker leg: OK"
 TEST

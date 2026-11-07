@@ -52,8 +52,9 @@
 #   an npm alias, a variable), the old sha512 beside a moved field, or a pin on a line
 #   whose first non-blank characters are `#` or `//` wherever that line sits, a heredoc
 #   or a multi-line string included. An assert or a BUMP url among those reds a leg in
-#   the matrix; a second install in another form would not, because no npm leg compares
-#   what it installed with its pin line.
+#   the matrix; a second install in another form fails it too: each npm leg's entrypoint
+#   ends with installed-vs-pin.sh, which compares what the image installed with the pin
+#   line it reads from the leg's own Dockerfile copy.
 # A malformed or duplicated STALE line, a malformed or duplicated BUMP line, a BUMP
 # payload for a leg the STALE summary does not name or whose pin is single-field, and a
 # summary class this file does not know, are refused the same way: a future class could

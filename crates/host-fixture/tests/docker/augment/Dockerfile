@@ -15,6 +15,9 @@ RUN cargo build -p host-fixture --release
 FROM node:22-slim
 # Pin the CLI for reproducibility.
 RUN npm install -g @augmentcode/auggie@0.37.0
+# the entrypoint's last assert compares what npm installed with the pin it reads from this file's copy
+COPY crates/host-fixture/tests/docker/installed-vs-pin.sh /usr/local/bin/installed-vs-pin.sh
+COPY crates/host-fixture/tests/docker/augment/Dockerfile /tmp/leg.Dockerfile
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 
 RUN <<'SH'
@@ -178,6 +181,9 @@ else
   echo "$out"
   echo "FAIL: auggie mcp list exited $rc after uninstall"; exit 1
 fi
+
+# what npm installed must be what the pin line names
+installed-vs-pin.sh /tmp/leg.Dockerfile '@augmentcode' '/auggie'
 
 echo "augment docker leg: OK"
 TEST
