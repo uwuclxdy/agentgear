@@ -82,10 +82,123 @@ fn no_unit_test_builds_its_own_temp_path() {
     );
 }
 
-/// Recursive, so a future `tests/unit/<sub>/x.rs` cannot sit in a blind spot that
-/// the sweep's own anti-zero guard would still count as covered.
+/// The fixture trees outside this crate — `crates/host-fixture/tests/`,
+/// `examples/*/tests/`, and the library crate's own top-level `tests/*.rs`
+/// integration crates — cannot call `crate::scratch::path` (it is
+/// crate-private), so every integration file builds its temp root in place,
+/// stamped by interpolating the pid into the name. The pin binds those trees
+/// with a counting standard applied to non-comment lines only: several helpers
+/// describe the stamp in their doc comment, and prose counting as a stamp buys
+/// exactly the slack a new pid-free root needs. After the strip, a file naming
+/// `temp_dir` must carry at least as many fully-spelled `std::process::id`
+/// calls as `temp_dir` uses; a new pid-free root breaks that bound, an
+/// already-stamped file keeps it. What a line count cannot see — none of it
+/// live in the trees today (measured): the literal inside a block comment, a
+/// trailing `//` comment, or a string; a root stamped through a
+/// `use std::process;` import; and a root built without the `temp_dir` token.
+/// Each reads as a missing stamp and the sweep reds until the file spells
+/// itself out. The sweep reads sibling-crate sources by path, so a standalone
+/// packaged build of this crate (which ships `tests/unit` but not its
+/// siblings) reds loudly at the first missing root rather than skipping.
+#[test]
+fn no_fixture_test_builds_a_pid_free_temp_path() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let crates = manifest.parent().unwrap_or_else(|| panic!("CARGO_MANIFEST_DIR has no parent"));
+    let repo = crates.parent().unwrap_or_else(|| panic!("the crates dir has no parent"));
+
+    let mut roots: Vec<(String, PathBuf)> = vec![("host-fixture tests".into(), crates.join("host-fixture/tests"))];
+    let examples = repo.join("examples");
+    for entry in std::fs::read_dir(&examples).unwrap_or_else(|e| panic!("reading the examples dir {}: {e}", examples.display())) {
+        let path = entry.unwrap_or_else(|e| panic!("reading an entry of {}: {e}", examples.display())).path();
+        let tests = path.join("tests");
+        if path.is_dir() && tests.is_dir() {
+            let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            roots.push((format!("examples/{name}"), tests));
+        }
+    }
+    roots.push(("agentgear tests".into(), manifest.join("tests")));
+
+    let mut total_files = 0usize;
+    let mut with_temp = 0usize;
+    let mut offenders = Vec::new();
+    for (label, root) in &roots {
+        let mut files = Vec::new();
+        collect_rs(root, &mut files);
+        if label == "agentgear tests" {
+            // `tests/unit/` is the unit pin's tree: its helper and its blessed
+            // read-only list speak a "no `temp_dir` at all" predicate, so the
+            // files this sweep wants are the top-level integration crates only.
+            let unit = root.join("unit");
+            files.retain(|p| !p.starts_with(&unit));
+        }
+        assert!(
+            !files.is_empty(),
+            "the sweep found no test files under {label} ({}), so that root's clean result proves nothing",
+            root.display()
+        );
+        let mut root_temp = 0usize;
+        for file in &files {
+            let body = std::fs::read_to_string(file)
+                .unwrap_or_else(|e| panic!("reading fixture test {} for the temp-dir sweep: {e}", file.display()));
+            let (temp, pids) = count_temp_dir_uses(&body);
+            if temp == 0 {
+                continue;
+            }
+            root_temp += 1;
+            if temp > pids {
+                offenders.push(format!("{file:?}: {temp} `temp_dir` uses against {pids} `std::process::id` stamps"));
+            }
+        }
+        total_files += files.len();
+        with_temp += root_temp;
+    }
+
+    assert!(
+        total_files > 25 && with_temp > 25,
+        "the sweep walked {total_files} files ({with_temp} naming `temp_dir`) under the fixture trees, so a clean result proves nothing"
+    );
+    assert!(
+        offenders.is_empty(),
+        "every fixture test temp root carries the pid (`std::process::id()`) that a fixed name or a clock-seeded \
+         draw cannot supply: either collides with a concurrent test process, one then taking the other's tree \
+         mid-write. {offenders:?}"
+    );
+}
+
+/// The per-file count behind the fixture pin, extracted so the counting itself
+/// carries a positive control: a synthetic input the scan must flag beside ones
+/// it must not, so a stub comparison cannot keep the sweep green.
+fn count_temp_dir_uses(body: &str) -> (usize, usize) {
+    let (mut temp, mut pids) = (0usize, 0usize);
+    for line in body.lines() {
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
+        temp += line.matches("temp_dir").count();
+        pids += line.matches("std::process::id").count();
+    }
+    (temp, pids)
+}
+
+#[test]
+fn count_temp_dir_uses_flags_a_pid_free_root() {
+    let stamped = "let root = std::env::temp_dir().join(format!(\"ez-x-{}\", std::process::id()));\n";
+    assert_eq!(count_temp_dir_uses(stamped), (1, 1), "a stamped root is the must-not-flag control");
+
+    let pid_free = "let root = std::env::temp_dir().join(\"ez-fixed\");\n";
+    assert_eq!(count_temp_dir_uses(pid_free), (1, 0), "the must-flag input must count as an offender");
+
+    let documented = format!("/// `name` must be unique per test: `std::process::id()` alone is constant.\n{stamped}");
+    assert_eq!(count_temp_dir_uses(&documented), (1, 1), "the doc-comment mention must not buy slack");
+    let documented_with_second_root = format!("{documented}{pid_free}");
+    let (temp, pids) = count_temp_dir_uses(&documented_with_second_root);
+    assert!(temp > pids, "a pid-free root beside a documented stamp must break the bound: {temp} vs {pids}");
+}
+
+/// Recursive, so a future subdirectory under any swept root cannot sit in a
+/// blind spot that the sweep's own anti-zero guard would still count as covered.
 fn collect_rs(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
-    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("reading the unit-test dir {}: {e}", dir.display()));
+    let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("reading sweep dir {}: {e}", dir.display()));
     for entry in entries {
         let path = entry.unwrap_or_else(|e| panic!("reading an entry of {}: {e}", dir.display())).path();
         if path.is_dir() {

@@ -162,7 +162,7 @@ fn codex_home_opt() -> Option<PathBuf> {
 }
 
 fn codex_home() -> Result<PathBuf> {
-    codex_home_opt().ok_or_else(|| Error::Tree("no home directory (HOME and CODEX_HOME unset); cannot locate ~/.codex".into()))
+    codex_home_opt().ok_or_else(|| Error::Tree("no home directory (HOME unset, CODEX_HOME unset or empty); cannot locate ~/.codex".into()))
 }
 
 /// The config base for a scope: `~/.codex` (user) or `<cwd>/.codex` (project).

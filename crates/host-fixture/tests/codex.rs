@@ -102,6 +102,21 @@ impl Env {
         (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
+    /// `fixture`, but run from `cwd` with `overrides` layered onto the sandbox env
+    /// after `apply` (a later `env()` call replaces the earlier one), for the
+    /// resolution variants a plain run cannot express — an empty override value,
+    /// notably.
+    fn fixture_with(&self, args: &[&str], cwd: &Path, overrides: &[(&str, &str)]) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args).current_dir(cwd);
+        self.apply(&mut cmd);
+        for (key, value) in overrides {
+            cmd.env(key, value);
+        }
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
     fn config_toml(&self) -> String {
         fs::read_to_string(self.codex.join("config.toml")).unwrap()
     }
@@ -277,6 +292,38 @@ fn codex_project_scope_mcp_is_isolated_from_user_scope() {
     let pc = env.project_config_toml();
     assert!(!pc.contains("[mcp_servers.ez-fixture]"), "our mcp server survived project-scope uninstall:\n{pc}");
     assert_eq!(env.config_toml(), SEED_CONFIG, "project-scope uninstall touched the user-scope config.toml:\n{}", env.config_toml());
+}
+
+/// codex resolves an empty `CODEX_HOME` like an unset one, to `~/.codex` under the
+/// HOME it was given (measured 2026-11-07 against codex-cli 0.166.0: unset and empty
+/// both read the scratch `$HOME/.codex/config.toml`, never a cwd `config.toml`).
+/// The resolver must ignore the empty value the same way, or every user-scope write
+/// lands wherever the host binary happened to run while codex reads its real home.
+#[test]
+fn codex_empty_codex_home_value_resolves_to_the_home_dir() {
+    let env = Env::new("empty-codex-home");
+    let cwd = env.root.join("empty-home-cwd");
+    fs::create_dir_all(&cwd).unwrap();
+    // A foreign cwd config turns a cwd-relative resolution into an observable
+    // write: any rewrite of this seed means the resolver read the empty value as a
+    // path rather than ignoring it.
+    let cwd_seed = "# cwd-owned config\n";
+    fs::write(cwd.join("config.toml"), cwd_seed).unwrap();
+
+    let (ok, out) = env.fixture_with(&["setup", "--agent", "codex"], &cwd, &[("CODEX_HOME", "")]);
+    assert!(ok, "setup with an empty CODEX_HOME failed: {out}");
+    assert_eq!(out, "Installed", "setup with an empty CODEX_HOME should install, got {out}");
+
+    let user_config = env.config_toml();
+    assert!(
+        user_config.contains("[mcp_servers.ez-fixture]"),
+        "our server did not land under the HOME-derived codex home (the root codex itself resolves an empty CODEX_HOME to):\n{user_config}"
+    );
+    assert_eq!(
+        fs::read_to_string(cwd.join("config.toml")).unwrap(),
+        cwd_seed,
+        "an empty CODEX_HOME resolved cwd-relative: the cwd config was written or rewritten"
+    );
 }
 
 /// The uninstall inverse at file level: a `config.toml` whose every key was ours goes
