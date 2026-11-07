@@ -17,7 +17,7 @@ RUN cargo build -p host-fixture --release
 FROM node:22-slim
 # pin = the version this leg runs against (the backend's own 1.0.92 floor is
 # enforced in the crate).
-RUN npm install -g @github/copilot@1.0.105
+RUN npm install -g @github/copilot@1.0.107
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 COPY crates/host-fixture/plugin /plugin-tree
 

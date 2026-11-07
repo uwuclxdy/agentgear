@@ -14,7 +14,7 @@ RUN cargo build -p host-fixture --release
 # @augmentcode/auggie declares engines.node >=20.0.0; node:22-slim clears it.
 FROM node:22-slim
 # Pin the CLI for reproducibility.
-RUN npm install -g @augmentcode/auggie@0.36.0
+RUN npm install -g @augmentcode/auggie@0.37.0
 COPY --from=build /src/target/release/host_fixture /usr/local/bin/host_fixture
 
 RUN <<'SH'
