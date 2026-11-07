@@ -25,12 +25,40 @@
 #   the artifact `url=` and its `sha512=`), so it plans only from a BUMP payload: the
 #   payload version must equal the STALE current, the url must be a plain https URL, the
 #   sha512 a 128-character lowercase hex digest, and the Dockerfile must carry exactly
-#   one `url=` and one `sha512=` line. All three lines move together in one plan.
+#   one `url=` and one `sha512=` line. All three lines move together in one plan;
+# - the part of a line the plan rewrites but does not replace holds no second copy of the
+#   old pin either: the exact text the edit overwrites is masked out (the first
+#   `npm install -g <pkg>@<old>` on an npm pin line, the leading `version=<old>` on a
+#   version pin line, the whole `url=<old url>` / `sha512=<old sha>` on a multi-field
+#   leg). A repeat found there refuses as `REFUSED: <leg>: pin <old> appears again on line
+#   <n> of <file>, beside the pin this planner moves`. An inline `# ...` tail counts: this
+#   planner does not parse shell quoting, so it cannot tell a tail from a quoted `#` with
+#   a live install after it, and a tail repeating the version goes stale on every bump;
+# - no line of the Dockerfile other than the ones the plan rewrites (the pin line, plus
+#   `url=` and `sha512=` for a multi-field leg) still holds the old pin as a whole version
+#   token: a pin repeated on a line this planner does not move (a version assert, a
+#   second install) would ship a half-bumped leg. The old sha512 of a multi-field pin
+#   refuses the same way, and so does the package itself (a word equal to `<pkg>` or
+#   `<pkg>@...`) anywhere else, the pin line included, because a second install at any
+#   version wins over the moved pin. A comment line (its first non-blank characters are
+#   `#` or `//`) is not scanned, and a whole token has no digit or `<digit>.` before it
+#   and no digit or `.<digit>` after it, so `1.3.0.5`, `0.1.3.0` and `21.3.0` do not hold
+#   `1.3.0` while `copilot.1.3.0.tgz` does. An unrelated token equal to the pin refuses
+#   too: this planner cannot tell it from a repeat. This is an early refusal over literal
+#   text and does not see: a version split across lines (a `\` continuation or a split
+#   quoted string), another spelling of it (a regex-escaped `1\.3\.0`, the build id inside
+#   a multi-field url, a name ending in a digit such as `node22.1.3.0.tgz`), the old pin
+#   inside a new BUMP url, the package in any other form (quoted, `<pkg>;`, a tarball url,
+#   an npm alias, a variable), the old sha512 beside a moved field, or a pin on a line
+#   whose first non-blank characters are `#` or `//` wherever that line sits, a heredoc
+#   or a multi-line string included. An assert or a BUMP url among those reds a leg in
+#   the matrix; a second install in another form would not, because no npm leg compares
+#   what it installed with its pin line.
 # A malformed or duplicated STALE line, a malformed or duplicated BUMP line, a BUMP
 # payload for a leg the STALE summary does not name or whose pin is single-field, and a
 # summary class this file does not know, are refused the same way: a future class could
 # name stale pins under a new name, and planning past it would open a PR from half a
-# picture. Any refusal exits 1 with every reason printed and NOTHING written — no
+# picture. Any refusal exits 1 naming its reason and with NOTHING written — no
 # partial plan ships from a log that failed one of its checks; the run stays red and the
 # next day's log decides again.
 #
@@ -158,6 +186,42 @@ version_lt() {
     return 1
 }
 
+# holds_version <line> <ver>: 0 when <line> holds <ver> as a whole version token — a
+# literal match (a `.` or `+` in <ver> is that character) with no digit or `<digit>.`
+# before it and no digit or `.<digit>` after it. Every occurrence is tried, so a longer
+# version earlier on the line cannot hide a real one later.
+holds_version() {
+    local rest=$1 ver=$2 seen='' head tail
+    while [[ $rest == *"$ver"* ]]; do
+        head=${rest%%"$ver"*}
+        tail=${rest#*"$ver"}
+        case "$seen$head" in
+            *[0123456789] | *[0123456789].) ;;
+            *)
+                case "$tail" in
+                    [0123456789]* | .[0123456789]*) ;;
+                    *) return 0 ;;
+                esac
+                ;;
+        esac
+        # step one character past this match's start, so an overlapping match is tried too
+        seen=$seen$head${ver:0:1}
+        rest=${ver:1}$tail
+    done
+    return 1
+}
+
+# names_package <text> <pkg>: 0 when a word of <text> is <pkg> or <pkg>@<anything>.
+names_package() {
+    local word
+    local -a words=()
+    read -r -a words <<< "$1" || true
+    for word in "${words[@]}"; do
+        if [ "$word" = "$2" ] || [[ $word == "$2@"* ]]; then return 0; fi
+    done
+    return 1
+}
+
 plans=()    # 'leg old new', the machine-readable plan
 targets=()  # file<TAB>line_no<TAB>new_line, the write half of the same rows
 declare -A SEEN_LEG=()
@@ -166,6 +230,8 @@ declare -A BUMP=()  # leg -> 'version url sha512' from that leg's BUMP payload
 plan_one() { # <entry> — one `leg (old != new)` item of the STALE summary
     local entry=$1 leg old new kind='' pkg='' file needle hits count pin_line pin line_no new_line rc=0
     local multi=0 bump_version bump_url bump_sha url_no url_line old_url url_tail sha_no sha_line old_sha sha_tail
+    local scan_no scan_line kept_i
+    local -a scan_lines=() kept_texts=() kept_nos=()
     local re='^([A-Za-z0-9._-]+) \(([0-9A-Za-z.+-]+) != ([0-9A-Za-z.+-]+)\)$'
     if [[ $entry =~ $re ]]; then
         leg=${BASH_REMATCH[1]}
@@ -270,6 +336,57 @@ plan_one() { # <entry> — one `leg (old != new)` item of the STALE summary
         old_sha=${old_sha%%[[:space:]]*}
         sha_tail=${sha_line#"sha512=$old_sha"}
     fi
+    # The old pin beside the one this plan rewrites would survive the bump too: scan the
+    # part of each moved line the rewrite leaves alone.
+    if [ "$kind" = npm ]; then
+        kept_texts+=("${pin_line/"npm install -g $pkg@$old"/}")
+    else
+        kept_texts+=("${pin_line#"version=$old"}")
+    fi
+    kept_nos+=("$line_no")
+    if [ "$multi" -eq 1 ]; then
+        kept_texts+=("$url_tail" "$sha_tail")
+        kept_nos+=("$url_no" "$sha_no")
+    fi
+    for kept_i in "${!kept_texts[@]}"; do
+        holds_version "${kept_texts[kept_i]}" "$old" || continue
+        printf 'bump-stale-pins: REFUSED: %s: pin %s appears again on line %s of %s, beside the pin this planner moves\n' "$leg" "$old" "${kept_nos[kept_i]}" "$file" >&2
+        exit 1
+    done
+    # A second install of the package at any version would win over the moved pin, and a
+    # leg reading the installed version back would agree with it.
+    if [ "$kind" = npm ] && names_package "${pin_line/"npm install -g $pkg@$old"/}" "$pkg"; then
+        printf 'bump-stale-pins: REFUSED: %s: package %s appears again on line %s of %s; this planner moves one install\n' "$leg" "$pkg" "$line_no" "$file" >&2
+        exit 1
+    fi
+    if [ "$multi" -eq 1 ] && [ -z "$old_sha" ]; then
+        printf 'bump-stale-pins: REFUSED: %s: the sha512= line in %s holds no digest\n' "$leg" "$file" >&2
+        exit 1
+    fi
+    # The old pin on any live line this plan does not rewrite would survive the bump.
+    mapfile -t scan_lines < "$file"
+    for ((scan_no = 1; scan_no <= ${#scan_lines[@]}; scan_no++)); do
+        [ "$scan_no" -ne "$line_no" ] || continue
+        if [ "$multi" -eq 1 ]; then
+            [ "$scan_no" -ne "$url_no" ] && [ "$scan_no" -ne "$sha_no" ] || continue
+        fi
+        scan_line=${scan_lines[scan_no - 1]}
+        scan_line=${scan_line#"${scan_line%%[![:space:]]*}"}
+        case "$scan_line" in
+            '#'* | '//'*) continue ;;
+        esac
+        if [ "$multi" -eq 1 ] && [[ $scan_line == *"$old_sha"* ]]; then
+            printf 'bump-stale-pins: REFUSED: %s: the old sha512 also appears on line %s of %s, a line this planner does not move\n' "$leg" "$scan_no" "$file" >&2
+            exit 1
+        fi
+        if [ "$kind" = npm ] && names_package "$scan_line" "$pkg"; then
+            printf 'bump-stale-pins: REFUSED: %s: package %s also appears on line %s of %s; this planner moves one install\n' "$leg" "$pkg" "$scan_no" "$file" >&2
+            exit 1
+        fi
+        holds_version "$scan_line" "$old" || continue
+        printf 'bump-stale-pins: REFUSED: %s: pin %s also appears on line %s of %s, a line this planner does not move\n' "$leg" "$old" "$scan_no" "$file" >&2
+        exit 1
+    done
     plans+=("$leg $old $new")
     targets+=("$file"$'\t'"$line_no"$'\t'"$new_line")
     if [ "$multi" -eq 1 ]; then

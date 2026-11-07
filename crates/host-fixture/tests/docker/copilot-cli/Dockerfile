@@ -31,11 +31,20 @@ export COPILOT_HOME="$HOME/.copilot"
 export XDG_DATA_HOME="$HOME/.local/share"
 mkdir -p "$COPILOT_HOME" "$XDG_DATA_HOME"
 
-# The pin must be what the binary actually reports, else the leg is green for the
-# wrong version (a runtime HOME cache can outlive the npm pin).
+# The binary must report what npm installed, else the leg is green for the wrong
+# version (a runtime HOME cache can outlive the package). The version is read back from
+# the installed package, so the `npm install -g` line above stays the pin's only home
+# and a pin bump moves it whole; the bump planner refuses the package named elsewhere.
+npm_root=$(npm root -g) || { echo "FAIL: npm root -g errored"; exit 1; }
+pkg_json="$npm_root/@github/copilot/package.json"
+pin=$(node -e '
+const v = require(process.argv[1]).version;
+if (typeof v !== "string" || v === "") process.exit(1);
+process.stdout.write(v);
+' "$pkg_json") || { echo "FAIL: cannot read the installed copilot version from $pkg_json"; exit 1; }
 ver=$(copilot --version) || { echo "FAIL: copilot --version errored"; exit 1; }
 got=${ver%%$'\n'*}
-[ "$got" = "GitHub Copilot CLI 1.0.105." ] || { echo "copilot pin drift: binary reports '$got', this Dockerfile pins '1.0.105'"; exit 1; }
+[ "$got" = "GitHub Copilot CLI $pin." ] || { echo "copilot pin drift: binary reports '$got', npm installed '$pin'"; exit 1; }
 
 # settings.json is where real `copilot plugin marketplace add`/`plugin install` write
 # `extraKnownMarketplaces`/`enabledPlugins` (confirmed against a live container write,
