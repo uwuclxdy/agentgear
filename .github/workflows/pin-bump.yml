@@ -11,9 +11,10 @@ name: pin-bump
 # A pull request opened with GITHUB_TOKEN triggers none of this repo's pull_request
 # workflows: GitHub skips events created by the token that opened the PR, so ci.yml —
 # and its harness-docker matrix — never runs for it. The bumped legs are therefore
-# verified HERE, as this workflow's own matrix jobs on the pushed branch head; those
-# check runs attach to that commit and show on the PR's Checks tab. The PR never merges
-# itself: landing it is the human part of the alarm.
+# verified HERE, as this workflow's own matrix jobs on the pushed branch head. Their
+# check runs attach to the commit the run started from, not to that branch head, so the
+# PR's Checks tab stays empty and the PR body links the run. The PR never merges itself:
+# landing it is the human part of the alarm.
 #
 # GitHub disables a public repo's scheduled workflow after 60 days without repository
 # activity: re-enable it from the Actions tab.
@@ -68,12 +69,8 @@ jobs:
           echo "the check exited $rc; the planner reads the log either way"
       - name: plan and apply the pin bumps
         # The planner validates every leg before the first write and exits 1, having
-        # written nothing, on any refusal: a pin the log and the Dockerfile disagree
-        # on, a downgrade, a leg with no version source here, a malformed or duplicated
-        # STALE or BUMP line, a missing or mismatched BUMP payload, a BUMP payload for a
-        # leg the STALE summary does not name or whose pin is single-field, a multi-field
-        # leg without exactly one url= and one sha512= line, or a summary class it does
-        # not know. The refusal reasons are on this step's log.
+        # written nothing, on any refusal. The planner's header lists every refusal; the
+        # reasons are on this step's log.
         run: |
           if ! bash crates/host-fixture/tests/docker/bump-stale-pins.sh "$RUNNER_TEMP/pin-staleness.log" > "$RUNNER_TEMP/plan.txt"; then
             exit 1
@@ -114,8 +111,8 @@ jobs:
             cp -- "$docker_dir/$leg/Dockerfile" "$stash/$leg/Dockerfile"
           done
           if git ls-remote --exit-code --heads origin "$branch" > /dev/null 2>&1; then
-            # An open PR already sits on today's branch: carry the planned files onto
-            # its head as one more commit, never a force-push.
+            # Today's branch already exists, with or without an open PR: carry the planned
+            # files onto its head as one more commit, never a force-push.
             git checkout -- "${files[@]}"
             git fetch origin "$branch"
             git checkout -B "$branch" FETCH_HEAD
@@ -213,7 +210,7 @@ jobs:
             exit 0
           fi
           {
-            echo 'The scheduled pin-bump run could not open or extend the bump PR:'
+            echo 'The pin-bump run could not open or extend the bump PR:'
             echo
             echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             echo "plan: $PLAN_RESULT, legs: $LEGS_RESULT, pr: $PR_RESULT — the run log holds the refusal or the failing leg."
