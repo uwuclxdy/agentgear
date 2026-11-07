@@ -33,6 +33,7 @@ owned by that harness's workflow, disjoint from every other file:
    prunes a container our own keys emptied and deletes a config file left holding
    nothing, so an unseeded leg has no file left to parse.
 6. exit nonzero on any failed assertion.
+7. **npm legs**: `COPY` `installed-vs-pin.sh` and the leg's own Dockerfile into the image, and the entrypoint runs the helper as its last assert, so nothing can install after the compare; the package reaches the helper as two args split at the scope slash, which protects the bump planner's package-word scan (the check's one-needle-match invariant holds because the call line itself carries no `npm install -g <pkg>@`); an unscoped package (none today) would pass the whole name as the first part and an empty second part.
 
 ## notes
 
