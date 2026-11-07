@@ -25,8 +25,8 @@ on:
 
 # Queue an overlapping dispatch run behind the scheduled one instead of cancelling it:
 # a run killed mid-matrix strands a pushed branch with no PR, and only tomorrow's fresh
-# branch heals that. ci.yml cancels because its legs are minutes-cheap; these are tens
-# of minutes each.
+# branch heals that. ci.yml cancels because its legs are minutes-cheap; these measured
+# 69-98s each, ~2min for the whole run (run 42366760255).
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
