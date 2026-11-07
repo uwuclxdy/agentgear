@@ -50,13 +50,7 @@ omp's `PI_CODING_AGENT_DIR`, and crush's higher-precedence `$XDG_DATA_HOME/crush
 (`CRUSH_GLOBAL_DATA`) — a known limitation if a user sets one. HOME-based backends (gemini, cursor,
 droid, augment) take no override.
 
-An override set to the **empty string** is a special case worth knowing, because the tools disagree
-about it. `claude` and `copilot` both read an empty value as the config dir itself, resolving
-`settings.json` against the current working directory. agentgear once refused that input — the
-guard lived on the retired status-line slot's config-dir resolver, and it is gone with that wiring;
-nothing in agentgear resolves either override anymore, so the input is simply never read and the
-CLIs resolve their own paths. Other backends still read an empty override as unset and fall back to
-their default root; what their tools do with an empty value has not been probed.
+An override set to the **empty string** is a special case worth knowing, because the tools disagree about it. `claude` and `copilot` both read an empty value as the config dir itself, resolving `settings.json` against the current working directory; agentgear's claude backend classifies an empty `CLAUDE_CONFIG_DIR` as that same cwd-relative reading, and a heal reports it rather than guessing the dir. The backends that resolve a harness home read an empty override as unset and fall back to their default root, and the one tool probed so far agrees: codex ignores an empty `CODEX_HOME` and reads `~/.codex` (live-proven 2026-11-07, codex-cli 0.166.0). Known divergences: kimi reads an empty `KIMI_CODE_HOME` literally as a cwd-relative root (derived from kimi's 2.3.3 bundle source, not run), and copilot's own empty-`COPILOT_HOME` reading is tracked as the same suspected shape (unproven).
 
 ## See also
 
