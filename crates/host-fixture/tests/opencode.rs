@@ -80,6 +80,21 @@ impl Env {
         (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
+    /// `fixture`, but run from `cwd` with `overrides` layered onto the sandbox env
+    /// after `apply` (a later `env()` call replaces the earlier one), for the
+    /// resolution variants a plain run cannot express — an empty override value,
+    /// notably.
+    fn fixture_with(&self, args: &[&str], cwd: &Path, overrides: &[(&str, &str)]) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args).current_dir(cwd);
+        self.apply(&mut cmd);
+        for (key, value) in overrides {
+            cmd.env(key, value);
+        }
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
     fn config_json(&self) -> String {
         fs::read_to_string(self.opencode.join("opencode.json")).unwrap()
     }
@@ -239,4 +254,50 @@ fn opencode_self_heal_never_reenables_a_user_disable() {
     assert_ne!(out, "NoOp", "explicit setup should have re-enabled the disabled entry, got {out}");
     let c = env.config_json();
     assert!(c.contains("\"enabled\": true"), "explicit setup did not re-enable the disabled entry:\n{c}");
+}
+
+/// opencode resolves an empty `XDG_CONFIG_HOME` like an unset one, to the
+/// HOME-derived config dir (measured 2026-11-08 against opencode 1.19.4: unset and
+/// empty both read the scratch `$HOME/.config/opencode/opencode.json`; a non-empty
+/// value relocated the read; the cwd `opencode.json` is the project config both arms
+/// merge, never the empty value's own reading). The resolver must ignore the empty
+/// value the same way, or every user-scope write lands wherever the host binary
+/// happened to run while opencode reads its real config.
+#[test]
+fn opencode_empty_xdg_config_home_value_resolves_to_the_home_config_dir() {
+    let env = Env::new("empty-xdg");
+    // The HOME-derived dir the empty value must fall back to, seeded so detect()
+    // passes there and a foreign server marks the file as the user's own.
+    let home_opencode = env.root.join(".config").join("opencode");
+    fs::create_dir_all(&home_opencode).unwrap();
+    fs::write(
+        home_opencode.join("opencode.json"),
+        r#"{ "mcp": { "theirs": { "type": "local", "command": ["their-server"], "enabled": true } } }
+"#,
+    )
+    .unwrap();
+    let cwd = env.root.join("empty-xdg-cwd");
+    fs::create_dir_all(&cwd).unwrap();
+    // A foreign cwd config turns a cwd-relative resolution into an observable write:
+    // any rewrite of this seed means the resolver read the empty value as a path (the
+    // home-side assert is the discriminator — a literal empty value joins into
+    // `<cwd>/opencode/` — the seed is belt-and-suspenders).
+    let cwd_seed = "{ \"cwd\": true }\n";
+    fs::write(cwd.join("opencode.json"), cwd_seed).unwrap();
+
+    let (ok, out) = env.fixture_with(&["setup", "--agent", "opencode"], &cwd, &[("XDG_CONFIG_HOME", "")]);
+    assert!(ok, "setup with an empty XDG_CONFIG_HOME failed: {out}");
+    assert_eq!(out, "Installed", "setup with an empty XDG_CONFIG_HOME should install, got {out}");
+
+    let home_config = fs::read_to_string(home_opencode.join("opencode.json")).unwrap();
+    assert!(
+        home_config.contains("ez-fixture"),
+        "our server did not land under the HOME-derived config dir opencode itself reads under an empty value:\n{home_config}"
+    );
+    assert_eq!(
+        fs::read_to_string(cwd.join("opencode.json")).unwrap(),
+        cwd_seed,
+        "an empty XDG_CONFIG_HOME resolved cwd-relative: the cwd config was written or rewritten"
+    );
+    assert_eq!(env.config_json(), SEED_CONFIG, "the seeded XDG-side config the override replaced was touched");
 }

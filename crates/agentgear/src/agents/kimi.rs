@@ -132,7 +132,9 @@ impl AgentBackend for KimiBackend {
 
 /// The kimi-code home dir, honoring `KIMI_CODE_HOME` (its documented override) then
 /// `~/.kimi-code`. `_opt` never errors so `detect` can call it; a HOME-based fallback
-/// means a test redirecting `HOME`/`KIMI_CODE_HOME` also redirects the backend.
+/// means a test redirecting `HOME`/`KIMI_CODE_HOME` also redirects the backend. A
+/// set-but-empty `KIMI_CODE_HOME` reads as unset here — [`kimi_home`] is the layer
+/// that refuses to serve a location under it.
 fn kimi_home_opt() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("KIMI_CODE_HOME").filter(|v| !v.is_empty()) {
         return Some(PathBuf::from(dir));
@@ -140,7 +142,16 @@ fn kimi_home_opt() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".kimi-code"))
 }
 
+/// The kimi-code home dir backing a write. A set-but-empty `KIMI_CODE_HOME` is
+/// rejected, never resolved: kimi reads an empty value literally as its home root and
+/// cannot start against it (measured 2026-11-08: a headless run dies `mkdir ''`), so
+/// no location is honest to serve under it.
 fn kimi_home() -> Result<PathBuf> {
+    if std::env::var_os("KIMI_CODE_HOME").is_some_and(|v| v.is_empty()) {
+        return Err(Error::Tree(
+            "KIMI_CODE_HOME is set to the empty string; kimi reads an empty value literally as its home root and cannot start against it (mkdir ''); unset the variable or set it to an absolute path".into(),
+        ));
+    }
     kimi_home_opt().ok_or_else(|| Error::Tree("no home directory (HOME and KIMI_CODE_HOME unset); cannot locate ~/.kimi-code".into()))
 }
 

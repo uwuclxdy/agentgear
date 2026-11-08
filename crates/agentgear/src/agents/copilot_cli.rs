@@ -152,8 +152,8 @@ impl AgentBackend for CopilotCliBackend {
 // --- paths -------------------------------------------------------------------
 
 /// copilot's config dir: a non-empty `COPILOT_HOME`, else `~/.copilot`. An empty
-/// override reads as unset, the same reading every other harness-home override in
-/// this crate takes (`CODEX_HOME`, `KIRO_HOME`, `KIMI_CODE_HOME`, …).
+/// override reads as unset, the same reading `CODEX_HOME` and `KIRO_HOME` take; kimi
+/// instead rejects a set-but-empty value.
 fn copilot_home() -> Result<PathBuf> {
     if let Some(dir) = std::env::var_os("COPILOT_HOME").filter(|v| !v.is_empty()) {
         return Ok(PathBuf::from(dir));

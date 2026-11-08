@@ -150,6 +150,21 @@ impl Env {
         )
     }
 
+    /// `fixture`, but run from `cwd` with `overrides` layered onto the sandbox env
+    /// after `apply` (a later `env()` call replaces the earlier one), for the
+    /// resolution variants a plain run cannot express — an empty override value,
+    /// notably.
+    fn fixture_with(&self, args: &[&str], cwd: &Path, overrides: &[(&str, &str)]) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args).current_dir(cwd);
+        self.apply(&mut cmd);
+        for (key, value) in overrides {
+            cmd.env(key, value);
+        }
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
     /// Runs the github-default fixture host (same sandbox, same double).
     fn github_fixture(&self, args: &[&str]) -> (bool, String) {
         let mut cmd = Command::new(GITHUB_FIXTURE);
@@ -1720,4 +1735,40 @@ fn copilot_cli_probe_reads_ownership_without_computing_siblings() {
     assert!(ok && out == "NoOp", "self-heal must no-op over a healthy install, got {out}");
     let calls = fs::read_to_string(&calls_log).unwrap_or_default();
     assert_eq!(calls, "plugin list\nplugin marketplace list\n", "probe must spawn once for the row and once for ownership, got:\n{calls}");
+}
+
+/// copilot resolves an empty `COPILOT_HOME` like an unset one, to `~/.copilot`
+/// (measured 2026-11-08 against Copilot CLI 1.0.104: with `COPILOT_HOME=` empty the
+/// CLI read the scratch `$HOME/.copilot/mcp-config.json` an unset run had written,
+/// and a non-empty value relocated the write; the cwd held no config either way).
+/// The resolver must ignore the empty value the same way, or the instructions file
+/// lands wherever the host binary happened to run while copilot reads its real home.
+#[test]
+fn copilot_empty_copilot_home_value_resolves_to_the_home_dir() {
+    let env = Env::new("empty-copilot-home");
+    // The HOME-derived dir the empty value must fall back to, pre-created so nothing
+    // about the resolution depends on the double creating it first.
+    let home_copilot = env.root.join(".copilot");
+    fs::create_dir_all(&home_copilot).unwrap();
+    let cwd = env.root.join("empty-copilot-cwd");
+    fs::create_dir_all(&cwd).unwrap();
+
+    let (ok, out) = env.fixture_with(&["setup", "--agent", "copilot-cli"], &cwd, &[("COPILOT_HOME", "")]);
+    assert!(ok, "setup with an empty COPILOT_HOME failed: {out}");
+    assert_eq!(out, "Installed", "setup with an empty COPILOT_HOME should install, got {out}");
+
+    let instructions = home_copilot.join("copilot-instructions.md");
+    assert!(
+        instructions.exists(),
+        "the instructions file did not land under the HOME-derived ~/.copilot copilot itself reads under an empty value: {}",
+        instructions.display()
+    );
+    assert!(
+        !cwd.join("copilot-instructions.md").exists(),
+        "an empty COPILOT_HOME resolved cwd-relative: the cwd got the instructions file"
+    );
+    assert!(
+        !env.copilot_home.join("copilot-instructions.md").exists(),
+        "the seeded COPILOT_HOME dir the override replaced got the instructions file"
+    );
 }

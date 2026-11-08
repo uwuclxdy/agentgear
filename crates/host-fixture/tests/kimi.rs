@@ -110,6 +110,25 @@ impl Env {
         (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
+    /// `fixture`, but run from `cwd` with `overrides` layered onto the sandbox env
+    /// after `apply` (a later `env()` call replaces the earlier one), and also
+    /// returning stderr, for the resolution variants a plain run cannot express — an
+    /// empty override value, notably — whose reject rides on the error path.
+    fn fixture_with(&self, args: &[&str], cwd: &Path, overrides: &[(&str, &str)]) -> (bool, String, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args).current_dir(cwd);
+        self.apply(&mut cmd);
+        for (key, value) in overrides {
+            cmd.env(key, value);
+        }
+        let out = cmd.output().unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        )
+    }
+
     fn mcp_json(&self) -> String {
         fs::read_to_string(self.kimi.join("mcp.json")).unwrap()
     }
@@ -483,4 +502,39 @@ fn kimi_self_heal_repairs_a_deleted_agent_profile() {
     assert!(ok, "self-heal failed: {out}");
     assert_eq!(out, "Installed", "self-heal must repair a deleted agent profile, got {out}");
     assert!(ours.exists(), "self-heal did not rewrite the deleted profile");
+}
+
+/// kimi reads a set-but-empty `KIMI_CODE_HOME` literally as its home root and cannot
+/// start against it (measured 2026-11-08 against the leg's `@moonshot-ai/kimi-code`
+/// 2.5.2 bundle, self-reported 2.5.1: `kimi --agent x -p hi` fails `ENOENT: mkdir ''`
+/// with the override empty, while unset and a non-empty value resolve and run, and
+/// the empty run creates nothing anywhere). No install location can serve a tool
+/// that reads no config, so the resolver rejects the value instead of silently
+/// serving `~/.kimi-code`.
+#[test]
+fn kimi_set_but_empty_kimi_code_home_value_is_rejected() {
+    let env = Env::new("empty-override");
+    // The HOME-fallback dir detect() resolves under the filtered empty value, seeded
+    // so the lifecycle reaches the resolver and the reject, not a silent skip.
+    let home_kimi = env.root.join(".kimi-code");
+    fs::create_dir_all(&home_kimi).unwrap();
+    fs::write(home_kimi.join("mcp.json"), SEED_MCP).unwrap();
+    let cwd = env.root.join("empty-override-cwd");
+    fs::create_dir_all(&cwd).unwrap();
+    // A foreign cwd config turns a cwd-relative resolution into an observable write:
+    // any rewrite of this seed means the resolver read the empty value as a path.
+    let cwd_seed = "{ \"cwd\": true }\n";
+    fs::write(cwd.join("mcp.json"), cwd_seed).unwrap();
+
+    let (ok, out, err) = env.fixture_with(&["setup", "--agent", "kimi"], &cwd, &[("KIMI_CODE_HOME", "")]);
+    assert!(!ok, "setup with a set-but-empty KIMI_CODE_HOME must be rejected, got success: {out}");
+    let reject = "KIMI_CODE_HOME is set to the empty string; kimi reads an empty value literally as its home root and cannot start against it (mkdir ''); unset the variable or set it to an absolute path";
+    let combined = format!("{out}\n{err}");
+    assert!(combined.contains(reject), "the reject must name the empty override, kimi's literal reading and the fix:\n{combined}");
+    assert_eq!(fs::read_to_string(home_kimi.join("mcp.json")).unwrap(), SEED_MCP, "the HOME-fallback seed was written to");
+    assert_eq!(
+        fs::read_to_string(cwd.join("mcp.json")).unwrap(),
+        cwd_seed,
+        "the empty value resolved cwd-relative: the cwd mcp.json was written or rewritten"
+    );
 }
