@@ -110,6 +110,35 @@ impl Env {
     fn settings(&self) -> String {
         fs::read_to_string(self.settings_path()).unwrap()
     }
+
+    /// `fixture`, but run from `cwd` with `overrides` layered onto the sandbox env
+    /// after `apply` (a later `env()` call replaces the earlier one), for the
+    /// resolution variants a plain run cannot express — an empty override value,
+    /// notably.
+    fn fixture_with(&self, args: &[&str], cwd: &Path, overrides: &[(&str, &str)]) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args).current_dir(cwd);
+        self.apply(&mut cmd);
+        for (key, value) in overrides {
+            cmd.env(key, value);
+        }
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// `fixture`, but run from `cwd` with the named vars REMOVED from the sandbox
+    /// env — the resolution variant `Command::env` cannot express (an unset
+    /// override), for the arm `Env::apply` always pre-sets.
+    fn fixture_without(&self, args: &[&str], cwd: &Path, unset: &[&str]) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args).current_dir(cwd);
+        self.apply(&mut cmd);
+        for key in unset {
+            cmd.env_remove(key);
+        }
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
 }
 
 impl Drop for Env {
@@ -477,4 +506,88 @@ fn qwen_instructions_user_scope_only() {
     assert!(proj.join(".qwen").join("settings.json").exists(), "precondition: project install ran");
     assert!(!proj.join(".qwen").join("QWEN.md").exists(), "project .qwen/QWEN.md must not be written");
     assert!(!env.qwen.join("QWEN.md").exists(), "a project install must not touch the user's global QWEN.md");
+}
+
+/// qwen resolves an empty `QWEN_HOME` like an unset one, to the HOME-derived
+/// `~/.qwen` (live-proven 2026-11-08 against qwen 0.26.9: the unset and empty arms
+/// listed identical marker sets from the same seeded cwd, and the `$version` stamp
+/// qwen's own `mcp list` writes landed in the HOME-side settings.json under both; a
+/// non-empty value relocated the read). The resolver must ignore the empty value the
+/// same way, or every user-scope write lands wherever the host binary happened to
+/// run while qwen reads its real config.
+#[test]
+fn qwen_empty_qwen_home_value_resolves_to_the_home_dir() {
+    // `Env::seeded` pre-creates and seeds `.qwen` (the HOME-derived fallback root the
+    // empty value must resolve to), so `detect()` passes there and the seeded foreign
+    // server marks the file as the user's own. The override replaces the sandbox's
+    // set `QWEN_HOME` with the empty value.
+    let env = Env::seeded("empty-qwen-home", ".qwen", SEED_SETTINGS);
+
+    let cwd = env.root.join("empty-qwen-home-cwd");
+    fs::create_dir_all(&cwd).unwrap();
+    // A foreign cwd settings file turns a cwd-relative resolution into an observable
+    // write: any rewrite of this seed means the resolver read the empty value as a
+    // path (the home-side assert is the discriminator — a literal empty value joins
+    // into `<cwd>/.qwen/`; the seed is belt-and-suspenders).
+    let cwd_seed = "{\n  \"theme\": \"dark\"\n}\n";
+    let cwd_qwen = cwd.join(".qwen");
+    fs::create_dir_all(&cwd_qwen).unwrap();
+    fs::write(cwd_qwen.join("settings.json"), cwd_seed).unwrap();
+
+    let (ok, out) = env.fixture_with(&["setup", "--agent", "qwen-code"], &cwd, &[("QWEN_HOME", "")]);
+    assert!(ok, "setup with an empty QWEN_HOME failed: {out}");
+    assert_eq!(out, "Installed", "setup with an empty QWEN_HOME should install, got {out}");
+
+    let home_settings = env.settings();
+    assert!(
+        home_settings.contains("ez-fixture"),
+        "our server did not land under the HOME-derived ~/.qwen qwen itself reads under an empty value:\n{home_settings}"
+    );
+    assert_eq!(
+        fs::read_to_string(cwd_qwen.join("settings.json")).unwrap(),
+        cwd_seed,
+        "an empty QWEN_HOME resolved cwd-relative: the cwd settings file was written or rewritten"
+    );
+}
+
+/// agentgear resolves an UNSET `QWEN_HOME` to the HOME-derived `~/.qwen`, the same
+/// root qwen itself reads there (probe arm A, measured 2026-11-08 against qwen
+/// 0.26.9: the unset and empty arms listed identical marker sets). Every other
+/// hermetic test pre-sets `QWEN_HOME` via `Env::apply`, so a fallback regression (a
+/// wrong leaf join, a foreign var honored ahead of HOME) ships green everywhere
+/// else in the file.
+#[test]
+fn qwen_unset_qwen_home_resolves_to_the_home_dir() {
+    let env = Env::seeded("unset-qwen-home", ".qwen", SEED_SETTINGS);
+    let cwd = env.root.join("unset-qwen-home-cwd");
+    fs::create_dir_all(&cwd).unwrap();
+
+    let (ok, out) = env.fixture_without(&["setup", "--agent", "qwen-code"], &cwd, &["QWEN_HOME"]);
+    assert!(ok, "setup with QWEN_HOME unset failed: {out}");
+    assert_eq!(out, "Installed", "setup with QWEN_HOME unset should install, got {out}");
+
+    let home_settings = env.settings();
+    assert!(
+        home_settings.contains("ez-fixture"),
+        "our server did not land under the HOME-derived ~/.qwen with QWEN_HOME unset:\n{home_settings}"
+    );
+}
+
+/// A non-empty `QWEN_HOME` relocates the whole backend to that dir (probe arm C,
+/// measured 2026-11-08 against qwen 0.26.9: the set control relocated the read).
+/// The sandbox seeds the override target away from the HOME-derived root, so a
+/// resolver that ignored the override and read `$HOME/.qwen` would fail detect
+/// here (its dir would not exist) — every other test's override points at the
+/// HOME-derived root, where both readings agree.
+#[test]
+fn qwen_set_qwen_home_relocates_the_backend() {
+    let env = Env::seeded("set-qwen-home", "qwen-custom", SEED_SETTINGS);
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "qwen-code"]);
+    assert!(ok, "setup with QWEN_HOME set failed: {out}");
+    assert_eq!(out, "Installed", "setup with QWEN_HOME set should install, got {out}");
+
+    let settings = env.settings();
+    assert!(settings.contains("ez-fixture"), "our server did not land under the set QWEN_HOME root:\n{settings}");
+    assert!(!env.root.join(".qwen").exists(), "a set QWEN_HOME must not create the HOME-derived ~/.qwen");
 }
