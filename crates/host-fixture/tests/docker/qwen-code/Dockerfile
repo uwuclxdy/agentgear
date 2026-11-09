@@ -17,7 +17,7 @@ RUN cargo build -p host-fixture --release
 FROM node:22-slim
 # Pinned to a known-good tag (docker leg green on it). qwen-code's release cadence is
 # fast.
-RUN npm install -g @qwen-code/qwen-code@0.26.9
+RUN npm install -g @qwen-code/qwen-code@0.27.1
 # the entrypoint's last assert compares what npm installed with the pin it reads from this file's copy
 COPY crates/host-fixture/tests/docker/installed-vs-pin.sh /usr/local/bin/installed-vs-pin.sh
 COPY crates/host-fixture/tests/docker/qwen-code/Dockerfile /tmp/leg.Dockerfile
