@@ -54,14 +54,23 @@ struct Env {
 }
 
 impl Env {
-    /// `name` must be unique per test: `std::process::id()` alone is constant across
-    /// every test in this binary, so two tests sharing one root would race on it
-    /// under cargo's default parallel test threads.
     fn new(name: &str) -> Self {
+        Self::seeded(name, "config/crush")
+    }
+
+    /// `crush_dir` is where the config root sits, relative to the temp root. The
+    /// user-scope tests keep it at `config/crush`, the XDG-config-local root the
+    /// resolver falls back to when the override drops, so that dropping or emptying
+    /// `CRUSH_GLOBAL_CONFIG` resolves to the same place; the set-value test moves it
+    /// elsewhere precisely so a resolver that ignored the override fails detect
+    /// there. `name` must be unique per test: `std::process::id()` alone is constant
+    /// across every test in this binary, so two tests sharing one root would race on
+    /// it under cargo's default parallel test threads.
+    fn seeded(name: &str, crush_dir: &str) -> Self {
         let root = std::env::temp_dir().join(format!("ez-crush-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let config = root.join("config");
-        let env = Env { crush: config.join("crush"), data: root.join("data"), run: root.join("run"), path: fixture_dir(), config, root };
+        let env = Env { crush: root.join(crush_dir), data: root.join("data"), run: root.join("run"), path: fixture_dir(), config, root };
         // Pre-create the crush config dir so detect() passes with no `crush` on PATH,
         // and seed an unrelated user config the lifecycle must preserve.
         fs::create_dir_all(&env.crush).unwrap();
@@ -85,6 +94,35 @@ impl Env {
         let mut cmd = Command::new(BIN);
         cmd.args(args);
         self.apply(&mut cmd);
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// `fixture`, but run from `cwd` with `overrides` layered onto the sandbox env
+    /// after `apply` (a later `env()` call replaces the earlier one), for the
+    /// resolution variants a plain run cannot express — an empty override value,
+    /// notably.
+    fn fixture_with(&self, args: &[&str], cwd: &Path, overrides: &[(&str, &str)]) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args).current_dir(cwd);
+        self.apply(&mut cmd);
+        for (key, value) in overrides {
+            cmd.env(key, value);
+        }
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// `fixture`, but run from `cwd` with the named vars REMOVED from the sandbox
+    /// env — the resolution variant `Command::env` cannot express (an unset
+    /// override), for the arm `Env::apply` always pre-sets.
+    fn fixture_without(&self, args: &[&str], cwd: &Path, unset: &[&str]) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args).current_dir(cwd);
+        self.apply(&mut cmd);
+        for key in unset {
+            cmd.env_remove(key);
+        }
         let out = cmd.output().unwrap();
         (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
@@ -328,4 +366,124 @@ fn crush_instructions_user_scope_only() {
     assert!(project_hits.is_empty(), "project scope must leave no CRUSH.md anywhere: {project_hits:?}");
     let user_hits = find_crush_md(&env.crush);
     assert!(user_hits.is_empty(), "a project install must not touch the user's global config dir: {user_hits:?}");
+}
+
+/// crush resolves an empty `CRUSH_GLOBAL_CONFIG` like an unset one, to the
+/// config-local `~/.config/crush` (live-proven 2026-11-09 against crush 0.100.0:
+/// the unset and empty arms of `crush dirs` printed the same home root and `crush
+/// models` failed identically on a corrupt config there, naming the home file,
+/// while a non-empty value relocated the read and went green). The resolver must
+/// ignore the empty value the same way, or every user-scope write lands wherever
+/// the host binary happened to run while crush reads its real config.
+#[test]
+fn crush_empty_crush_global_config_value_resolves_to_the_fallback_root() {
+    // `Env::seeded` pre-creates and seeds the XDG-config-local root (the fallback
+    // the empty value must resolve to), so `detect()` passes there and the seeded
+    // foreign server marks the file as the user's own. The override replaces the
+    // sandbox's set `CRUSH_GLOBAL_CONFIG` with the empty value.
+    let env = Env::seeded("empty-crush-config", "config/crush");
+
+    let cwd = env.root.join("empty-crush-config-cwd");
+    fs::create_dir_all(&cwd).unwrap();
+    // Foreign cwd seeds turn a cwd-relative resolution into an observable write:
+    // any rewrite of either means the resolver read the empty value as a path
+    // relative to the cwd, or that a user-scope setup wrote across scopes. A
+    // literal-'' reading points AT the config dir, so its write lands at
+    // `<cwd>/crush.json` (the override carries no `crush` leaf to insert); a
+    // cwd-relative FALLBACK carries the leaf and lands at `<cwd>/crush/crush.json`.
+    // The home-side assert is the net for every other wrong root.
+    let cwd_seed = "{\n  \"theme\": \"dark\"\n}\n";
+    fs::write(cwd.join("crush.json"), cwd_seed).unwrap();
+    let cwd_leaf = cwd.join("crush");
+    fs::create_dir_all(&cwd_leaf).unwrap();
+    fs::write(cwd_leaf.join("crush.json"), cwd_seed).unwrap();
+
+    let (ok, out) = env.fixture_with(&["setup", "--agent", "crush"], &cwd, &[("CRUSH_GLOBAL_CONFIG", "")]);
+    assert!(ok, "setup with an empty CRUSH_GLOBAL_CONFIG failed: {out}");
+    assert_eq!(out, "Installed", "setup with an empty CRUSH_GLOBAL_CONFIG should install, got {out}");
+
+    let home_config = env.config_json();
+    assert!(
+        home_config.contains("ez-fixture"),
+        "our entries did not land under the config-local root crush itself reads under an empty value:\n{home_config}"
+    );
+    assert_eq!(
+        fs::read_to_string(cwd.join("crush.json")).unwrap(),
+        cwd_seed,
+        "an empty CRUSH_GLOBAL_CONFIG resolved cwd-relative: the cwd project config was written or rewritten"
+    );
+    assert_eq!(
+        fs::read_to_string(cwd_leaf.join("crush.json")).unwrap(),
+        cwd_seed,
+        "an empty CRUSH_GLOBAL_CONFIG resolved through a cwd-relative fallback: `<cwd>/crush/crush.json` was written or rewritten"
+    );
+}
+
+/// agentgear resolves an UNSET `CRUSH_GLOBAL_CONFIG` to the XDG-config-local
+/// `~/.config/crush`, the same root crush itself reads there (probe arm A,
+/// measured 2026-11-09 against crush 0.100.0: the unset and empty arms printed
+/// identical roots and failed identically on the same corrupt home config). Every
+/// other hermetic test pre-sets `CRUSH_GLOBAL_CONFIG` via `Env::apply`, so a
+/// fallback regression (a wrong leaf join, a foreign var honored ahead of XDG)
+/// ships green everywhere else in the file.
+#[test]
+fn crush_unset_crush_global_config_resolves_to_the_fallback_root() {
+    let env = Env::seeded("unset-crush-config", "config/crush");
+    let cwd = env.root.join("unset-crush-config-cwd");
+    fs::create_dir_all(&cwd).unwrap();
+
+    let (ok, out) = env.fixture_without(&["setup", "--agent", "crush"], &cwd, &["CRUSH_GLOBAL_CONFIG"]);
+    assert!(ok, "setup with CRUSH_GLOBAL_CONFIG unset failed: {out}");
+    assert_eq!(out, "Installed", "setup with CRUSH_GLOBAL_CONFIG unset should install, got {out}");
+
+    let home_config = env.config_json();
+    assert!(
+        home_config.contains("ez-fixture"),
+        "our entries did not land under the config-local root with CRUSH_GLOBAL_CONFIG unset:\n{home_config}"
+    );
+}
+
+/// A non-empty `CRUSH_GLOBAL_CONFIG` relocates the whole backend to that dir
+/// (probe arm C, measured 2026-11-09 against crush 0.100.0: the set control
+/// relocated the read and went green while the corrupt home config stayed
+/// unread). The sandbox seeds the override target away from the fallback root,
+/// so a resolver that ignored the override and read the config-local dir would
+/// fail detect here (its dir would not exist) — every other test's override
+/// points at the fallback root, where both readings agree.
+#[test]
+fn crush_set_crush_global_config_relocates_the_backend() {
+    let env = Env::seeded("set-crush-config", "config/crush-custom");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "crush"]);
+    assert!(ok, "setup with CRUSH_GLOBAL_CONFIG set failed: {out}");
+    assert_eq!(out, "Installed", "setup with CRUSH_GLOBAL_CONFIG set should install, got {out}");
+
+    let config = env.config_json();
+    assert!(config.contains("ez-fixture"), "our entries did not land under the set CRUSH_GLOBAL_CONFIG root:\n{config}");
+    assert!(!env.config.join("crush").exists(), "a set CRUSH_GLOBAL_CONFIG must not create the config-local root");
+}
+
+/// A non-empty `CRUSH_GLOBAL_CONFIG` wins even when the fallback root also exists:
+/// crush reads the override first (probe arm C relocated the read while the seeded
+/// home root existed and stayed unread), so a resolver that consults the fallback
+/// whenever it is present would write the default dir while crush reads the
+/// override. The sandbox seeds BOTH roots, so the wrong ordering fails the custom
+/// root's presence assert and the fallback seed's byte-compare.
+#[test]
+fn crush_set_crush_global_config_wins_over_an_existing_fallback_root() {
+    let env = Env::seeded("set-wins-over-fallback", "config/crush");
+    let custom = env.config.join("crush-custom");
+    fs::create_dir_all(&custom).unwrap();
+
+    let cwd = env.root.join("set-wins-cwd");
+    fs::create_dir_all(&cwd).unwrap();
+    let (ok, out) = env.fixture_with(&["setup", "--agent", "crush"], &cwd, &[("CRUSH_GLOBAL_CONFIG", custom.to_str().unwrap())]);
+    assert!(ok, "setup with the override set over an existing fallback failed: {out}");
+    assert_eq!(out, "Installed", "setup with the override set over an existing fallback should install, got {out}");
+
+    let custom_config = custom.join("crush.json");
+    assert!(custom_config.exists(), "our entries did not land under the set CRUSH_GLOBAL_CONFIG root (no crush.json there)");
+    let written = fs::read_to_string(&custom_config).unwrap();
+    assert!(written.contains("ez-fixture"), "our entries did not land under the set CRUSH_GLOBAL_CONFIG root:\n{written}");
+    assert_eq!(env.config_json(), SEED_CONFIG, "the existing fallback root's config was written although the override was set");
 }
