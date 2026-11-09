@@ -527,8 +527,10 @@ fn qwen_empty_qwen_home_value_resolves_to_the_home_dir() {
     fs::create_dir_all(&cwd).unwrap();
     // A foreign cwd settings file turns a cwd-relative resolution into an observable
     // write: any rewrite of this seed means the resolver read the empty value as a
-    // path (the home-side assert is the discriminator — a literal empty value joins
-    // into `<cwd>/.qwen/`; the seed is belt-and-suspenders).
+    // path relative to the cwd. A literal-'' join has no `.qwen` to insert (the
+    // override points AT the config dir itself), so its write would land at
+    // `<cwd>/settings.json` and miss this seed entirely — the home-side assert is
+    // the net for that class; the seed catches the `<cwd>/.qwen/…` shape.
     let cwd_seed = "{\n  \"theme\": \"dark\"\n}\n";
     let cwd_qwen = cwd.join(".qwen");
     fs::create_dir_all(&cwd_qwen).unwrap();

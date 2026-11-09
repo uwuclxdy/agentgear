@@ -7,7 +7,9 @@
 //! We set `KIRO_HOME` (kiro's documented base override) at the temp root, so every
 //! path the backend touches derives from it — proving our writes land under that
 //! root (and the seeded user entries survive) also proves it never reaches the
-//! developer's real home. Hooks are the interesting case: kiro nests them inside an
+//! developer's real home. The resolution tests vary or drop that override
+//! deliberately (empty/unset/set arms); the lifecycle tests keep it set. Hooks are
+//! the interesting case: kiro nests them inside an
 //! agent's own file, so we pre-seed `agents/default.json` (a real user agent) and
 //! check our hooks merge in without disturbing the user's identity or their own hook.
 
@@ -55,12 +57,20 @@ struct Env {
 
 impl Env {
     fn new(name: &str) -> Self {
+        Self::seeded(name, ".kiro")
+    }
+
+    /// `kiro_home` is where `KIRO_HOME` points, relative to the temp root. The
+    /// user-scope tests keep it at `.kiro` so that dropping `KIRO_HOME` resolves to
+    /// the same place; the set-value test moves it elsewhere precisely so a resolver
+    /// that ignored the override fails detect there.
+    fn seeded(name: &str, kiro_home: &str) -> Self {
         // `name` disambiguates the temp root: `process::id()` is constant across every
         // test in this binary, so a second test would otherwise share (and wipe) this one.
         let root = std::env::temp_dir().join(format!("ez-kiro-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let env = Env {
-            kiro: root.join(".kiro"),
+            kiro: root.join(kiro_home),
             config: root.join("config"),
             data: root.join("data"),
             run: root.join("run"),
@@ -92,6 +102,35 @@ impl Env {
         let mut cmd = Command::new(BIN);
         cmd.args(args);
         self.apply(&mut cmd);
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// `fixture`, but run from `cwd` with `overrides` layered onto the sandbox env
+    /// after `apply` (a later `env()` call replaces the earlier one), for the
+    /// resolution variants a plain run cannot express — an empty override value,
+    /// notably.
+    fn fixture_with(&self, args: &[&str], cwd: &Path, overrides: &[(&str, &str)]) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args).current_dir(cwd);
+        self.apply(&mut cmd);
+        for (key, value) in overrides {
+            cmd.env(key, value);
+        }
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// `fixture`, but run from `cwd` with the named vars REMOVED from the sandbox
+    /// env — the resolution variant `Command::env` cannot express (an unset
+    /// override), for the arm `Env::apply` always pre-sets.
+    fn fixture_without(&self, args: &[&str], cwd: &Path, unset: &[&str]) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args).current_dir(cwd);
+        self.apply(&mut cmd);
+        for key in unset {
+            cmd.env_remove(key);
+        }
         let out = cmd.output().unwrap();
         (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
@@ -258,4 +297,82 @@ fn kiro_instructions_user_scope_only() {
     assert!(ok, "setup failed: {out}");
     assert!(!proj.join(".kiro").join("steering").exists(), "project scope must not create a steering dir");
     assert!(!env.kiro.join("steering").join(INSTR_FILE).exists(), "a project install must not touch the user's steering dir");
+}
+
+/// kiro resolves an empty `KIRO_HOME` like an unset one, to the HOME-derived
+/// `~/.kiro` (live-proven 2026-11-09 against kiro-cli 3.1.0: the unset and empty
+/// arms of `kiro-cli settings list` read the same seeded `$HOME/.kiro` marker and
+/// rc 0, while a non-empty value relocated the read; auth-free — the login wall
+/// hits the agent subcommands, not settings). The resolver must ignore the empty
+/// value the same way, or every user-scope write lands wherever the host binary
+/// happened to run while kiro reads its real config.
+#[test]
+fn kiro_empty_kiro_home_value_resolves_to_the_home_dir() {
+    let env = Env::new("empty-kiro-home");
+
+    let cwd = env.root.join("empty-kiro-home-cwd");
+    fs::create_dir_all(&cwd).unwrap();
+    // A foreign cwd mcp config turns a cwd-relative resolution into an observable
+    // write: any rewrite of this seed means the resolver read the empty value as a
+    // path relative to the cwd. A literal-'' join has no `.kiro` to insert (the
+    // override points AT the .kiro-equivalent dir), so its write would land at
+    // `<cwd>/settings/mcp.json` and miss this seed entirely — the home-side assert
+    // is the net for that class; the seed catches the `<cwd>/.kiro/…` shape.
+    let cwd_seed = "{\n  \"cwdOnly\": true\n}\n";
+    let cwd_kiro = cwd.join(".kiro").join("settings");
+    fs::create_dir_all(&cwd_kiro).unwrap();
+    fs::write(cwd_kiro.join("mcp.json"), cwd_seed).unwrap();
+
+    let (ok, out) = env.fixture_with(&["setup", "--agent", "kiro"], &cwd, &[("KIRO_HOME", "")]);
+    assert!(ok, "setup with an empty KIRO_HOME failed: {out}");
+    assert_eq!(out, "Installed", "setup with an empty KIRO_HOME should install, got {out}");
+
+    let home_mcp = env.mcp();
+    assert!(
+        home_mcp.contains("ez-fixture"),
+        "our server did not land under the HOME-derived ~/.kiro kiro itself reads under an empty value:\n{home_mcp}"
+    );
+    assert_eq!(
+        fs::read_to_string(cwd_kiro.join("mcp.json")).unwrap(),
+        cwd_seed,
+        "an empty KIRO_HOME resolved cwd-relative: the cwd mcp config was written or rewritten"
+    );
+}
+
+/// agentgear resolves an UNSET `KIRO_HOME` to the HOME-derived `~/.kiro`, the same
+/// root kiro itself reads there (probe arm A, measured 2026-11-09 against kiro-cli
+/// 3.1.0). Every other hermetic test pre-sets `KIRO_HOME` via `Env::apply`, so a
+/// fallback regression (a wrong leaf join, a foreign var honored ahead of HOME)
+/// ships green everywhere else in the file.
+#[test]
+fn kiro_unset_kiro_home_resolves_to_the_home_dir() {
+    let env = Env::new("unset-kiro-home");
+    let cwd = env.root.join("unset-kiro-home-cwd");
+    fs::create_dir_all(&cwd).unwrap();
+
+    let (ok, out) = env.fixture_without(&["setup", "--agent", "kiro"], &cwd, &["KIRO_HOME"]);
+    assert!(ok, "setup with KIRO_HOME unset failed: {out}");
+    assert_eq!(out, "Installed", "setup with KIRO_HOME unset should install, got {out}");
+
+    let home_mcp = env.mcp();
+    assert!(home_mcp.contains("ez-fixture"), "our server did not land under the HOME-derived ~/.kiro with KIRO_HOME unset:\n{home_mcp}");
+}
+
+/// A non-empty `KIRO_HOME` relocates the whole backend to that dir (probe arm C,
+/// measured 2026-11-09 against kiro-cli 3.1.0: the set control relocated the read).
+/// The sandbox seeds the override target away from the HOME-derived root, so a
+/// resolver that ignored the override and read `$HOME/.kiro` would fail detect
+/// here (its dir would not exist) — every other test's override points at the
+/// HOME-derived root, where both readings agree.
+#[test]
+fn kiro_set_kiro_home_relocates_the_backend() {
+    let env = Env::seeded("set-kiro-home", "kiro-custom");
+
+    let (ok, out) = env.fixture(&["setup", "--agent", "kiro"]);
+    assert!(ok, "setup with KIRO_HOME set failed: {out}");
+    assert_eq!(out, "Installed", "setup with KIRO_HOME set should install, got {out}");
+
+    let mcp = env.mcp();
+    assert!(mcp.contains("ez-fixture"), "our server did not land under the set KIRO_HOME root:\n{mcp}");
+    assert!(!env.root.join(".kiro").exists(), "a set KIRO_HOME must not create the HOME-derived ~/.kiro");
 }
