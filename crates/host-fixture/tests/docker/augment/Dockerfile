@@ -14,7 +14,7 @@ RUN cargo build -p host-fixture --release
 # @augmentcode/auggie declares engines.node >=20.0.0; node:22-slim clears it.
 FROM node:22-slim
 # Pin the CLI for reproducibility.
-RUN npm install -g @augmentcode/auggie@0.37.0
+RUN npm install -g @augmentcode/auggie@0.37.1
 # the entrypoint's last assert compares what npm installed with the pin it reads from this file's copy
 COPY crates/host-fixture/tests/docker/installed-vs-pin.sh /usr/local/bin/installed-vs-pin.sh
 COPY crates/host-fixture/tests/docker/augment/Dockerfile /tmp/leg.Dockerfile
