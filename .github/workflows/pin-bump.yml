@@ -8,10 +8,13 @@ name: pin-bump
 # allowance, a fetch failure, an unrecognised payload, an unreadable pin, a missing
 # leg, a misclassified leg) is a human's work it ignores loudly and plans nothing off.
 #
-# A pull request opened with GITHUB_TOKEN triggers none of this repo's pull_request
-# workflows: GitHub skips events created by the token that opened the PR, so ci.yml —
-# and its harness-docker matrix — never runs for it. The bumped legs are therefore
-# verified HERE, as this workflow's own matrix jobs on the pushed branch head. Their
+# A pull request opened with GITHUB_TOKEN gets a pull_request ci.yml run only in
+# action_required awaiting maintainer approval — the opening token's events are not
+# skipped outright (every bump PR to date carries one: 42366910465, 42490456259,
+# 42668881616, 42848648847; none executed a job, each ended failure once the PR closed
+# or merged), so ci.yml — and its harness-docker matrix — gate nothing unattended. The
+# bumped legs are therefore verified HERE, as this workflow's own matrix jobs on the
+# pushed branch head. Their
 # check runs attach to the commit the run started from, not to that branch head, so the
 # PR's Checks tab stays empty and the PR body links the run. The PR never merges itself:
 # landing it is the human part of the alarm.
