@@ -76,11 +76,7 @@ reshapes one backend: nothing overrides how a backend renders (a different MCP c
 codex) or drops a surface for one backend (skipping hooks on cursor). Each backend writes what
 its target tool supports, gated by detection and the `${CLAUDE_PLUGIN_ROOT}` portability filter.
 
-`instructions_fn` is the only method override the derive exposes, because it
-emits the sole `impl PluginHost`. For anything past the attributes, write `impl PluginHost` by hand. Every trait
-item is public: supply the five consts (`NAME`, `MARKETPLACE`, `VERSION`, `DEFAULT_SOURCE`,
-`AGENTS`) and `embedded_blob()`, and the lifecycle methods (`install`, `update`, `self_heal`,
-`doctor`, …) come with the trait. You give up three derive-only guarantees:
+`instructions_fn` and `mcp_env_fn` are the only method overrides the derive exposes, because it emits the sole `impl PluginHost`. `mcp_env_fn` names a `fn() -> Option<BTreeMap<String, String>>` whose map is merged into every stdio MCP server's registration env (a plugin.json-declared key wins). For anything past the attributes, write `impl PluginHost` by hand. Every trait item is public: supply the five consts (`NAME`, `MARKETPLACE`, `VERSION`, `DEFAULT_SOURCE`, `AGENTS`) and `embedded_blob()`, and the lifecycle methods (`install`, `update`, `self_heal`, `doctor`, …) come with the trait. You give up three derive-only guarantees:
 
 - the compile error when the `build.rs` guard is missing;
 - the `agents`-vs-feature check;
