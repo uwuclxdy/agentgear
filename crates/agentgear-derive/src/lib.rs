@@ -24,8 +24,8 @@ use known_agents::{KNOWN_AGENTS, feature_const_ident};
 /// At expansion the macro reads the shipped `plugin.json` (it must exist, be valid
 /// JSON, and its `name` must equal the `name` key), bakes the plugin tree in via
 /// `include_bytes!` of the `build.rs` blob, emits the `impl PluginHost` (the consts,
-/// `embedded_blob`, and the optional `instructions` override; the lifecycle methods
-/// are trait defaults), and plants const-eval guards: one fires if the host forgot
+/// `embedded_blob`, and the optional `instructions`/`mcp_env` overrides; the
+/// lifecycle methods are trait defaults), and plants const-eval guards: one fires if the host forgot
 /// its `build.rs`, one more per listed agent whose cargo feature is off.
 ///
 /// The host also writes the one-line build script the guard checks for:
@@ -47,6 +47,7 @@ use known_agents::{KNOWN_AGENTS, feature_const_ident};
 /// | `agents` | no | `["claude"]` | backend ids to fan out to; each must be a known id with its cargo feature on |
 /// | `embed` | no | `true` | `false` bakes an empty blob for a github/path-source host |
 /// | `instructions_fn` | no | none | path to a `fn() -> Option<String>` feeding `PluginHost::instructions` |
+/// | `mcp_env_fn` | no | none | path to a `fn() -> Option<BTreeMap<String, String>>` feeding `PluginHost::mcp_env`, merged into every stdio MCP server's registration env (a plugin.json-declared key wins) |
 ///
 /// # Adopting into a host that already ships a plugin
 ///
@@ -105,10 +106,15 @@ struct Attrs {
     agents: Vec<String>,
     embed: bool,
     /// A path to a `fn() -> Option<String>` the emitted impl calls from
-    /// `PluginHost::instructions` (the only override seam, since the derive owns the
-    /// sole impl block). Spliced verbatim like `version`; `None` inherits the trait
-    /// default (`None`, no instructions surface).
+    /// `PluginHost::instructions` (one of the two override seams, since the derive
+    /// owns the sole impl block). Spliced verbatim like `version`; `None` inherits
+    /// the trait default (`None`, no instructions surface).
     instructions_fn: Option<TokenStream2>,
+    /// A path to a `fn() -> Option<BTreeMap<String, String>>` the emitted impl
+    /// calls from `PluginHost::mcp_env`, merged into every stdio MCP server's
+    /// registration env. Spliced verbatim like `instructions_fn`; `None` inherits
+    /// the trait default (`None`, no env merge).
+    mcp_env_fn: Option<TokenStream2>,
     span: proc_macro2::Span,
 }
 
@@ -124,17 +130,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let agents = &attrs.agents;
     let default_source = default_source_tokens(&attrs)?;
 
-    // Override `PluginHost::instructions` only when the host set `instructions_fn`;
-    // otherwise the emitted impl omits the method and inherits the trait default
-    // (`None`). The attr is a path to a `fn() -> Option<String>`, called verbatim.
-    let instructions_method = match &attrs.instructions_fn {
-        Some(path) => quote! {
-            fn instructions() -> ::core::option::Option<::std::string::String> {
-                #path()
-            }
-        },
-        None => quote! {},
-    };
+    let override_methods = override_methods(&attrs);
 
     // `embed = true` (default): bake the build.rs blob via `include_bytes!` of the
     // `AGENTGEAR_BLOB` path. `embed = false`: an empty slice (`Source::Embedded`
@@ -177,7 +173,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 #embedded_blob_body
             }
 
-            #instructions_method
+            #override_methods
         }
 
         // Fires only if the host forgot its build.rs, which would also lose the
@@ -195,6 +191,34 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
+/// The optional override methods the emitted impl carries, each emitted only when
+/// its attr is set: `instructions` (`#[plugin(instructions_fn = <path>)]`) and
+/// `mcp_env` (`#[plugin(mcp_env_fn = <path>)]`). An absent attr emits nothing and
+/// the impl inherits the trait default (`None`). Each attr is a path to a zero-arg
+/// fn, spliced verbatim and called from the method.
+fn override_methods(attrs: &Attrs) -> TokenStream2 {
+    let instructions = match &attrs.instructions_fn {
+        Some(path) => quote! {
+            fn instructions() -> ::core::option::Option<::std::string::String> {
+                #path()
+            }
+        },
+        None => quote! {},
+    };
+    let mcp_env = match &attrs.mcp_env_fn {
+        Some(path) => quote! {
+            fn mcp_env() -> ::core::option::Option<::std::collections::BTreeMap<::std::string::String, ::std::string::String>> {
+                #path()
+            }
+        },
+        None => quote! {},
+    };
+    quote! {
+        #instructions
+        #mcp_env
+    }
+}
+
 fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
     let span = input.ident.span();
     let mut name: Option<String> = None;
@@ -206,6 +230,7 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
     let mut agents: Option<Vec<String>> = None;
     let mut embed: Option<bool> = None;
     let mut instructions_fn: Option<TokenStream2> = None;
+    let mut mcp_env_fn: Option<TokenStream2> = None;
 
     let attr = input
         .attrs
@@ -248,6 +273,12 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
                 let value = &pair.value;
                 instructions_fn = Some(quote! { #value });
             }
+            "mcp_env_fn" => {
+                // A fn path (e.g. `crate::plugin::mcp_env`), spliced through
+                // verbatim and called from the emitted `mcp_env()`.
+                let value = &pair.value;
+                mcp_env_fn = Some(quote! { #value });
+            }
             other => return Err(syn::Error::new_spanned(&pair.path, format!("unknown `plugin` key `{other}`"))),
         }
     }
@@ -272,7 +303,7 @@ fn parse_attrs(input: &DeriveInput) -> syn::Result<Attrs> {
     }
     let embed = embed.unwrap_or(true);
 
-    Ok(Attrs { name, marketplace, version, tree, default_source, github_repo, agents, embed, instructions_fn, span })
+    Ok(Attrs { name, marketplace, version, tree, default_source, github_repo, agents, embed, instructions_fn, mcp_env_fn, span })
 }
 
 fn default_source_tokens(attrs: &Attrs) -> syn::Result<TokenStream2> {
@@ -355,6 +386,41 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("unknown agent id `codx`"), "got: {msg}");
         assert!(msg.contains("known ids: claude,"), "must list the known ids: {msg}");
+    }
+
+    #[test]
+    fn mcp_env_fn_parses() {
+        let input: DeriveInput = syn::parse_quote! {
+            #[plugin(name = "x", mcp_env_fn = crate::plugin::mcp_env)]
+            struct Host;
+        };
+        let Ok(_attrs) = parse_attrs(&input) else {
+            panic!("`mcp_env_fn` must parse");
+        };
+    }
+
+    #[test]
+    fn mcp_env_fn_lands_in_attrs_and_is_emitted() {
+        let input: DeriveInput = syn::parse_quote! {
+            #[plugin(name = "x", mcp_env_fn = crate::plugin::mcp_env)]
+            struct Host;
+        };
+        let attrs = parse_attrs(&input).unwrap();
+        let path = attrs.mcp_env_fn.as_ref().expect("`mcp_env_fn` must be stored verbatim");
+        assert_eq!(path.to_string(), "crate :: plugin :: mcp_env");
+
+        let methods = override_methods(&attrs).to_string();
+        assert!(methods.contains("fn mcp_env ()"), "the emitted impl must carry the mcp_env method: {methods}");
+        assert!(methods.contains("crate :: plugin :: mcp_env ()"), "the method must call the attr path verbatim: {methods}");
+
+        // Absent attr: no path stored, no method emitted (the trait default `None` applies).
+        let bare: DeriveInput = syn::parse_quote! {
+            #[plugin(name = "x")]
+            struct Host;
+        };
+        let attrs = parse_attrs(&bare).unwrap();
+        assert!(attrs.mcp_env_fn.is_none(), "no attr must store no path");
+        assert_eq!(override_methods(&attrs).to_string(), "", "no attr must emit no method");
     }
 
     #[test]

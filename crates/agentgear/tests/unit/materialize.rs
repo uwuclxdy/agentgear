@@ -4,6 +4,7 @@
 //! mutated. Linked into `materialize.rs` (gated on the `embed` feature, which the
 //! blob helpers need).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -18,7 +19,15 @@ const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/plugi
 
 fn test_plugin() -> Plugin {
     // `blob` is unused by the helpers under test (they take entries/blob directly).
-    Plugin { name: "ez-test-plugin", marketplace: "ez-test-mkt", version: "0.1.0", agents: &["claude"], instructions: None, blob: &[] }
+    Plugin {
+        name: "ez-test-plugin",
+        marketplace: "ez-test-mkt",
+        version: "0.1.0",
+        agents: &["claude"],
+        instructions: None,
+        env: BTreeMap::new(),
+        blob: &[],
+    }
 }
 
 fn fixture_blob() -> Vec<u8> {
@@ -71,7 +80,15 @@ fn client_token_materializes_per_client_and_hashes_match_baseline() {
     .unwrap();
 
     let blob = compress_dir(&src).unwrap();
-    let plugin = Plugin { name: "tok", marketplace: "tok-mkt", version: "0.1.0", agents: &["claude"], instructions: None, blob: &[] };
+    let plugin = Plugin {
+        name: "tok",
+        marketplace: "tok-mkt",
+        version: "0.1.0",
+        agents: &["claude"],
+        instructions: None,
+        env: BTreeMap::new(),
+        blob: &[],
+    };
 
     let root = scratch();
     let versions = root.join("versions");

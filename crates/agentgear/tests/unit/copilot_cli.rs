@@ -6,7 +6,7 @@
 //! (`crates/host-fixture/tests/docker/copilot-cli`), which cannot run under
 //! `cargo test`, so nothing here spawns `copilot`.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::{
@@ -256,7 +256,7 @@ fn classify_github_present_is_healthy_regardless_of_version() {
 // --- remove: ownership + refcount + dotted-key guards ------------------------
 
 fn test_plugin(name: &'static str, marketplace: &'static str) -> Plugin {
-    Plugin { name, marketplace, version: "0.1.0", agents: &[], instructions: None, blob: &[] }
+    Plugin { name, marketplace, version: "0.1.0", agents: &[], instructions: None, env: BTreeMap::new(), blob: &[] }
 }
 
 #[test]

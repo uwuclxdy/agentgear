@@ -1,6 +1,7 @@
 //! The public surface a host binary drives: the [`PluginHost`] trait (the derive
 //! implements it) plus the value types its lifecycle methods speak in.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::doctor::DoctorReport;
@@ -383,6 +384,10 @@ pub struct Plugin {
     /// Host-authored always-loaded guidance ([`PluginHost::instructions`]); each
     /// non-CC backend writes it to its native context channel. `None` writes nothing.
     pub instructions: Option<String>,
+    /// Host-declared environment ([`PluginHost::mcp_env`]) merged into every stdio
+    /// MCP server's registration env by [`Plugin::components`]; a plugin.json-declared
+    /// key wins. Empty when the host declares no provider.
+    pub env: BTreeMap<String, String>,
     /// The plugin tree baked in as a compressed `.tar.br` (empty when the derive's
     /// `embed` attr is off). Decompressed by `materialize` for [`Source::Embedded`].
     pub(crate) blob: &'static [u8],
@@ -396,6 +401,7 @@ impl std::fmt::Debug for Plugin {
             .field("version", &self.version)
             .field("agents", &self.agents)
             .field("instructions", &self.instructions)
+            .field("env", &self.env)
             .finish_non_exhaustive()
     }
 }
@@ -413,10 +419,22 @@ impl Plugin {
     /// The harness-agnostic components IR for this plugin's tree. Public so an
     /// external [`AgentBackend`](crate::AgentBackend) can render from the same parsed
     /// IR the in-crate backends use instead of re-parsing the tree by hand.
-    /// `Source::GitHub` has no local tree and errors out (non-CC backends cannot
-    /// serve a github-source host).
+    /// The host-declared [`Plugin::env`] is merged into every stdio server's env,
+    /// a plugin.json-declared key winning. `Source::GitHub` has no local tree and
+    /// errors out (non-CC backends cannot serve a github-source host).
     pub fn components(&self, source: &Source) -> Result<crate::components::PluginComponents> {
-        crate::components::PluginComponents::parse(&crate::materialize::entries_for(self, source)?)
+        let mut components = crate::components::PluginComponents::parse(&crate::materialize::entries_for(self, source)?)?;
+        // The host-declared env supplements each stdio server's plugin.json-declared
+        // env; a declared key wins (`entry().or_insert_with` fills only absent keys).
+        // Remote (http/sse) servers render no env in any writer, so they are skipped.
+        for server in &mut components.mcp_servers {
+            if matches!(server.kind, crate::components::McpKind::Stdio) {
+                for (key, value) in &self.env {
+                    server.env.entry(key.clone()).or_insert_with(|| value.clone());
+                }
+            }
+        }
+        Ok(components)
     }
 }
 
@@ -444,8 +462,18 @@ pub trait PluginHost {
     /// Host-authored always-loaded guidance merged into each non-CC harness's native
     /// instructions channel. `None` (the default) writes no instructions surface. A
     /// deriving host supplies it with `#[plugin(instructions_fn = <path>)]`, since the
-    /// derive owns the sole `impl PluginHost` block and this is the only override seam.
+    /// derive owns the sole `impl PluginHost` block and the two method overrides it
+    /// offers are the only override seams.
     fn instructions() -> Option<String> {
+        None
+    }
+
+    /// Host-declared environment merged into every stdio MCP server's registration
+    /// env at probe/reconcile/remove ([`Plugin::components`]): the provider
+    /// supplements the plugin's own plugin.json-declared `env`, and a declared key
+    /// wins. `None` (the default) merges nothing; remote (http/sse) servers carry
+    /// no env. A deriving host supplies it with `#[plugin(mcp_env_fn = <path>)]`.
+    fn mcp_env() -> Option<BTreeMap<String, String>> {
         None
     }
 
@@ -470,6 +498,7 @@ pub trait PluginHost {
             version: Self::VERSION,
             agents: Self::AGENTS,
             instructions: Self::instructions(),
+            env: Self::mcp_env().unwrap_or_default(),
             blob: Self::embedded_blob(),
         }
     }

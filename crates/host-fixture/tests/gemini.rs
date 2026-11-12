@@ -68,13 +68,28 @@ impl Env {
             .env("XDG_CONFIG_HOME", &self.config)
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_RUNTIME_DIR", &self.run)
-            .env("PATH", &self.path);
+            .env("PATH", &self.path)
+            .env_remove("AGENTGEAR_FIXTURE_MCP_ENV");
     }
 
     fn fixture(&self, args: &[&str]) -> (bool, String) {
         let mut cmd = Command::new(BIN);
         cmd.args(args);
         self.apply(&mut cmd);
+        let out = cmd.output().unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// `fixture`, with extra env vars layered onto the sandbox env after `apply`
+    /// (a later `env()` call replaces the earlier one) — the fixture host's
+    /// env-provider opt-in (`AGENTGEAR_FIXTURE_MCP_ENV`).
+    fn fixture_with(&self, args: &[&str], overrides: &[(&str, &str)]) -> (bool, String) {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args);
+        self.apply(&mut cmd);
+        for (key, value) in overrides {
+            cmd.env(key, value);
+        }
         let out = cmd.output().unwrap();
         (out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
@@ -218,6 +233,47 @@ fn gemini_uninstall_drops_a_settings_file_it_authored() {
     let (ok, out) = env.fixture(&["uninstall"]);
     assert!(ok && out == "Removed", "uninstall failed: {out}");
     assert!(!settings.exists(), "uninstall orphaned a settings file it authored:\n{}", fs::read_to_string(&settings).unwrap());
+}
+
+// --- host-declared MCP env ---------------------------------------------------
+
+/// The derive's `mcp_env_fn` seam end to end: the fixture host's provider map
+/// (opting in via `AGENTGEAR_FIXTURE_MCP_ENV`) merges into the written settings —
+/// the path-sourced tree's stdio server declares `FIXTURE_ENV_KEEP`, which must
+/// win over the provider's value, the provider fills `FIXTURE_ENV_ADD`, and the
+/// remote server stays env-free. The second setup must read the merged env back
+/// through probe and NoOp.
+#[test]
+fn host_declared_mcp_env_lands_in_the_written_settings() {
+    let env = Env::new("mcp-env");
+    let tree = env.root.join("plugin-tree");
+    fs::create_dir_all(tree.join(".claude-plugin")).unwrap();
+    fs::write(
+        tree.join(".claude-plugin").join("plugin.json"),
+        r#"{"name":"ez-fixture-plugin","version":"0.1.0","mcpServers":{
+            "ez-fixture":{"command":"host_fixture","args":["mcp"],"env":{"FIXTURE_ENV_KEEP":"declared"}},
+            "ez-fixture-http":{"type":"http","url":"http://127.0.0.1:39621/mcp"}
+        }}"#,
+    )
+    .unwrap();
+    let tree_arg = tree.to_str().unwrap().to_string();
+    let run = || env.fixture_with(&["setup", "--path", &tree_arg, "--agent", "gemini"], &[("AGENTGEAR_FIXTURE_MCP_ENV", "1")]);
+
+    let (ok, out) = run();
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+
+    let parsed: serde_json::Value = serde_json::from_str(&env.settings()).unwrap();
+    assert_eq!(
+        parsed["mcpServers"]["ez-fixture"],
+        serde_json::json!({"command":"host_fixture","args":["mcp"],"env":{"FIXTURE_ENV_ADD":"host-provided","FIXTURE_ENV_KEEP":"declared"}}),
+        "the stdio server must carry the merged env:\n{}",
+        env.settings()
+    );
+    assert!(parsed["mcpServers"]["ez-fixture-http"].get("env").is_none(), "a remote server must stay env-free:\n{}", env.settings());
+
+    let (ok, out) = run();
+    assert!(ok && out == "NoOp", "second setup must read the merged env as healthy, got {out}");
 }
 
 // --- instructions ------------------------------------------------------------

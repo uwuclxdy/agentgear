@@ -70,6 +70,7 @@ impl Env {
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_RUNTIME_DIR", &self.run)
             .env("PATH", &self.path)
+            .env_remove("AGENTGEAR_FIXTURE_MCP_ENV")
             // A stray PI_CONFIG_DIR/profile on the dev box would relocate the config
             // root; clear them so the backend resolves the default `~/.omp/agent`.
             .env_remove("PI_CONFIG_DIR")

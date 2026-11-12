@@ -2,6 +2,8 @@
 //! symlink); matches this crate's existing precedent for platform-gating
 //! filesystem-symlink assertions (e.g. `cline`'s executable-bit check).
 
+use std::collections::BTreeMap;
+
 use super::*;
 
 /// The project-scope stamp key is per-project-PATH, so a project reached via a
@@ -152,4 +154,44 @@ impl PluginHost for SeparatorNameHost {
 #[should_panic(expected = "must be a single file-name component")]
 fn hand_impl_with_a_separator_name_panics_at_the_descriptor() {
     let _ = SeparatorNameHost::descriptor();
+}
+
+// --- host-declared MCP env ---------------------------------------------------
+
+/// The merge in `Plugin::components`: the host provider supplements each stdio
+/// server's plugin.json-declared env, a declared value wins, and remote
+/// (http/sse) servers stay env-free.
+#[test]
+fn components_merges_host_env_into_stdio_servers_only() {
+    let src = crate::scratch::path("ez-host-env-src");
+    std::fs::create_dir_all(src.join(".claude-plugin")).unwrap();
+    std::fs::write(
+        src.join(".claude-plugin").join("plugin.json"),
+        r#"{"name":"ez-host-env","version":"0.1.0","mcpServers":{
+            "stdio":{"command":"host","env":{"FIXTURE_ENV_KEEP":"declared"}},
+            "http":{"type":"http","url":"https://x/mcp"},
+            "sse":{"type":"sse","url":"https://x/sse"}
+        }}"#,
+    )
+    .unwrap();
+
+    let mut env = BTreeMap::new();
+    env.insert("FIXTURE_ENV_KEEP".to_string(), "host-provided".to_string());
+    env.insert("FIXTURE_ENV_ADD".to_string(), "host-provided".to_string());
+    let plugin =
+        Plugin { name: "ez-host-env", marketplace: "ez-mkt", version: "0.1.0", agents: &["gemini"], instructions: None, env, blob: &[] };
+
+    let components = plugin.components(&Source::Path(src.clone())).unwrap();
+    let by = |n: &str| components.mcp_servers.iter().find(|s| s.name == n).unwrap();
+    let stdio = by("stdio");
+    assert_eq!(
+        stdio.env.get("FIXTURE_ENV_KEEP").map(String::as_str),
+        Some("declared"),
+        "a plugin.json-declared value must win over the provider's"
+    );
+    assert_eq!(stdio.env.get("FIXTURE_ENV_ADD").map(String::as_str), Some("host-provided"), "the provider must fill an absent key");
+    assert!(by("http").env.is_empty(), "an http server must stay env-free");
+    assert!(by("sse").env.is_empty(), "an sse server must stay env-free");
+
+    let _ = std::fs::remove_dir_all(&src);
 }

@@ -7,6 +7,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::collections::BTreeMap;
+
 use super::{guidance_check, probe, reconcile, remove};
 use crate::agents::BackendState;
 use crate::doctor::CheckStatus;
@@ -25,6 +27,7 @@ fn plugin(instructions: Option<&str>) -> Plugin {
         version: "0.0.0",
         agents: &[],
         instructions: instructions.map(str::to_string),
+        env: BTreeMap::new(),
         blob: &[],
     }
 }

@@ -99,7 +99,8 @@ impl Env {
             .env("XDG_CONFIG_HOME", &self.config)
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_RUNTIME_DIR", &self.run)
-            .env("PATH", &self.path);
+            .env("PATH", &self.path)
+            .env_remove("AGENTGEAR_FIXTURE_MCP_ENV");
         // A stray override on the dev box would relocate every other test's settings
         // file, so clear all three and set back only what this Env asked for.
         for var in ["CLINE_DIR", "CLINE_DATA_DIR", "CLINE_MCP_SETTINGS_PATH"] {

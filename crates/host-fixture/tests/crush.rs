@@ -87,7 +87,8 @@ impl Env {
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_RUNTIME_DIR", &self.run)
             .env("CRUSH_GLOBAL_CONFIG", &self.crush)
-            .env("PATH", &self.path);
+            .env("PATH", &self.path)
+            .env_remove("AGENTGEAR_FIXTURE_MCP_ENV");
     }
 
     fn fixture(&self, args: &[&str]) -> (bool, String) {

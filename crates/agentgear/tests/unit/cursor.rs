@@ -3,6 +3,8 @@
 //! that `SubagentStart` maps to cursor's real `subagentStart` agent hook (present in
 //! the binary-confirmed 21-event catalog), mirroring `SubagentStop`.
 
+use std::collections::BTreeMap;
+
 use super::*;
 use crate::components::HookBinding;
 
@@ -88,7 +90,15 @@ fn agentgear_client_token_expands_to_this_backend_id() {
     )
     .unwrap();
 
-    let plugin = Plugin { name: "ez-cid", marketplace: "ez-mkt", version: "0.1.0", agents: &["cursor"], instructions: None, blob: &[] };
+    let plugin = Plugin {
+        name: "ez-cid",
+        marketplace: "ez-mkt",
+        version: "0.1.0",
+        agents: &["cursor"],
+        instructions: None,
+        env: BTreeMap::new(),
+        blob: &[],
+    };
     let project = crate::scratch::path("ez-cidtok-dst");
     let scope = Scope::Project { path: project.clone() };
     let source = Source::Path(src.clone());
@@ -119,6 +129,7 @@ fn instr_plugin() -> Plugin {
         version: "0.1.0",
         agents: &["cursor"],
         instructions: Some("line one\n".into()),
+        env: BTreeMap::new(),
         blob: &[],
     }
 }

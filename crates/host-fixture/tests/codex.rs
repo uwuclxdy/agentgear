@@ -91,7 +91,8 @@ impl Env {
             .env("XDG_CONFIG_HOME", &self.config)
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_RUNTIME_DIR", &self.run)
-            .env("PATH", &self.path);
+            .env("PATH", &self.path)
+            .env_remove("AGENTGEAR_FIXTURE_MCP_ENV");
     }
 
     fn fixture(&self, args: &[&str]) -> (bool, String) {
@@ -256,6 +257,44 @@ fn codex_full_lifecycle() {
     let (ok, out) = env.fixture(&["setup", "--agent", "codex"]);
     assert!(ok && out == "Installed", "re-install after uninstall should install, got {out}");
     assert!(env.config_toml().contains("[mcp_servers.ez-fixture]"), "re-install did not re-add our server");
+}
+
+/// The derive's `mcp_env_fn` seam end to end through codex's TOML writer: the
+/// fixture host's provider (opting in via `AGENTGEAR_FIXTURE_MCP_ENV`) merges
+/// into the written `[mcp_servers.ez-fixture]` env inline table — the declared
+/// `FIXTURE_ENV_KEEP` wins over the provider's value, the provider fills
+/// `FIXTURE_ENV_ADD`, and the remote table stays env-free. The second setup
+/// runs probe's `env_matches` over the merged env and must NoOp.
+#[test]
+fn host_declared_mcp_env_lands_in_config_toml() {
+    let env = Env::new("mcp-env");
+    let tree = env.root.join("plugin-tree");
+    fs::create_dir_all(tree.join(".claude-plugin")).unwrap();
+    fs::write(
+        tree.join(".claude-plugin").join("plugin.json"),
+        r#"{"name":"ez-fixture-plugin","version":"0.1.0","mcpServers":{
+            "ez-fixture":{"command":"host_fixture","args":["mcp"],"env":{"FIXTURE_ENV_KEEP":"declared"}},
+            "ez-fixture-http":{"type":"http","url":"http://127.0.0.1:39621/mcp"}
+        }}"#,
+    )
+    .unwrap();
+    let tree_arg = tree.to_str().unwrap().to_string();
+    let run = || env.fixture_with(&["setup", "--path", &tree_arg, "--agent", "codex"], &env.root, &[("AGENTGEAR_FIXTURE_MCP_ENV", "1")]);
+
+    let (ok, out) = run();
+    assert!(ok, "setup failed: {out}");
+    assert_eq!(out, "Installed", "first setup should install, got {out}");
+
+    let c = env.config_toml();
+    let body = mcp_table_body(&c, "[mcp_servers.ez-fixture]");
+    assert!(body.contains("FIXTURE_ENV_KEEP = \"declared\""), "the declared env value is missing or wrong:\n{body}");
+    assert!(body.contains("FIXTURE_ENV_ADD = \"host-provided\""), "the provider-filled env value is missing:\n{body}");
+    assert!(!body.contains("FIXTURE_ENV_KEEP = \"host-provided\""), "the provider must not override the declared value:\n{body}");
+    let http_body = mcp_table_body(&c, "[mcp_servers.ez-fixture-http]");
+    assert!(!http_body.contains("env"), "a remote server must stay env-free:\n{c}");
+
+    let (ok, out) = run();
+    assert!(ok && out == "NoOp", "second setup must read the merged env as healthy, got {out}");
 }
 
 #[test]

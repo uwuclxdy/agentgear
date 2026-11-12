@@ -74,7 +74,8 @@ impl Env {
             .env("XDG_CONFIG_HOME", &self.config)
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_RUNTIME_DIR", &self.run)
-            .env("PATH", &self.path);
+            .env("PATH", &self.path)
+            .env_remove("AGENTGEAR_FIXTURE_MCP_ENV");
         match &self.path_root {
             // A stray GOOSE_PATH_ROOT on the dev box would relocate every other
             // test's paths too; clear it so those keep resolving XDG/HOME.

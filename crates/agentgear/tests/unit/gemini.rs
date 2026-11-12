@@ -3,6 +3,8 @@
 //! must therefore never be a candidate for removal either (removing an
 //! unfiltered name could delete an unrelated user-owned entry of the same name).
 
+use std::collections::BTreeMap;
+
 use super::{agent_file, hook_is_portable, reconcile_hooks, remove_hooks};
 use crate::components::{HookBinding, MarkdownDoc};
 
@@ -111,7 +113,15 @@ fn agentgear_client_token_expands_to_this_backend_id() {
     )
     .unwrap();
 
-    let plugin = Plugin { name: "ez-cid", marketplace: "ez-mkt", version: "0.1.0", agents: &["gemini"], instructions: None, blob: &[] };
+    let plugin = Plugin {
+        name: "ez-cid",
+        marketplace: "ez-mkt",
+        version: "0.1.0",
+        agents: &["gemini"],
+        instructions: None,
+        env: BTreeMap::new(),
+        blob: &[],
+    };
     let project = crate::scratch::path("ez-cidtok-dst");
     let scope = Scope::Project { path: project.clone() };
     let source = Source::Path(src.clone());

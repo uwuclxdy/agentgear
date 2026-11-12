@@ -100,7 +100,8 @@ impl Env {
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_RUNTIME_DIR", &self.run)
             .env("FAKE_COPILOT_VERSION", self.fake_version)
-            .env("PATH", &self.path);
+            .env("PATH", &self.path)
+            .env_remove("AGENTGEAR_FIXTURE_MCP_ENV");
         match self.fake_plugin_version {
             Some(v) => {
                 cmd.env(FAKE_COPILOT_PLUGIN_VERSION, v);

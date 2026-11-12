@@ -4,6 +4,7 @@
 //! or HOME — exercised here via the pure `resolve_pi_dir` so no process-global env
 //! is mutated (unsafe in edition 2024; the crate forbids it regardless).
 
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::Path;
 
@@ -13,7 +14,15 @@ use crate::host::{Desired, Outcome, Plugin, Scope, Source};
 
 fn plugin() -> Plugin {
     // `blob` is unused: pi writes nothing and probe ignores the plugin entirely.
-    Plugin { name: "ez-fixture", marketplace: "ez-mkt", version: "0.1.0", agents: &["pi"], instructions: None, blob: &[] }
+    Plugin {
+        name: "ez-fixture",
+        marketplace: "ez-mkt",
+        version: "0.1.0",
+        agents: &["pi"],
+        instructions: None,
+        env: BTreeMap::new(),
+        blob: &[],
+    }
 }
 
 #[test]

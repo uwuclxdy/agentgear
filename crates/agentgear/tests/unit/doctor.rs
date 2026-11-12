@@ -2,11 +2,21 @@
 //! report (a health command that discards its collected checks on the first
 //! bad agent is useless exactly when it is needed).
 
+use std::collections::BTreeMap;
+
 use super::*;
 use crate::host::Plugin;
 
 fn plugin_with_agents(agents: &'static [&'static str]) -> Plugin {
-    Plugin { name: "doctor-test", marketplace: "doctor-test", version: "0.0.0", agents, instructions: None, blob: &[] }
+    Plugin {
+        name: "doctor-test",
+        marketplace: "doctor-test",
+        version: "0.0.0",
+        agents,
+        instructions: None,
+        env: BTreeMap::new(),
+        blob: &[],
+    }
 }
 
 /// An unresolvable agent id becomes a failed CHECK inside an `Ok` report — the

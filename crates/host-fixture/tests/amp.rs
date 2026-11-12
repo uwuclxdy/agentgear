@@ -71,7 +71,8 @@ impl Env {
             .env("XDG_CONFIG_HOME", &self.config)
             .env("XDG_DATA_HOME", &self.data)
             .env("XDG_RUNTIME_DIR", &self.run)
-            .env("PATH", &self.path);
+            .env("PATH", &self.path)
+            .env_remove("AGENTGEAR_FIXTURE_MCP_ENV");
     }
 
     fn fixture(&self, args: &[&str]) -> (bool, String) {

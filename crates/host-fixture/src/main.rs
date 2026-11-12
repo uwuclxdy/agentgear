@@ -3,6 +3,7 @@
 //! `setup`/`self-heal`/`update`/`uninstall`/`doctor`/`mcp` subcommands. It lists
 //! every backend so `setup --agent <id>` can target any one of them.
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -10,7 +11,7 @@ use std::process::ExitCode;
 use agentgear::prelude::{PluginHost, Scope, SessionSource, Source};
 
 #[derive(PluginHost)]
-#[plugin(name = "ez-fixture-plugin", instructions_fn = fixture_instructions, agents = [
+#[plugin(name = "ez-fixture-plugin", instructions_fn = fixture_instructions, mcp_env_fn = fixture_mcp_env, agents = [
     "claude", "codex", "opencode", "gemini", "cursor", "cline", "devin",
     "qwen-code", "copilot-cli", "vscode-copilot", "jetbrains-copilot",
     "kimi", "kiro", "zed", "omp", "openclaw", "kilo",
@@ -24,6 +25,20 @@ struct FixtureHost;
 /// backends without an always-loaded channel ignore `Plugin.instructions`).
 fn fixture_instructions() -> Option<String> {
     Some("ez-fixture always-loaded guidance line.".to_string())
+}
+
+/// Host-declared MCP env (the derive's `mcp_env_fn` seam). Returns a fixed map
+/// only when a hermetic env test opts in (`AGENTGEAR_FIXTURE_MCP_ENV=1` in the
+/// child env), so every other hermetic test's pinned written body stays env-free.
+fn fixture_mcp_env() -> Option<BTreeMap<String, String>> {
+    if std::env::var("AGENTGEAR_FIXTURE_MCP_ENV").as_deref() == Ok("1") {
+        Some(BTreeMap::from([
+            ("FIXTURE_ENV_ADD".to_string(), "host-provided".to_string()),
+            ("FIXTURE_ENV_KEEP".to_string(), "host-provided".to_string()),
+        ]))
+    } else {
+        None
+    }
 }
 
 /// The value of `--<name> <value>` anywhere after the subcommand.

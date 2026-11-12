@@ -10,6 +10,7 @@
 //! `CLAUDE_CONFIG_DIR`/home resolution behind the config dir is unit-tested in
 //! `ccregistry_claude.rs`, not here.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::host::{HealNeededVerdict, Plugin, Source};
@@ -22,7 +23,7 @@ const ID: &str = "ez-heal@ez-heal-mkt";
 const CLIENT: &str = "claude";
 
 fn plugin() -> Plugin {
-    Plugin { name: NAME, marketplace: MKT, version: "0.1.0", agents: &["claude"], instructions: None, blob: &[] }
+    Plugin { name: NAME, marketplace: MKT, version: "0.1.0", agents: &["claude"], instructions: None, env: BTreeMap::new(), blob: &[] }
 }
 
 fn marker(source_mode: &str, tree_hash: Option<String>, reinstalling: bool) -> Marker {
@@ -708,7 +709,15 @@ fn version_comparison_uses_the_crate_parser() {
     // `0.1.9` is numerically older than `0.1.10`; a lexicographic compare would
     // read it as newer, so asserting `Needed` pins `version_lt`'s numeric parse.
     let fx = Fixture::new();
-    let host = Plugin { name: NAME, marketplace: MKT, version: "0.1.10", agents: &["claude"], instructions: None, blob: &[] };
+    let host = Plugin {
+        name: NAME,
+        marketplace: MKT,
+        version: "0.1.10",
+        agents: &["claude"],
+        instructions: None,
+        env: BTreeMap::new(),
+        blob: &[],
+    };
     fx.seed_installed(Some("0.1.9"), Some(&fx.install), "user", None);
     fx.seed_settings(Some(true));
     fx.seed_marketplace(Some(&fx.pointer()), "directory");
