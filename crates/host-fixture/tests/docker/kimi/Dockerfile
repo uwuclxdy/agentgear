@@ -21,7 +21,7 @@ FROM node:22-slim
 # Pin the CLI for reproducibility. The scoped
 # `@moonshot-ai/kimi-code` is the official package (bin `kimi`); the unscoped
 # `kimi-code` on npm is NOT it.
-RUN npm install -g @moonshot-ai/kimi-code@2.5.3
+RUN npm install -g @moonshot-ai/kimi-code@2.6.0
 # the entrypoint's last assert compares what npm installed with the pin it reads from this file's copy
 COPY crates/host-fixture/tests/docker/installed-vs-pin.sh /usr/local/bin/installed-vs-pin.sh
 COPY crates/host-fixture/tests/docker/kimi/Dockerfile /tmp/leg.Dockerfile
