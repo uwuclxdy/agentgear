@@ -15,7 +15,7 @@ RUN cargo build -p host-fixture --release
 # Stage 2: real crush CLI + the fixture binary; assert the lifecycle end-to-end.
 FROM node:20-slim
 # Pin the CLI for reproducibility; a failed install fails the leg.
-RUN npm install -g @charmland/crush@0.100.0
+RUN npm install -g @charmland/crush@0.101.0
 # the entrypoint's last assert compares what npm installed with the pin it reads from this file's copy
 COPY crates/host-fixture/tests/docker/installed-vs-pin.sh /usr/local/bin/installed-vs-pin.sh
 COPY crates/host-fixture/tests/docker/crush/Dockerfile /tmp/leg.Dockerfile

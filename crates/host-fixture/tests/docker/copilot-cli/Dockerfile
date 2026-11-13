@@ -17,7 +17,7 @@ RUN cargo build -p host-fixture --release
 FROM node:22-slim
 # pin = the version this leg runs against (the backend's own 1.0.92 floor is
 # enforced in the crate).
-RUN npm install -g @github/copilot@1.0.108
+RUN npm install -g @github/copilot@1.0.111
 # the entrypoint's last assert compares what npm installed with the pin it reads from this file's copy
 COPY crates/host-fixture/tests/docker/installed-vs-pin.sh /usr/local/bin/installed-vs-pin.sh
 COPY crates/host-fixture/tests/docker/copilot-cli/Dockerfile /tmp/leg.Dockerfile
