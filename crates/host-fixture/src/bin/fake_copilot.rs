@@ -334,11 +334,10 @@ fn require_installed(id: &str, edit: impl FnOnce(&mut State)) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn mutate(edit: impl FnOnce(&mut State)) -> ExitCode {
+fn mutate(edit: impl FnOnce(&mut State)) {
     let mut state = State::load();
     edit(&mut state);
     state.save();
-    ExitCode::SUCCESS
 }
 
 fn usage(argv: &[&str]) -> ExitCode {
