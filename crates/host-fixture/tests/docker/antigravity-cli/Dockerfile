@@ -35,9 +35,9 @@ RUN bash <<'SH'
 # -e, no fallback: an image that could not install the pinned CLI must fail the build
 # rather than run the asserts against whatever else it happened to get.
 set -euo pipefail
-version=1.5.7
-url=https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.7-6190022064472064/linux-x64/cli_linux_x64.tar.gz
-sha512=60bca280414ed11723f58b3b671962ae394cc2d0c25e3f58e32e1c6847c978cbc77ec6f40e7f3992001c399d80aeb8b64c9ec892abddd591b12413c5ee6d9fce
+version=1.5.9
+url=https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.9-4515810895593472/linux-x64/cli_linux_x64.tar.gz
+sha512=d01eb13ba7750eed18907f1ae8860864371e0ad9064415e8d033d22b4bd7b9b4e4c7f962058520b452d67db1c33163d9a889d55a7dffa159596ec6cd91a87b79
 
 # linux-x64 only, by choice and not by oversight: the vendor script auto-detected every
 # platform, but a second pinned arch cannot be exercised by this project or by CI (both
